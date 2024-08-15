@@ -114,7 +114,7 @@ def generate_pagination(page: int, total_pages: int) -> str:
     """Generate pagination HTML."""
     pagination = '<div class="btn-group my-4">'
     if page > 1:
-        pagination += f'<a href="index{page-1}.html" class="btn">«</a>'
+        pagination += f'<a href="{"index.html" if page == 2 else f"index{page-1}.html"}" class="btn">«</a>'
     for i in range(max(1, page - 2), min(total_pages + 1, page + 3)):
         if i == page:
             pagination += (
@@ -122,7 +122,8 @@ def generate_pagination(page: int, total_pages: int) -> str:
             )
         else:
             pagination += (
-                f'<a href="index{i}.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">{i}</a>'
+                f'<a href="{"index.html" if i == 1 else f"index{i}.html"}" '
+                f'class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">{i}</a>'
             )
     if page < total_pages:
         pagination += f'<a href="index{page+1}.html" class="btn">»</a>'
@@ -249,7 +250,7 @@ async def main() -> None:
 
         html_content = generate_html_content(page_entries, page, total_pages, feeds, all_entries, planet_config)
 
-        filename = "index1.html" if page == 1 else f"index{page}.html"  # Correct filenames
+        filename = "index.html" if page == 1 else f"index{page}.html"  # Correct filenames
         await write_html_file(output_dir, filename, html_content)
 
     print(f"Successfully generated {total_pages} pages with {len(all_entries)} total entries")
