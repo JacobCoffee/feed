@@ -53,6 +53,46 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-free-threading-ecosystems.html" class="hover:underline"
+              >The Python Language Summit 2024: Free-threading ecosystems</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Following <a href="https://pyfound.blogspot.com/2023/05/the-python-language-summit-2023-making.html">years of excitement</a> around the removal of the Global Interpreter Lock (GIL), Python without the GIL is coming soon. <a href="https://www.python.org/downloads/release/python-3130b1/">Python 3.13 pre-releases</a> already have support for being built without the GIL using a new <span style="font-family: courier;">--disable-gil</span> compile-time option:</p><p><span style="font-family: courier;"># Download<br />wget https://www.python.org/ftp/python/3.13.0/Python-3.13.0b2.tgz<br />echo "c87c42aa8137230a15a02ed90a6600610ba680cb5b54c0fbc57581a0d032e0c4&nbsp; ./Python-3.13.0b2.tgz" | sha256sum --check<br />tar -xzvf ./Python-3.13.0b2.tgz<br /><br /># Build<br />cd </span><span style="font-family: courier;">Python-3.13.0b2/</span><br /><span style="font-family: courier;">./configure --disable-gil<br />make<br /><br /># Run with no GIL!<br />./python -X nogil -c "import sys; print(sys._is_gil_enabled())"<br />False</span><br /><br />But simply having GIL-less Python is not enough, code needs to be written that is safe and performant without the GIL using both the C and Python APIs.<br /></p><p>This year at the Language Summit, Daniele Parmeggiani gave a talk about ways Python can enable safe and performant concurrent code without <i>locking</i> CPython into a specific implementation or <a href="https://en.wikipedia.org/wiki/Memory_model_(programming)">memory model</a>.</p><h3 style="text-align: left;">Don't leak the details<br /></h3><p>Daniele started his talk, like many Python users, with cautious enthusiasm about the prospect of free-threading in Python:<br /></p><p></p><blockquote><p>"Given the <a href="https://discuss.python.org/t/pep-703-making-the-global-interpreter-lock-optional-in-cpython-acceptance/37075">acceptance notes</a> to PEP 703, one should argue for caution in discussing the prospects of new multi-threading ecosystems after the release of Python 3.13 — with a hopeful spirit I will disregard this caution here."</p><p>-- Daniele Parmeggiani</p></blockquote><p>Daniele detailed a <a href="https://github.com/python/cpython/issues/113920">feature request</a> he had opened to create a public function for the private C API function "<span style="font-family: courier;">_Py_TRY_INCREF()</span>". Daniele wanted to use this function to increment an object's reference count safely in a truly multi-threaded Python where a reference count might be decremented concurrently to an increment.<br /></p><p></p><p>Daniele continued, "[Sam Gross] <a href="https://github.com/python/cpython/issues/113920#issuecomment-1995563002">responded</a> as thoughtfully and thoroughly as he usually does that the function shouldn't be public, and I agree with him".<br /></p><p>The semantics of <span style="font-family: courier;">_Py_TRY_INCREF()</span> today are tied to the specific implementation of free-threading and without a guarantee that the underlying implementation won't change Daniele does not think the function "should ever be made public".</p><p>But without this functionality Daniele's problem still stands, where do we go from here?<br /></p><h3 style="text-align: left;">Higher-level APIs to the rescue<br /></h3><p>"At a higher-level it's possible to write further guarantees without constraining what's under the hood". Daniele started a single step up in abstraction, detailing an atomic reference API:</p><p><span style="font-family: courier;">PyObject *AtomicRef_Get(AtomicRef *self)<br />{<br />&nbsp;&nbsp;&nbsp; PyObject *reference;<br />&nbsp;&nbsp;&nbsp; reference = self-&gt;reference;<br />&nbsp;&nbsp;&nbsp; while (!_Py_TRY_INCREF(reference)) {<br />&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; reference = self-&gt;reference;<br />&nbsp;&nbsp;&nbsp; }<br />&nbsp;&nbsp;&nbsp; return reference;<br />}</span><br /></p><p>This would be "trivial to implement" with the new garbage collection scheme in Python 3.13 ("quiescent state-based reclamation" or QSBR), "but what if [Python 3.14] were to change this scheme radically? Or what if 3.15 decides to do away with it entirely?"</p><p>Daniele eschewed making guarantees about low-level APIs at this stage of development, but concluded that "an API for atomically updating a reference to a PyObject seems like a high-level use-case worth guaranteeing, regardless of any implementation of reference counting".<br /></p><h3 style="text-align: left;">Atomic data structures<br /></h3><p style="text-align: left;">Daniele continued exploring higher-level concepts that Python could provide at this stage of free-threading by looking to what other languages are doing.<br /></p><p>Java provides a <a href="https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/package-summary.html">java.util.concurrent</a> package containing some familiar faces for Python concurrency users like <a href="https://docs.python.org/3/library/threading.html#semaphore-objects">Semaphores</a>, <a href="https://docs.python.org/3/library/threading.html#lock-objects">Locks</a>, and <a href="https://docs.python.org/3/library/threading.html#barrier-objects">Barriers</a>, but also some other atomic primitives that map to Python classes like dicts, lists, booleans, and integers. Daniele asked whether Python should provide atomic variations for primitives like numbers and dictionaries.<br /></p><p>Daniele explained that many atomic data structures use the "compare-and-set" model to synchronize read and write access to the same space in memory. Compare-and-set requires the caller to specify an expected value, if the value in memory matches the expected value then the value is updated to the passed value, and the call returns whether the operation was successful or not.</p><p>Daniele explained that compare-and-set establishes a "<a href="https://jenkov.com/tutorials/java-concurrency/java-happens-before-guarantee.html">happens-before</a>" ordering between concurrent writes to the same memory location, joking that the phrase "happens-before" may spark thoughts of memory models which he wished to avoid.</p><p>Today Python doesn't have any method of reordering memory accesses which would require thinking about the memory model. Daniele noted that may come one day from the new <a href="https://docs.python.org/3.13/whatsnew/3.13.html#whatsnew313-jit-compiler">just-in-time compiler</a> (JIT).<br /></p><p>Daniele was already developing an <a href="https://github.com/dpdani/cereggii/tree/dev/src/cereggii/atomic_dict">atomic dictionary class</a> and had seen performance gains over the existing standard library dictionary with the GIL disabled (with lower single-threaded performance):</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEivKqZ5arkv_l8RhLPqmFmnl_v797VnOU0HBAilJQFK-VUktBrd5VjNg9p0gfqX5UjS9PTIjLmsN_wUx6Tbbjqbo_baffEOyqwcPazs224myHNsjyTERlbtZ2omHUOxMqAUSj7crhDzDa3CsTDtrRdCnepHwsqpEiCMnMXTQBd7AKAVjQd_LQ/s1199/Screenshot%20from%202024-06-07%2010-27-54.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="179" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEivKqZ5arkv_l8RhLPqmFmnl_v797VnOU0HBAilJQFK-VUktBrd5VjNg9p0gfqX5UjS9PTIjLmsN_wUx6Tbbjqbo_baffEOyqwcPazs224myHNsjyTERlbtZ2omHUOxMqAUSj7crhDzDa3CsTDtrRdCnepHwsqpEiCMnMXTQBd7AKAVjQd_LQ/s320/Screenshot%20from%202024-06-07%2010-27-54.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Performance comparison of dict with and without the GIL and Daniele's AtomicDict<br /></td></tr></tbody></table><br /><p>Daniele observed that the free-threading changes actually <i>decreased</i> the performance for write-heavy workloads on builtin types like dictionaries because "Python programs will now actually be subject to memory contention". When multiple threads attempt to mutate a list or dictionary, "it will be as if the GIL is still there, [the threads] will all be contending for one lock", offering that "new concurrent data structures would alleviate this performance issue".<br /></p><p>Daniele wanted to know what primitives Python should offer for C extension developers targeting free-threaded builds, or asked if it's still too early to make guarantees: <br /></p><p>"As the writer of a <a href="https://github.com/dpdani/cereggii">C extension</a> looking to implement concurrent lock-free data structures for Python", Daniele asked of the room, "does CPython eventually wish to incorporate... either high-level atomics or low-level routines?"</p><p>Daniele continued, "if not the atomics, then new low-level APIs like <span style="font-family: courier;">_Py_TRY_INCREF()</span> will be necessary in order not to force the abuse of locks in external efforts towards new free-threading ecosystems".</p><h3 style="text-align: left;">Discussion<br /></h3><p>Thomas Wouters, channeling the Steering Council's past intent from accepting PEP 703 last October said, "we don't know yet what users will actually need" and the Steering Council didn't want to "prematurely optimize" and mandate features be implemented without that knowledge.<br /></p><p>Thomas recommended building solutions to "production use-cases" as PyPI packages or separate projects before the deciding to pull those solutions into Python, summarizing the sentiment with, "we need to take our time and make sure we're doing the right thing".<br /></p><p>Steering Council member Barry Warsaw agreed with Thomas on strategy, also adding that "[atomic references] might be something [Python] needs to make sure the interpreter doesn't crash with some of our own C code". Barry was interested in how to "ensure that the interpreter stays safe in the face of free-threading without necessarily thinking about the right APIs for the higher-level data structures".</p><p>Sam Gross, author and main implementer of PEP 703 to make the GIL optional in CPython, commented on making additional guarantees to standard library collections, saying "we're going to find situations that are ambiguous where no one's promised thread-safety or [the lack of thread-safety]".<br /></p><p>Sam would also like to see "scalable collections" on PyPI (and "would love to see in Python eventually too") that are "designed not just to be thread-safe, but to scale well with certain workloads". Sam noted that builtin data classes like dict and list "can only make so many trade-offs" and tend to "focus on single-threaded performance" or "multi-threaded read-only access".</p><p>Eric Snow wanted to see immutable data structures be considered, too, noting the benefits to performance and shareability that Yury Selivanov was seeing when using them with sub-interpreters.<br /></p><p>Gregory Smith sympathized with Daniele on wanting to avoid thinking about memory models, but "had a sneaking suspicion we kinda have to anyway". Greg was concerned about other stacks like data science and machine learning "re-interpreting Python code and transforming it into other things that run on other hardware". Without a clear definition, people "make their own assumptions" and get confused when code runs differently in different places.</p><p>Replying to Greg, Daniele offered that there's already a mechanism for determining whether an object is shared between threads "which might be a first-step", but that this "was a detail of the implementation, and not a part of the language".<br /></p><p>Guido van Rossum began by being "wary of looking to Java for examples", stating that many APIs that Python borrowed from Java were eventually deprecated and removed.<br /></p><p>Guido commented that "there will be other people with much higher-level ideas on concurrency" and recommended "to wait as long as we can before we build anything into the language explicitly or implicitly". Guido also felt it was "important that we have sub-interpreters as well as free-threading, so people can play with different models before we commit to anything".</p><p>Overall, the group seemed interested in Daniele's work on atomics but didn't seem willing to commit to exact answers for Python yet. It's clear that more experimentation will be needed in this area.<br /></p><p>&nbsp;</p><p>&nbsp;<br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 14, 2024 01:13 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-free-threading-ecosystems.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-c-api.html" class="hover:underline"
               >The Python Language Summit 2024: Native Interface and Limited C API</a
             >
@@ -1575,112 +1615,6 @@ d,e,6.0</code></pre></section>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://coady.github.io/posts/graphql-cursors.html" class="hover:underline"
-              >GraphQL cursors</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <section class="level1" id="contrarian-view-on-cursor-based-pagination.">
-<h1>Contrarian view on cursor-based pagination.</h1>
-<p><a href="https://graphql.org">GraphQL</a> documentation recommends <a href="https://graphql.org/learn/pagination/#pagination-and-edges">cursor-based pagination</a>, and it has subsequently become a popular standard.</p>
-<blockquote class="blockquote">
-<p>In general, we’ve found that cursor-based pagination is the most powerful of those designed. Especially if the cursors are opaque, either offset or ID-based pagination can be implemented using cursor-based pagination (by making the cursor the offset or the ID), and using cursors gives additional flexibility if the pagination model changes in the future. As a reminder that the cursors are opaque and that their format should not be relied upon, we suggest base64 encoding them. …</p>
-</blockquote>
-<div class="sourceCode" id="cb1" style="background: #f1f3f5;"><pre class="sourceCode graphql code-with-copy"><code class="sourceCode graphql"><span id="cb1-1">{</span>
-<span id="cb1-2">  hero {</span>
-<span id="cb1-3">    name</span>
-<span id="cb1-4">    friends(first: <span class="dv" style="color: #AD0000; background-color: null; font-style: inherit;">2</span>) {</span>
-<span id="cb1-5">      totalCount</span>
-<span id="cb1-6">      edges {</span>
-<span id="cb1-7">        node {</span>
-<span id="cb1-8">          name</span>
-<span id="cb1-9">        }</span>
-<span id="cb1-10">        cursor</span>
-<span id="cb1-11">      }</span>
-<span id="cb1-12">      pageInfo {</span>
-<span id="cb1-13">        endCursor</span>
-<span id="cb1-14">        hasNextPage</span>
-<span id="cb1-15">      }</span>
-<span id="cb1-16">    }</span>
-<span id="cb1-17">  }</span>
-<span id="cb1-18">}</span></code></pre></div>
-<p>There are several oversights with this well-intentioned advice.</p>
-<section class="level2" id="cursors-and-state">
-<h2 class="anchored">Cursors and state</h2>
-<p>Cursors imply state, at least they used to. A <a href="https://en.wikipedia.org/wiki/Cursor_(databases)">database cursor</a> is used for iterating over <em>a result set</em>. Meaning it has transactional integrity to pick up where it left off.</p>
-<p><strong><em>The vast majority of GraphQL APIs are inherently stateless.</em></strong> The “cursor” is being decoded as input to a new request, and offers no guarantees. From this observation, the advice falls apart.</p>
-<p>The problem with stateless pagination is inconsistency; items may shift, appear, or disappear. Which gives the client the perception of missing or duplicate items. This happens regardless of whether the pagination is offset or ID based. Arguably worse in the case of IDs, since the reference can move arbitrarily or be gone.</p>
-<p>Cursors don’t solve the consistency problem; they give the client the false impression of solving the problem.</p>
-</section>
-</section>
-<section class="level1" id="opaqueness-and-compatibility">
-<h1>Opaqueness and compatibility</h1>
-<p>The claim is that an opaque cursor is compatible across changes. Changed to do what exactly, would be the more relevant question.</p>
-<p>Taking a step back, what is the problem being solved here? We assume there is a list of items, with an inherent ordering, and too many to return to the client with acceptable performance.</p>
-<p>Given those assumptions, the first obvious step is an optional size limit. That is not in dispute; the disagreement if over the “offset”. A simple and versatile solution is a range filter over whatever field(s) is relevant to ordering. This is not even remotely controversial when the field in question has a name like <code>date</code>. In other words, “pagination” is not necessarily the problem that needs solving.</p>
-<p>Range filters with a size limit are sufficient to implement pagination, and new optional filters are always backwards compatible. They also offer the flexibility of search, whereas cursors can only be used iteratively. And what if the client does not want visibility into the range filters? That is exactly what <code>offset</code> is for; offset is a range filter over an implied <code>index</code> field.</p>
-<p>There is a reason why the recommendation does not offer a useful example of this supposed compatibility; there isn’t one. The advice is equivocating on the ambiguity of an <code>after: $ID</code> filter. Is the ID field relevant to the ordering?</p>
-<ul>
-<li>If yes, then it is just another range filter</li>
-<li>If no, then it is just another placeholder for index</li>
-</ul>
-<p>There is no third case. There is no future secret field that relates to ordering, is relevant to the client, but somehow still opaque to the client.</p>
-<p><strong><em>Stateless pagination is a combination of range filters and size limits</em></strong>. No matter what the input fields are called. A true stateful is cursor is opaque precisely because it does not represent any known field.</p>
-<section class="level2" id="next-optimization">
-<h2 class="anchored">Next optimization</h2>
-<p>The “next” piece of advice is that the cursor implementation should indicate whether another request is worthwhile. Again, in a stateless API, the server can make no such guarantee.</p>
-<p>If the server can provide a total count, by all means do so. It solves the “next” problem, and is more generally useful.</p>
-<p>If it is not feasible for the server to provide a total count, how is it going to implement whether there are more items? At the data layer, it is going to stop processing at <em>N + 1</em> items instead of the requested <em>N</em>. The client could do that too. Instead of requesting the next 10, it could <a href="https://en.wikipedia.org/wiki/Up_to_eleven">go to 11</a>.</p>
-<p>Better yet, why stop at the server optimizing for <em>N + 0</em>? If it knows there is just 1 more item, why not go ahead and include that last one too. <em>N + 2</em> anyone? Obsessing over the last “next” is a pointless micro-optimization, all the more so because it is irrelevant whenever the total count is not coincidentally a multiple of <em>N</em>. If <em>N</em> is arbitrary, then optimizing for a particular residue <em>mod N</em> is clearly arbitrary.</p>
-</section>
-<section class="level2" id="api-design">
-<h2 class="anchored">API design</h2>
-<p>Not only is there no good reason to blindly add opaque cursors, there is also no reason to add range filters before needed. A size limit alone solves the first order of magnitude of performance issues. If a client requests the first 10 items, then needs the next 10, actually pressure test whether it is unreasonable to request the first 20. The advantage is the client then has a consistent snapshot of the first 20 regardless of changes, which could provide a better user experience.</p>
-<p>A simple strategy for pagination: start with none. Then proceed to next steps as performance warrants.</p>
-<ol type="1">
-<li>size limit</li>
-<li>range filter on known field(s)</li>
-<li>offset</li>
-</ol>
-<p>In the unlikely event your API is stateful, you didn’t need this advice because you already had a cursor. Otherwise, cursors are an overly-complicated useless abstraction.</p>
-
-
-</section>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 09, 2024 12:00 AM UTC by
-            <a href="https://coady.github.io/index.xml" class="link link-hover text-primary"
-              >Pythonicity</a
-            >
-          </div>
-          <a
-            href="https://coady.github.io/posts/graphql-cursors.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1692,8 +1626,8 @@ d,e,6.0</code></pre></section>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8775</a></li>
-    <li><a>Unique Feeds: 429</a></li>
+    <li><a>Total Entries: 8782</a></li>
+    <li><a>Unique Feeds: 430</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
