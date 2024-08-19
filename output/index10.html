@@ -53,6 +53,119 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-limiting-yield-in-async-generators.html" class="hover:underline"
+              >The Python Language Summit 2024: Limiting Yield in Async Generators</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p></p><p>Zac Hatfield-Dodds came to the Language Summit to present on a fundamental incompatability between the popular async programming paradigm "<a href="https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful">structured concurrency</a>" and <a href="https://peps.python.org/pep-0525/">asynchronous generators</a>, specifically when it came to exception handling when the two were mixed together.</p><h3 style="text-align: left;">Structured Concurrency <br /></h3><p>Structured concurrency is becoming more popular for Python async programming like with <a href="https://trio.readthedocs.io">Trio</a> "nurseries" and in the Python standard library with the addition of <a href="https://docs.python.org/3/library/asyncio-task.html#task-groups">asyncio.TaskGroup</a> in Python 3.11.</p><p>When using structured concurrency, active tasks can be thought of as a tree-like structure where sub-tasks of a parent task have to exit before the parent task itself can proceed past a pre-defined scope. This exit can come through all the tasks completing successfully or from an exception being raised either internally or externally (for example, in the case of a timeout on time-bounded work).</p><p>The mechanism which allows a parent task and its sub-tasks to cooperate in this way is called a "cancel 
+scope" which Trio makes a <a href="https://trio.readthedocs.io/en/stable/reference-core.html#trio.CancelScope">top-level concept</a> but is implicitly used in 
+asyncio.TaskGroup and asyncio.timeout.</p><p>Async programs that are structured with this paradigm can rely on exceptions behaving in a much more recognizable way. There's no more danger of a spawned sub-task silently swallowing an exception because all sub-tasks are guaranteed to be checked for their status before the parent task can exit.<br /></p><h3 style="text-align: left;">The problem with yields <br /></h3><p>The fundamental issue is that <a href="https://docs.python.org/3/reference/expressions.html#yield-expressions">yields</a> suspend the current call frame, in effect "returning" a value, and then the generator needs to be "called" again for execution to be resumed. This suspension doesn't play well with structured concurrency because execution can't be suspended in the same call frame as a cancel scope, otherwise that scope can't process exceptions from its child tasks.</p><p><br /></p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhWtaKiTPJWFEv1diOaZHdyHIGqG98xfoACzbLVRN_Yi7v-f789hOQDH_zEfdlGO19RGb1gCgcA__rtD46ocU7e6XrT4CjMdHSlWnosWERYTOUu5f8YJPi5mpGf0MgMMKUE0TsR7gdfmM_XBfWFQ78op7vRku1CcTkYygheYLPwEN0VNCs1iA/s4000/20240515_155647.jpg" style="margin-left: auto; margin-right: auto;"><img border="0" height="240" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhWtaKiTPJWFEv1diOaZHdyHIGqG98xfoACzbLVRN_Yi7v-f789hOQDH_zEfdlGO19RGb1gCgcA__rtD46ocU7e6XrT4CjMdHSlWnosWERYTOUu5f8YJPi5mpGf0MgMMKUE0TsR7gdfmM_XBfWFQ78op7vRku1CcTkYygheYLPwEN0VNCs1iA/s320/20240515_155647.jpg" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Zac leading a "fun game of 'why is this code broken?'"<br />(Photo credit: Hugo van Kemenade)<br /></td></tr></tbody></table><p>Zac presented some innocuous looking code samples that suffered from the described issue:<br /></p><pre><span class="k" style="font-family: courier;">async</span><span style="font-family: courier;"> <span class="k">def</span> <span class="nf">iter_with_timeout</span><span class="p">(</span><span class="n">ait</span><span class="p">,</span> <span class="n">max_time</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">with</span> asyncio.<span class="n">timeout</span><span class="p">(</span><span class="n">max_time</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="k">await</span> <span class="n">anext</span><span class="p">(</span><span class="n">ait</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">StopAsyncIteration</span><span class="p">:</span>
+        <span class="k">return</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fn</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">elem</span> <span class="ow">in</span> <span class="n">iter_with_timeout</span><span class="p">(</span><span class="n">ait</span><span class="p">,</span> <span class="n">max_time</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">do_something_with</span><span class="p">(</span><span class="n">elem</span><span class="p">)</span></span></pre><p></p><p>In this example, asyncio.timeout() could expire while the yield had suspended the generator and before the generator was resumed. This scenario would result in the cancellation exception being raised <i>in the outer task</i> outside of the asyncio.timeout() cancel scope. If things had gone to plan and the generator wasn't suspended the cancellation would be caught by asyncio.timeout() instead and execution would proceed.</p><p>Zac presented the following fix to the iter_with_timeout() function:</p><pre><span class="k" style="font-family: courier;">async</span><span style="font-family: courier;"> <span class="k">def</span> <span class="nf">iter_with_timeout</span><span class="p">(</span><span class="n">ait</span><span class="p">,</span> <span class="n">max_time</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">with</span> asyncio.<span class="n">timeout</span><span class="p">(</span><span class="n">max_time</span><span class="p">):</span>
+                tmp = <span class="k">await</span> <span class="n">anext</span><span class="p">(</span><span class="n">ait</span><span class="p">)</span>&nbsp;<br />            yield tmp  # Move yield outside the cancel scope!<br />&nbsp;<span class="k">except</span> <span class="ne">StopAsyncIteration</span><span class="p">:</span>
+        <span class="k">return</span></span></pre><p></p><p>By moving the yield outside the cancellation scope it means that the suspension of the frame isn't happening when execution is inside a cancellation scope. This means that propagation of cancellation errors can't be subverted by a suspended call frame for this program.<br /></p><p>If you're still having trouble understanding the problem: you are not alone. There was a refrain of "still with me?" coming from Zac throughout this talk. I recommend looking at the <a href="https://peps.python.org/pep-0789/#problem-statement">problem statement</a> and <a href="https://peps.python.org/pep-0789/#motivating-examples">motivating examples</a> in the PEP for more information. <br /></p><h3 style="text-align: left;">Where to go from here<br /></h3><p></p><p>Zac and Nathaniel Smith have coauthored <a href="https://peps.python.org/pep-0789">PEP 789</a> with their proposed solution of disallowing yield statements within context managers that behave like cancel scopes. Attempting to yield within these scopes would instead raise a RuntimeError.<br /></p><p>The mechanism would be using a new function "<span style="font-family: courier;">sys.prevents_yields()</span>" which would be used by authors of async frameworks to annotate context managers which can't be suspended safely. Users of async frameworks wouldn't need to change their code unless it contained the unwanted behavior.</p><p>The language would need to support this feature by adding metadata to call frames to track whether the current frame should allow yields to occur.<br /></p><p>Mark Shannon was concerned that the solution was "lots of machinery to handle the exception being raised in the wrong place" and sought clarification that there would be overhead added to every call and return. Zac confirmed this would be the case, but that it could be done with "one integer [member on call frames] that you increment and decrement, but it would do some operation on every frame call and return".<br /></p><p>Irit Katriel asked why a "runtime error" was being used "instead of something static". Zac explained that users might define their own context managers which have a "cancel scope property" and the runtime "wouldn't know statically whether a given context manager should raise an error or not".</p><p>Łukasz Langa asked whether adding a type annotation to context managers would be sufficient to avoid adding runtime overhead. Zac responded that "there are still many users that don't use static type checking", and that "there's no intention to make it required by default". 
+Łukasz was concerned that the proposal "would be contentious for runtime performance" due to the impact being "non-trivial".</p><p>Pablo Galindo Salgado wanted to explore other big ideas to avoid the performance penalty like adding new syntax or language feature, such as "with noyield" to provide a static method of avoiding the issue. Zac agreed that changing the context manager protocol could also be a solution.<br /></p><p>Guido van Rossum lamented that this was "yet another demonstration that async generators were a bridge too far. Could we have a simpler PEP that proposes to deprecate and eventually remove from the language asynchronous generators, just because they're a pain and tend to spawn more complexity".</p><p>Zac had no objections to a PEP deprecating async generators¹. Zac continued, "while static analysis is helpful in some cases, there are inevitably cases that it misses which kept biting us... until we banned all async generators in our codebase".<br /><br />¹ Editors note: after the summit <a href="https://peps.python.org/pep-0789/#deprecate-async-generators-entirely">an update to PEP 789</a>
+ would describe how the problem doesn't exist <i>solely</i> in async generators
+ and thus removal of the feature wouldn't solve the problem, either.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 14, 2024 01:13 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-limiting-yield-in-async-generators.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-pyrepl-new-pdb.html" class="hover:underline"
+              >The Python Language Summit 2024: Should we make pdb better?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Tian Gao came to the Language Summit 2024 to talk about improving <a href="https://docs.python.org/3/library/pdb.html">pdb</a>, short for "Python debugger", a module and command line tool for debugging Python.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjcwAFtvp4eyohqY1hi5IaCGZhjtHli8UuGnZsbcxIXojkJa-jtv8tcbGcpKfKT0sj78TdARW7h6lm3McZu1lxcutLw6SQx45ME7UL0mt7mEqkQRIoJBdtowo1QmH8ffA9tMvJH1iGo_qHjkXvuDCFzaoHYl58080Hf_IUiIvJ1igj9-kNxlg/s4000/20240515_144421.jpg" style="margin-left: auto; margin-right: auto;"><img border="0" height="240" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjcwAFtvp4eyohqY1hi5IaCGZhjtHli8UuGnZsbcxIXojkJa-jtv8tcbGcpKfKT0sj78TdARW7h6lm3McZu1lxcutLw6SQx45ME7UL0mt7mEqkQRIoJBdtowo1QmH8ffA9tMvJH1iGo_qHjkXvuDCFzaoHYl58080Hf_IUiIvJ1igj9-kNxlg/s320/20240515_144421.jpg" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Tian Gao presenting on how to improve pdb<br /></td></tr></tbody></table><p>There are not many command-line debugger alternatives to pdb for Python. Tian mentioned a few, including PuDB, pdb++, and ipdb, but those alternatives are all themselves based on either <a href="https://docs.python.org/3/library/pdb.html">pdb</a> or another standard library module '<a href="https://docs.python.org/3/library/bdb.html">bdb</a>'.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj4A1ZLNLEbvfhdtXCqgVcSpmgLAwTxzsJQLRe1pcRi17Cq2qbzDYX5VisUdHjl3oAsuuLT6-0LeVwHdw73iFfa6xOeOqSzep1bSVJdaiMOFcYec_vSqLJWO79rOF8rnV8mS9mi8mDImum7m-uSHGGAAVAweGiKMsBI3Cm0OlEIe40CIdh-5g/s1370/Screenshot%20from%202024-06-03%2017-27-48.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="181" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj4A1ZLNLEbvfhdtXCqgVcSpmgLAwTxzsJQLRe1pcRi17Cq2qbzDYX5VisUdHjl3oAsuuLT6-0LeVwHdw73iFfa6xOeOqSzep1bSVJdaiMOFcYec_vSqLJWO79rOF8rnV8mS9mi8mDImum7m-uSHGGAAVAweGiKMsBI3Cm0OlEIe40CIdh-5g/s320/Screenshot%20from%202024-06-03%2017-27-48.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">pdb is the only "standalone" command-line-based Python debugger<br /></td></tr></tbody></table><br /><p>Tian presented a laundry list of desirable new features that could be added to pdb, including:<br /></p><ul style="text-align: left;"><li>Showing more lines of code around the current breakpoint.</li><li>Colors in the terminal, syntax highlighting.</li><li>Customization, with defaults being safe.<br /></li><li>Handling of more scenarios (threads, asyncio, bytecode, remote debugging)<br /></li></ul><h3 style="text-align: left;">Performance and backwards compatibility <br /></h3><p>The biggest issue according to Tian, which he noted had been discussed in the past, was the performance of pdb. "pdb is slow because sys.trace is slow, which is something we cannot change", and the only way forward on making pdb faster is to switch to sys.monitoring to avoid triggering unnecessary events.</p><p>Switching to sys.monitoring would give a big boost to performance. According to Tian, "setting a breakpoint in your code in the worst case you get a 100x slowdown compared to almost zero overhead with sys.monitoring". Unfortunately, switching isn't so easy, Tian noted there are serious backwards compatibility concerns for the standard library module <a href="https://docs.python.org/3/library/bdb.html">bdb</a> if pdb were to start using sys.monitoring.<br /></p><p>"If we're not ready to [switch to sys.monitoring] yet, would we ever do this in the future?", Tian asked the group, noting that an alternative is to create a third-party library and encourage folks to use that library instead. </p><p>Thomas Wouters started off saying that "bdb is a standard library module and it cannot break user code" and cautioned that core developers don't know who is depending on modules. bdb's interface can't have backwards incompatible changes without long deprecation periods. In Thomas' mind, "the answer is obvious, leave pdb as it is and build something else".</p><p>Thomas also noted "in the long-term, a debugger in the standard library is important" but that development doesn't need to happen in the standard library. Thomas listed the benefits for developing a new debugger outside the standard library like being able to publish outside the Python release schedule and to use the debugger with older Python versions. Once a debugger reaches a certain level of stability it can be added to the standard library and potentially replace pdb.</p><p>Tian agreed with Thomas' proposal in theory, but was concerned that a third-party debugger on PyPI wouldn't see the same levels of adoption compared to being in the standard library and thus would struggle to meet a threshold of "stability" without a critical mass of users. Or worse yet, maintainers wouldn't be motivated to continue due to a lack of use, resulting in a "dead project". (Some foreshadowing, Steering Council member Emily Morehouse <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-lightning-talks.html">gave a lightning talk on this topic</a> later on in the Language Summit)</p><p>Łukasz Langa noted that Python now has support for "<a href="https://docs.python.org/3/library/functions.html#breakpoint">breakpoint()</a>"
+ and that "what breakpoint() actually does, we can change. We can run 
+another debugger if we decide to", referencing if a better debugger was 
+added in the future to CPython that it could be made into a new default 
+for breakpoints.<br /></p><p>Russell Keith-Magee from BeeWare, was interested in what Tian had said about remote 
+debugging, noting that "remote debugging is the only way you can debug 
+[on mobile platforms]". Russell would be interested in pdb or a new 
+debugger supporting this use-case. Tian noted that unfortunately remote debugging would be one of the more difficult features to implement.</p><p></p><p>Pablo Galindo Salgado, commenting on existing Python "attach-to-process" debuggers, said that the hacks in use today are "extremely unsafe". Pablo said that "we'd need something inside CPython [to be safe], but then you have another problem, you have to implement that feature on [all platforms]". Pablo also mentioned that attach-to-process debugging is usually a bad model because it can't be enabled by default for security reasons but "you won't know when you'll need to debug".</p><p>Anthony Shaw asked about the scope of the project and was interested 
+in whether there could be a framework for debugging in CPython that pdb 
+and others could build on. Anthony pointed out that many other debuggers
+ "needed to do a bunch of hooks and tricks" to do debugging because it's
+ "not provided out of the box by CPython".</p><p>Tian responded that 
+"bdb is supposed to do that, but it was written 30 years ago so is too 
+old to support new things that a debugger wants". Others mentioned that <a href="https://docs.python.org/3/library/sys.monitoring.html">sys.monitoring</a> (new in Python 3.12) was meant to be a framework for debuggers to build on.</p><p></p><p>Gregory Smith, Steering Council member, said he "wants all of these things" and agreed with Thomas to "develop this as much as you can... outside of the standard library", telling Tian that "you're going to end up in a better state that way". Greg's primary concern was whether CPython needed to do anything to enable Tian's proposal. He continued, "it sounds like we (CPython) have most of what we need, but if we don't let's get that planned so we can enable a successful separate project before we ship it with Python in the future".<br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 14, 2024 01:13 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-pyrepl-new-pdb.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-python-on-mobile.html" class="hover:underline"
               >The Python Language Summit 2024: Python on Mobile</a
             >
@@ -1520,86 +1633,6 @@ as well as to send them to external applications. It is also possible to send v2
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://bugfactory.io/articles/the-builtin-hasattr-getattr-setattr-and-delattr-functions/" class="hover:underline"
-              >The Built-In `getattr()`, `hasattr()`, `setattr()`, and `delattr()` Functions</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Exploring working with instance variables and customizing attribute access in Python, including the use of `getattr()` and magic methods.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 10, 2024 12:00 AM UTC by
-            <a href="https://bugfactory.io/articles-on-python/feed.xml" class="link link-hover text-primary"
-              >Christoph Schiessl</a
-            >
-          </div>
-          <a
-            href="https://bugfactory.io/articles/the-builtin-hasattr-getattr-setattr-and-delattr-functions/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://edcrewe.blogspot.com/2024/06/software-development-with-generative-ai.html" class="hover:underline"
-              >Software Development with Generative AI - 2024 Update</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h4 style="text-align: left;"><br /></h4><h3 style="text-align: left;"><span style="font-family: arial;">Why write an update?</span></h3><div><span style="font-family: arial;"><br /></span></div><div style="text-align: left;"><span style="font-family: arial;">I wrote a blog post on <a href="https://edcrewe.blogspot.com/2023/12/software-development-with-generative-ai.html">Software Development with Generative AI last year</a>, which was questioning the approach of the current AI software authoring assistants. I believe the bigger picture holds true that to fully utilize AI to write software, will require an entirely different approach. Changing the job of a software developer in a far more radical manner and perhaps making many of today's software languages redundant.<br /><br />However I also raised the issue that I found the current generative AI helpers utility questionable for seasoned developers:</span></div><div style="text-align: left;"><span style="font-family: arial;"><br /><span style="color: #999999;">"The generative AI can help students and others who are learning to code in a computer language, but can it actually improve productivity for real, full time, developers who are fluent in that language?<br /><span style="font-size: small;">I think that question is currently debatable</span>... (but it is improving rapidly) ...&nbsp;We may reach that point within a year or two"</span></span></div><p><span style="font-family: arial; font-size: small;">Well it hasn't been a year or two, just 6 months. But I believe the addition of the Chat window to CoPilot and an improvement in the accuracy of its models has already made a significant difference.&nbsp;</span></p><p><span style="font-family: arial; font-size: small;">On balance I would now say that even a fluent programmer may get some benefits from its use. Given the speed of improvement it is likely that all commercial programming will use an AI assistant within a few years.&nbsp;</span></p><p><span style="font-family: arial; font-size: small;"></span></p><div class="separator" style="clear: both; text-align: center;"><span style="font-family: arial; font-size: small;"><a href="https://blogger.googleusercontent.com/img/a/AVvXsEhGIsktBAMmEAcZ9augEGnC95rzbABtEtnOZ1he3r5HfRjjIBf1ZQJAxFWVWVMm15__rPM_LNMcMVRVt-8ds5vJrm8omCHE90WiJE2zSZXPYaXLWgJO54_4YKiNBGqx7meVFBxGbP4OsGcVZz3CM5qUlVhyF2e5IPDvUtbGs-3AAq6lxl8NrWPBQHz1SM8W" style="margin-left: 1em; margin-right: 1em;"><img alt="" height="240" src="https://blogger.googleusercontent.com/img/a/AVvXsEhGIsktBAMmEAcZ9augEGnC95rzbABtEtnOZ1he3r5HfRjjIBf1ZQJAxFWVWVMm15__rPM_LNMcMVRVt-8ds5vJrm8omCHE90WiJE2zSZXPYaXLWgJO54_4YKiNBGqx7meVFBxGbP4OsGcVZz3CM5qUlVhyF2e5IPDvUtbGs-3AAq6lxl8NrWPBQHz1SM8W" width="282" /></a></span></div><span style="font-family: arial; font-size: small;"><br />To delay the inevitable and not embed it in to your work process is like King Canute commanding the sea to retreat. There are increasing numbers of alternatives available too. However as the market leader I believe it is worth going in to slightly more depth as to the current state of play with CoPilot.</span><p></p><p></p><h3 style="text-align: left;"><span style="font-family: arial; font-size: small;">Github Copilot Features</span></h3><p><span style="font-family: arial;"><span style="font-size: small;">The new Chat window within your IDE gives you a context sensitive version of Copilot ChatGPT that can act as a pair programmer and code reviewer for your work.&nbsp;</span></span></p><p><span style="font-family: arial;"><span>If you have enabled auto-complete then you instigate that usage by writing functional comments, ie prompts then tabbing out to accept the suggestions it responds with.</span></span></p><p><span style="font-family: arial;">To override these prompts, you instead can use dot and get real code completion options (as long as your IDE is configured correctly). Since code completion has your whole codebase as context, it complements CoPilot reasonably well. But whilst the code completion is always correct, CoPilot is less so, probably more like 75% now compared to its initial release level of 50%</span></p><p><span style="font-family: arial;"><span></span></span></p><p><span style="font-family: arial;">It takes some time to improve the quality of your prompting. An effort must be made to eradicate any nuance, assumption, implication or subtlety from your English. Precise mechanical instructions are what are required. However its language model will have learnt common usage. So if you ask it to sort out your variables it will understand that you mean replace all hardcoded values in the body of your code with a set of constants defined at the top, explain that is what it thinks you mean and give you the code that does that.</span></p><p></p><p><span style="font-family: arial;">You can ask it anything about the usage of the language you are working in, how something should be coded, alternatives to that etc. So taking a pair programming approach and explaining what you are about to code and why to CoPilot chat as you go,&nbsp; can be very useful. Given rubber duck programming is useful, having an intelligent duck that can answer back ... is clearly more so.&nbsp;</span></p><p><span style="font-family: arial;">It excels as a learning tool, largely replacing Googling and Stack Overflow with an IDE embedded search for learning new languages. But even for a language you know well, there can be details and nuances of usage you have overlooked or changes in syntactic standards with new releases you have missed.</span></p><p><span style="font-family: arial;">You can also ask it to give your file a code review. Where it will list out a series of suggested refactors that it judges would improve it.</span></p><h3 style="text-align: left;"><span style="font-family: arial;"><b>Copilot Limitations</b></span></h3><p><span style="font-family: arial; font-size: small;">Currently however there are many limitations, understanding them, helps you know how to use CoPilot and not turn it off in frustration at its failings!&nbsp;</span></p><p><span style="font-family: arial; font-size: small;">The most important one is that CoPilot's context is extremely limited. There is no RAG enhancement yet, no learning from your usage. It may seem to improve with usage, but that is just you getting better at using it. It does not learn about you and your coding style as you might expect, given a dumb shopping site does that as standard.</span></p><p><span style="font-family: arial;"><span style="font-size: small;">It does not create a user context for you and populate it with your codebase. It simply grabs the content of the currently edited file and the Chat prompt text and the language version for the session as a big query.&nbsp;</span><span>The same for the auto-suggestion. But here the chat text is from the comments or doc strings on the lines preceding.&nbsp;</span></span></p><p><span style="font-family: arial; font-size: small;">Posting the lot to a fixed CoPilot LLM that is some months out of date. Although apparently it has weekly updates from continuous retraining.&nbsp;</span></p><p><span style="font-family: arial;">This total lack of context can mean the only way you can get CoPilot to suggest what you actually want is to write very detailed prompts. It is often simpler to just cut and paste example code as comments into the file - please rewrite blah like this ... paste example. Since only if its in the file or latest Chat question will it get posted to inform the response.<br /><br />At the time of writing CoPilot is due to at least retain and learn from Chat window history to extend its context a little. But currently it only knows about the currently open file and latest Chat message. Other providers have tools that do load the whole code base, for example Cody, plus there are open source tools to post more of your code base to ChatGPT or to an open source LLM.<br /><br />As this blog post update indicates, the whole area is evolving at an extremely rapid pace.</span></p><p><span style="font-family: arial; font-size: small;">The model it has for a language is fixed and dated. Less so for the core language but for example you may use a newer version of the leading 3rd party Postgres library that came out 2 years ago. But the majority of users are still on the previous one since it is still maintained. Their syntax differs. Copilot may only know the syntax for the old library because that is what it was trained with, even though a later version is being imported in the file, so is in Copilot's limited context. So any chat window or code prompts it suggests will be wrong.</span></p><p><span style="font-family: arial; font-size: small;">I have yet to find it brings up anything useful that I didn't know about the code when using the code review feature, plus the suggestions can include things that are inapplicable or already applied. But I am sure it would be more useful for learning a new language.</span></p><h3 style="text-align: left;"><span style="font-family: arial; font-size: small;"><b>AI prompting and commenting issue</b></span></h3><p><span style="font-family: arial;">Good practise for software teams around code commenting are that you should NOT stick in functional comments that just explain what the next few lines do.&nbsp; The team are developers and they can read the code as quickly for its base functionality. Adding lots of functional commenting makes things unclear by excessive verbosity.<br />It is something that is only done for teaching people how to code in example snippets. It has no place in production code.<br /></span></p><p><span style="font-family: arial;">Comments should be added to give wider context, caveats, assumptions etc. So commenting is all about explaining the Why, not the How.</span></p><p><span style="font-family: arial;">Doc strings at the head of methods and packages can contain a summary of what the function does in terms of the codebase. So more functional in orientation, but as a big scale summary. So again they are a What not a How.</span></p><p><span style="font-family: arial; font-size: small;"></span></p><p><span style="font-family: arial;">It looks like current AI assistants</span><span style="font-family: arial;">&nbsp;may mess that up. Since they need comments that are basically as close to pseudo code as possible. Adding information about real world issues, roadmap, wider codebase, integration with other services ... ie all the Why is likely to&nbsp; confuse them and degrade the auto-complete.<br /><br />Unfortunately code comments are not AI prompts for generating code and vice versa.<br />Which suggests that you may want to write a temporary prompt as a comment to generate the code, then replace it with a proper comment once it has served its purpose.</span></p><p><span style="font-family: arial;">Or otherwise introduce a separate form of hideable prompt marked comment that make it clear what is for the AI and what is for the Human!</span></p><p><span style="font-family: arial;">Alternatively use the chat window for code generation then paste it in.</span></p><h3 style="text-align: left;"><span style="font-family: arial; font-size: small;">Copilot Translation</span></h3><p><span style="font-family: arial; font-size: small;">Translation is an area where Copilot can be very beneficial. As a non-native English speaker you can interact with it in your own language for prompting and comments and it will handle that and translate any comments in the file to English if asked to.</span></p><p><span style="font-family: arial; font-size: small;"><span>Code translation is more problematic, since the whole structure of a program and common libraries can be different. But if the code is doing some very encapsulated common process. For example just maths operations, or file operations. It can extract the comments and prompts and regenerate the code into another language for you.</span></span></p><p><span style="font-family: arial; font-size: small;"><span>One can imagine that one day the only language anyone will need will be a very high level, succinct English-like language, eg. Python.<br />When you want to write in a verbose or low-level language. You just write the simpler prompts in a spoken language, but use Python when it is faster to communicate explicitly than spoken. Since spoken languages are so unsuited to creating machine instructions. <br />Press a button and Copilot turns the lot into verbose C or Java code with English comments.</span></span></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 09, 2024 12:21 PM UTC by
-            <a href="http://edcrewe.blogspot.com/feeds/posts/default/-/python" class="link link-hover text-primary"
-              >Ed Crewe</a
-            >
-          </div>
-          <a
-            href="http://edcrewe.blogspot.com/2024/06/software-development-with-generative-ai.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1611,8 +1644,8 @@ as well as to send them to external applications. It is also possible to send v2
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8776</a></li>
-    <li><a>Unique Feeds: 430</a></li>
+    <li><a>Total Entries: 8741</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
