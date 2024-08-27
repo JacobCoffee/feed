@@ -53,209 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202406/coverage_at_a_crossroads.html" class="hover:underline"
-              >Coverage at a crossroads</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This is an interesting time for coverage.py: I&#8217;m trying to make use of new
-facilities in Python to drastically reduce the execution-time overhead, but it&#8217;s
-raising tricky questions about how coverage should work.</p><p>The current situation is a bit involved.  I&#8217;ll try to explain, but this will
-get long, with a few sections.  Come talk in <a href="https://discord.gg/RBw567RyWc" rel="external noopener">Discord</a>
-about anything here, or anything about coverage at all.</p><ul><li><a href="#h_how_coverage_works_today">How coverage works today</a></li><li><a href="#h_slipcover">SlipCover</a></li><li><a href="#h_python_312_sysmonitoring">Python 3.12: sys.monitoring</a></li><li><a href="#h_using_lines_for_branches">Using lines for branches</a></li><li><a href="#h_problems">Problems</a></li><li><a href="#h_where_are_we">Where are we?</a></li></ul><h1 id="h_how_coverage_works_today">How coverage works today<a class="headerlink" href="#h_how_coverage_works_today"></a></h1><p>Much of this is discussed in <a href="https://coverage.readthedocs.io/en/latest/howitworks.html" rel="external noopener">How coverage.py
-works</a>, but I&#8217;ll give a quick overview here to set the stage for the rest of
-this post.</p><h2 id="h_trace_function">Trace function<a class="headerlink" href="#h_trace_function"></a></h2><p>Coverage knows what code is executed because it registers a
-<a href="https://docs.python.org/3/library/sys.html#sys.settrace" rel="external noopener">trace function</a> which gets called for each line of
-Python execution.  This is the source of the overhead: calling a function is
-expensive.  Worse, for statement coverage, we only need one bit of information
-for each line: was it ever executed?  But the trace function will be invoked for
-every execution of the line, taking time but giving us no new information.</p><h2 id="h_arcs">Arcs<a class="headerlink" href="#h_arcs"></a></h2><p>The other thing to know about how coverage works today is arcs.  Coverage
-measures branch coverage by tracking the previous line that was executed, then
-the trace function can record an arc: the previous line number and the current
-line number as a pair.  Taken all together, these arcs show how execution has
-moved through the code.</p><p>Most arcs are uninteresting. Consider this simple program:</p><blockquote class="code"><pre class="python"><span class="linenos">1</span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
-<br /><span class="linenos">2</span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;world&quot;</span><span class="p">)</span>
-<br /><span class="linenos">3</span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;bye&quot;</span><span class="p">)</span>
-<br /></pre></blockquote><p>This will result in arcs (1, 2) and (2, 3).  Those tell us that lines 1, 2,
-and 3 were all executed, but nothing more interesting.  Lots of arcs are this
-kind of straight-line information.</p><p>But when there are choices in the execution path, arcs tell us about branches
-taken:</p><blockquote class="code"><pre class="python"><span class="linenos">1</span><span class="n">a</span>&#xa0;<span class="o">=</span>&#xa0;<span class="mi">1</span>
-<br /><span class="linenos">2</span><span class="k">if</span>&#xa0;<span class="n">a</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">1</span><span class="p">:</span>
-<br /><span class="linenos">3</span>&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a&#xa0;is&#xa0;one!&quot;</span><span class="p">)</span>
-<br /><span class="linenos">4</span><span class="k">else</span><span class="p">:</span>
-<br /><span class="linenos">5</span>&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a&#xa0;isn't&#xa0;one!&quot;</span><span class="p">)</span>
-<br /><span class="linenos">6</span><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Done&quot;</span><span class="p">)</span>
-<br /></pre></blockquote><p>Now we&#8217;ll collect these arcs during execution: (1, 2), (2, 3), (3, 6).  When
-coverage.py analyzes the code, it will determine that there were two possible
-arcs that didn&#8217;t happen: (2, 5) and (5, 6).</p><p>The set of all possible arcs is used to determine where the branches are. A
-branch is a line that has more than one possible arc leaving it.  In this case,
-the possible arcs include (2, 3) and (2, 5), so line 2 is a branch, and only one
-of the possible arcs happened, so line 2 is marked as a partial branch.</p><h1 id="h_slipcover">SlipCover<a class="headerlink" href="#h_slipcover"></a></h1><p><a href="https://github.com/plasma-umass/slipcover" rel="external noopener">SlipCover</a> is a completely different implementation
-of a coverage measurement tool, focused on minimal execution overhead. They&#8217;ve
-accomplished this in a few clever ways, primarily by instrumenting the code to
-directly announce what is happening rather than using a trace function.
-Synthetic bytecode or source lines are inserted into your code to
-record data during execution without using a trace function.</p><p>SlipCover&#8217;s author (Juan Altmayer Pizzorno) and I have been talking for years
-about how SlipCover and coverage.py each work, with the ultimate goal to
-incorporate SlipCover-like techniques into coverage.py.  SlipCover is an
-academic project, so was never meant to be widely used and maintained
-long-term.</p><p>One of the ways that SlipCover reduces overhead is to remove instrumentation
-once it has served its purpose.  After a line has been marked as executed, there
-is no need to keep that line&#8217;s inserted bytecode.  The extra tracking code can
-be removed to avoid its execution overhead.</p><p>Instrumenting and un-instrumenting code is complex.  With Python 3.12, we
-might be able to get the best aspects of instrumented code without having to
-jump through complicated hoops.</p><h1 id="h_python_312_sysmonitoring">Python 3.12: sys.monitoring<a class="headerlink" href="#h_python_312_sysmonitoring"></a></h1><p>Python 3.12 introduced a new way for Python to track execution.  The
-<a href="https://docs.python.org/3/library/sys.monitoring.html" rel="external noopener">sys.monitoring</a> feature lets you register for events when
-lines are executed.  This is similar to a classic trace function, but the
-crucial difference is you can disable the event line-by-line.  Once a line has
-reported its execution to coverage.py, that line&#8217;s event can be disabled, and
-the line will run at full speed in the future without the overhead of reporting
-to coverage. Other lines in the same file will still report their events, and
-they can each be disabled once they have fired once.  This gives us low overhead
-because lines mostly run at full speed.</p><p>Coverage.py has supported line coverage in 3.12
-<a href="https://nedbatchelder.com/blog/202312/coveragepy_with_sysmonitoring.html">since 7.4.0</a> with only 5%
-overhead or so.</p><p>Unfortunately, branch coverage is a different story.  sys.monitoring has
-branch events, but they are disabled based only on the &#8220;from&#8221; line, not on the
-&#8220;from/to&#8221; pair.  In our example above, line 2 could branch to 3 or to 5.  When
-sys.monitoring tells us line 2 branched to 3, we have to keep the event enabled
-until we get an event announcing line 2 branching to line 5.  This means we
-continue to suffer event overhead during execution of the 2-to-3 branch, plus
-we have to do our own bookkeeping to recognize when both branch destinations
-have been seen before we can disable the event.</p><p>As a result, branch coverage doesn&#8217;t get the same advantages from
-sys.monitoring as statement coverage.</p><p>I&#8217;ve been talking to the core Python devs about changing how sys.monitoring
-works for branches. But even if we come to a workable design, because of
-Python&#8217;s yearly release cycle it wouldn&#8217;t be available until 3.14 in October
-2025 at the earliest.</p><h1 id="h_using_lines_for_branches">Using lines for branches<a class="headerlink" href="#h_using_lines_for_branches"></a></h1><p>In SlipCover, Juan came up with an interesting approach to use sys.monitoring
-line events for measuring branch coverage.  SlipCover already had a few ways of
-instrumenting code, rewriting the code during import to add
-statements that report execution data.  The new idea was to add lines at the
-destinations of branches.  The lines don&#8217;t have to do anything. If
-sys.monitoring reports that the line was executed, then it must mean that the
-branch to that line happened.</p><p>As an example, our code from above would be rewritten to look something
-like this:</p><blockquote class="code"><pre class="python"><span class="n">a</span>&#xa0;<span class="o">=</span>&#xa0;<span class="mi">1</span>
-<br /><span class="k">if</span>&#xa0;<span class="n">a</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">1</span><span class="p">:</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;line&#xa0;2</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">NO</span><span class="o">-</span><span class="n">OP</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;line&#xa0;A,&#xa0;marked&#xa0;as&#xa0;2-&gt;3</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a&#xa0;is&#xa0;one!&quot;</span><span class="p">)</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;line&#xa0;3</span>
-<br /><span class="k">else</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">NO</span><span class="o">-</span><span class="n">OP</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;line&#xa0;B,&#xa0;marked&#xa0;as&#xa0;2-&gt;5</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a&#xa0;isn't&#xa0;one!&quot;</span><span class="p">)</span>&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;line&#xa0;5</span>
-<br /><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Done&quot;</span><span class="p">)</span>
-<br /></pre></blockquote><p>If sys.monitoring reports that line A was executed, we can record a branch
-from 2 to 3 and disable the event for line A.  This reduces the overhead and
-still lets us later get an event for line B when line 2 branches to line 5.</p><p>This seems to give us the best of all the approaches: events can be disabled
-for each choice from a branch independently, and the inserted lines can be as
-minimal as possible.</p><h1 id="h_problems">Problems<a class="headerlink" href="#h_problems"></a></h1><p>There are a few problems with adapting this clever approach to
-coverage.py.</p><h2 id="h_moving_away_from_arcs">Moving away from arcs<a class="headerlink" href="#h_moving_away_from_arcs"></a></h2><p>This technique changes the data we collect during execution.  We no longer
-get a (1, 2) arc, for example.  Overall, that&#8217;s fine because that arc isn&#8217;t
-involved in computing branches anyway.  But arcs are used as intermediate data
-throughout coverage.py, including its extensive test suite.  How can we move to
-arc-less measurement on 3.12+ without refactoring many tests and while still
-supporting Pythons older than 3.12?</p><p>I&#8217;ve gotten a start on adapting some test helpers to avoid having to change
-the tests, so this might not be a big blocker.</p><h2 id="h_is_every_multiarc_a_branch">Is every multi-arc a branch?<a class="headerlink" href="#h_is_every_multiarc_a_branch"></a></h2><p>Another problem is how coverage.py determines branches.  As I mentioned
-above, coverage.py statically analyzes code to determine all possible arcs.  Any
-line that could arc to more than one next line is considered a branch.  This
-works great for classic branches like if statements.  But what about this
-code?</p><blockquote class="code"><pre class="python"><span class="linenos">1</span><span class="k">def</span>&#xa0;<span class="nf">func</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
-<br /><span class="linenos">2</span>&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">try</span><span class="p">:</span>
-<br /><span class="linenos">3</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="n">x</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">10</span><span class="p">:</span>
-<br /><span class="linenos">4</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;early&#xa0;return&quot;</span><span class="p">)</span>
-<br /><span class="linenos">5</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>
-<br /><span class="linenos">6</span>&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">finally</span><span class="p">:</span>
-<br /><span class="linenos">7</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;finally&quot;</span><span class="p">)</span>
-<br /><span class="linenos">8</span>&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;finished&quot;</span><span class="p">)</span>
-<br /></pre></blockquote><p>If you look at line 7, there are two places it could go next.  If x is 10,
-line 7 will return from the function because of the return on line 5.  If x is
-not 10, then line 7 will be followed by line 8.  Coverage.py&#8217;s static analysis
-understands these possibilities and includes both (7, return) and (7, 8) in the
-possible arcs, so it considers line 7 a branch.  But is it?  The conditional
-here is really on line 3, which is already considered a branch.</p><p>I mention this as a problem here because the clever NO-OP rewriting scheme
-depends on being able to insert a line at a destination that clearly indicates
-where the branch started from.  In this finally clause, where would we put the
-NO-OP line for the return?  The rewriting scheme breaks down if the same
-destination can be reached from different starting points.</p><p>But maybe those cases are exactly the ones that shouldn&#8217;t be considered
-branches in the first place?</p><h1 id="h_where_are_we">Where are we?<a class="headerlink" href="#h_where_are_we"></a></h1><p>I&#8217;ve been hacking on this in a <a href="https://github.com/nedbat/coveragepy/tree/nedbat/sysmon-fake-lines-for-branches" rel="external noopener">branch in the coveragepy
-repo</a>.  It&#8217;s a complete mess with print-debugging throughout just to see
-where this idea could lead.</p><p>For measuring performance, we have a cobbled-together benchmark tool in the
-<a href="https://github.com/nedbat/coveragepy/tree/master/benchmark" rel="external noopener">benchmark directory of the repo</a>. I could use help
-making it more repeatable and useful if you are interested.</p><p>I&#8217;m looking for thoughts about how to resolve some of these issues, and how
-to push forward on a faster coverage.py.  There&#8217;s now a
-<a href="https://discord.gg/RBw567RyWc" rel="external noopener">#coverage-py channel</a> in the Python Discord where I&#8217;d
-welcome feedback or ideas about any of this, or anything to do with
-coverage.py.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 21, 2024 12:14 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202406/coverage_at_a_crossroads.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/209/" class="hover:underline"
-              >The Real Python Podcast – Episode #209: Python's Command-Line Utilities & Music Information Retrieval Tools</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            What are the built-in Python modules that can work as useful command-line tools? How can these tools add more functionality to Windows machines? Christopher Trudeau is back on the show this week, bringing another batch of PyCoder's Weekly articles and projects.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 21, 2024 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/209/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://sethmlarson.dev/security-developer-in-residence-report-38?utm_campaign=rss" class="hover:underline"
               >CPython vulnerability data infrastructure (CVE and OSV)</a
             >
@@ -1509,6 +1306,110 @@ asyncio.TaskGroup and asyncio.timeout.</p><p>Async programs that are structured 
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-pyrepl-new-pdb.html" class="hover:underline"
+              >The Python Language Summit 2024: Should we make pdb better?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Tian Gao came to the Language Summit 2024 to talk about improving <a href="https://docs.python.org/3/library/pdb.html">pdb</a>, short for "Python debugger", a module and command line tool for debugging Python.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjcwAFtvp4eyohqY1hi5IaCGZhjtHli8UuGnZsbcxIXojkJa-jtv8tcbGcpKfKT0sj78TdARW7h6lm3McZu1lxcutLw6SQx45ME7UL0mt7mEqkQRIoJBdtowo1QmH8ffA9tMvJH1iGo_qHjkXvuDCFzaoHYl58080Hf_IUiIvJ1igj9-kNxlg/s4000/20240515_144421.jpg" style="margin-left: auto; margin-right: auto;"><img border="0" height="240" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjcwAFtvp4eyohqY1hi5IaCGZhjtHli8UuGnZsbcxIXojkJa-jtv8tcbGcpKfKT0sj78TdARW7h6lm3McZu1lxcutLw6SQx45ME7UL0mt7mEqkQRIoJBdtowo1QmH8ffA9tMvJH1iGo_qHjkXvuDCFzaoHYl58080Hf_IUiIvJ1igj9-kNxlg/s320/20240515_144421.jpg" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Tian Gao presenting on how to improve pdb<br /></td></tr></tbody></table><p>There are not many command-line debugger alternatives to pdb for Python. Tian mentioned a few, including PuDB, pdb++, and ipdb, but those alternatives are all themselves based on either <a href="https://docs.python.org/3/library/pdb.html">pdb</a> or another standard library module '<a href="https://docs.python.org/3/library/bdb.html">bdb</a>'.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj4A1ZLNLEbvfhdtXCqgVcSpmgLAwTxzsJQLRe1pcRi17Cq2qbzDYX5VisUdHjl3oAsuuLT6-0LeVwHdw73iFfa6xOeOqSzep1bSVJdaiMOFcYec_vSqLJWO79rOF8rnV8mS9mi8mDImum7m-uSHGGAAVAweGiKMsBI3Cm0OlEIe40CIdh-5g/s1370/Screenshot%20from%202024-06-03%2017-27-48.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="181" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj4A1ZLNLEbvfhdtXCqgVcSpmgLAwTxzsJQLRe1pcRi17Cq2qbzDYX5VisUdHjl3oAsuuLT6-0LeVwHdw73iFfa6xOeOqSzep1bSVJdaiMOFcYec_vSqLJWO79rOF8rnV8mS9mi8mDImum7m-uSHGGAAVAweGiKMsBI3Cm0OlEIe40CIdh-5g/s320/Screenshot%20from%202024-06-03%2017-27-48.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">pdb is the only "standalone" command-line-based Python debugger<br /></td></tr></tbody></table><br /><p>Tian presented a laundry list of desirable new features that could be added to pdb, including:<br /></p><ul style="text-align: left;"><li>Showing more lines of code around the current breakpoint.</li><li>Colors in the terminal, syntax highlighting.</li><li>Customization, with defaults being safe.<br /></li><li>Handling of more scenarios (threads, asyncio, bytecode, remote debugging)<br /></li></ul><h3 style="text-align: left;">Performance and backwards compatibility <br /></h3><p>The biggest issue according to Tian, which he noted had been discussed in the past, was the performance of pdb. "pdb is slow because sys.trace is slow, which is something we cannot change", and the only way forward on making pdb faster is to switch to sys.monitoring to avoid triggering unnecessary events.</p><p>Switching to sys.monitoring would give a big boost to performance. According to Tian, "setting a breakpoint in your code in the worst case you get a 100x slowdown compared to almost zero overhead with sys.monitoring". Unfortunately, switching isn't so easy, Tian noted there are serious backwards compatibility concerns for the standard library module <a href="https://docs.python.org/3/library/bdb.html">bdb</a> if pdb were to start using sys.monitoring.<br /></p><p>"If we're not ready to [switch to sys.monitoring] yet, would we ever do this in the future?", Tian asked the group, noting that an alternative is to create a third-party library and encourage folks to use that library instead. </p><p>Thomas Wouters started off saying that "bdb is a standard library module and it cannot break user code" and cautioned that core developers don't know who is depending on modules. bdb's interface can't have backwards incompatible changes without long deprecation periods. In Thomas' mind, "the answer is obvious, leave pdb as it is and build something else".</p><p>Thomas also noted "in the long-term, a debugger in the standard library is important" but that development doesn't need to happen in the standard library. Thomas listed the benefits for developing a new debugger outside the standard library like being able to publish outside the Python release schedule and to use the debugger with older Python versions. Once a debugger reaches a certain level of stability it can be added to the standard library and potentially replace pdb.</p><p>Tian agreed with Thomas' proposal in theory, but was concerned that a third-party debugger on PyPI wouldn't see the same levels of adoption compared to being in the standard library and thus would struggle to meet a threshold of "stability" without a critical mass of users. Or worse yet, maintainers wouldn't be motivated to continue due to a lack of use, resulting in a "dead project". (Some foreshadowing, Steering Council member Emily Morehouse <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-lightning-talks.html">gave a lightning talk on this topic</a> later on in the Language Summit)</p><p>Łukasz Langa noted that Python now has support for "<a href="https://docs.python.org/3/library/functions.html#breakpoint">breakpoint()</a>"
+ and that "what breakpoint() actually does, we can change. We can run 
+another debugger if we decide to", referencing if a better debugger was 
+added in the future to CPython that it could be made into a new default 
+for breakpoints.<br /></p><p>Russell Keith-Magee from BeeWare, was interested in what Tian had said about remote 
+debugging, noting that "remote debugging is the only way you can debug 
+[on mobile platforms]". Russell would be interested in pdb or a new 
+debugger supporting this use-case. Tian noted that unfortunately remote debugging would be one of the more difficult features to implement.</p><p></p><p>Pablo Galindo Salgado, commenting on existing Python "attach-to-process" debuggers, said that the hacks in use today are "extremely unsafe". Pablo said that "we'd need something inside CPython [to be safe], but then you have another problem, you have to implement that feature on [all platforms]". Pablo also mentioned that attach-to-process debugging is usually a bad model because it can't be enabled by default for security reasons but "you won't know when you'll need to debug".</p><p>Anthony Shaw asked about the scope of the project and was interested 
+in whether there could be a framework for debugging in CPython that pdb 
+and others could build on. Anthony pointed out that many other debuggers
+ "needed to do a bunch of hooks and tricks" to do debugging because it's
+ "not provided out of the box by CPython".</p><p>Tian responded that 
+"bdb is supposed to do that, but it was written 30 years ago so is too 
+old to support new things that a debugger wants". Others mentioned that <a href="https://docs.python.org/3/library/sys.monitoring.html">sys.monitoring</a> (new in Python 3.12) was meant to be a framework for debuggers to build on.</p><p></p><p>Gregory Smith, Steering Council member, said he "wants all of these things" and agreed with Thomas to "develop this as much as you can... outside of the standard library", telling Tian that "you're going to end up in a better state that way". Greg's primary concern was whether CPython needed to do anything to enable Tian's proposal. He continued, "it sounds like we (CPython) have most of what we need, but if we don't let's get that planned so we can enable a successful separate project before we ship it with Python in the future".<br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 14, 2024 01:13 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-pyrepl-new-pdb.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-python-on-mobile.html" class="hover:underline"
+              >The Python Language Summit 2024: Python on Mobile</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Malcolm Smith from BeeWare presented on the status and direction of Python on mobile platforms like iOS and Android. BeeWare has been working on bringing Python to mobile for a few years now. Previously Russell Keith-Magee gave a talk at the <a href="https://pyfound.blogspot.com/2023/05/the-python-language-summit-2023-python.html">Language Summit in 2023 on BeeWare</a> to announce plans for <a href="https://peps.python.org/pep-0011/#tier-3">Tier 3 support</a> for Python on Android and iOS in Python 3.13 along with Anaconda's funded support for the project.<br /></p><p>Now we've arrived at Python 3.13 pre-releases, and things are going well! Malcolm reported that "the implementations are nearly complete" along with thank-yous to the core developers who helped with the project.<br /></p><p></p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixExyJnspFUzIv-sCDG25YGQznrvIlXm5E-McCWSTT9yi86L7-jUcjj432lFz52wLq80wkEgX6U_7hFiWY_VnZPiPVNRZBB4qDKFQuXYfFCGlDn2sQ6lgjuiMG0X6SryKr0gG11X6ebw8AfLjsj2F0LLGnynRph33i0xPbejo5HBTjGs5TFg/s798/Screenshot%20from%202024-05-28%2016-17-02.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="183" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEixExyJnspFUzIv-sCDG25YGQznrvIlXm5E-McCWSTT9yi86L7-jUcjj432lFz52wLq80wkEgX6U_7hFiWY_VnZPiPVNRZBB4qDKFQuXYfFCGlDn2sQ6lgjuiMG0X6SryKr0gG11X6ebw8AfLjsj2F0LLGnynRph33i0xPbejo5HBTjGs5TFg/s320/Screenshot%20from%202024-05-28%2016-17-02.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Overview of current Python mobile platform support<br /></td></tr></tbody></table><p>The other platforms listed in the table "iOS x86_64 and Android ARM32/x86", don't have any plans to be implemented. There aren't any actual physical devices for iOS on x86_64 as the architecture is only used for development simulators.<br /></p><p>For Android the ARM32 and x86 platforms are being phased out due to being 32-bit architectures and today represent less than 10% of devices. For these reasons, Malcolm and team have decided not to implement support for this architecture.<br /></p><p>Malcolm also reported that there is a buildbot for iOS and in the coming weeks there will be buildbots added for Android ARM64 and x86_64 platforms.</p><h3 style="text-align: left;">Let's talk packages!<br /></h3><p> Python is well-known for its rich package ecosystem, and the BeeWare 
+team is working on bringing Python packages to mobile Python, too. "It's not enough just to have support for CPython", Malcolm said on this topic, "we also need to 
+support the packaging ecosystem". As with many new platforms for Python,
+ pure Python packages work without much issue and "the difficulty comes in with
+ anything which contains native compiled components".</p><p>&nbsp;</p><p></p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj3dD8cimeWwy6C-5ZI1u9BIWXH9xavRe3bEsX39JrLTL8LICA2M71VKqWdwFJk-tZjAe9e_keVDm3b9uNHK5wjQvx5Bo4nlmRKDYwWd5eL-RtOUG1FOgHWVUOk4jDTKROaJb33JTWuBmedaw3MR4LupbmqCSRoF7vAhxv4Ls3g8-ORXTxgKw/s799/Screenshot%20from%202024-05-28%2016-20-10.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="126" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEj3dD8cimeWwy6C-5ZI1u9BIWXH9xavRe3bEsX39JrLTL8LICA2M71VKqWdwFJk-tZjAe9e_keVDm3b9uNHK5wjQvx5Bo4nlmRKDYwWd5eL-RtOUG1FOgHWVUOk4jDTKROaJb33JTWuBmedaw3MR4LupbmqCSRoF7vAhxv4Ls3g8-ORXTxgKw/s320/Screenshot%20from%202024-05-28%2016-20-10.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">The current and future approach for mobile-friendly Python packages<br /></td></tr></tbody></table>&nbsp;<p></p><p>The BeeWare team's approach so far has been to bootstrap packages with native components on their own by creating tools and "building wheels for popular packages like numpy, cryptography, and Pillow". Malcolm reported that the current approach of rebuilding individual packages isn't scalable and the team would need to help upstream maintainers build their own mobile wheels. Malcolm said the team plans to focus this year on "making it as easy as possible to produce and release [mobile] wheels within existing workflows" and contributing to tools like cibuildwheel, setuptools, and PyO3.</p><p>Malcolm also hopes that "by the end of this year some of the major packages will be in position to start releasing mobile wheels to the Python Package Index". The team has already specified a format for the wheel tags for iOS (<a href="https://peps.python.org/pep-0730/#packaging">PEP 730</a>) and Android (<a href="https://peps.python.org/pep-0738/#packaging">PEP 738</a>). "The binary compatibility situation is pretty good", Malcolm noted that iOS and Android both come from a single source in Apple and Google respectively meaning "there's a fairly well-defined set of libraries available on each version".</p><p>Python today provides an embeddable package for the Windows platform. Malcolm requested from the group that more official Python embeddable packages be created for each of the mobile platforms with headers and libraries to ease building Python packages for those platforms. Having these artifacts available would provide a reference for binary compatibility on those platforms.</p><p>Ned Deily, the macOS release expert for CPython, agreed that having more
+ binary releases for macOS and iOS is something we "should definitely do
+ in the 3.14 timeframe".<br /></p><h3 style="text-align: left;">Challenges with keeping mobile buildbots green<br /></h3><p style="text-align: left;">Malcolm provided the core developer team some tips on writing Python code with these new and constrained platforms in mind. He warned that there is little to no support for spawning subprocesses, but "multi-threading on the other hand is perfectly fine on both of these platforms".</p><p style="text-align: left;">Mobile platforms also tend to be constrained in terms of security. iOS only allows loading libraries from specific folders and Android has restrictions like not being able to read the root directory or create hard links.</p><p style="text-align: left;">Given these differences, "it's reasonable to expect that mobile platforms will have more frequent failures as development proceeds, so how do we go about testing them?" The full CPython test suite is running on both mobile platforms with 
+buildbots, but today there's no testing done 
+before a pull request is merged. This situation leads to mobile buildbots starting to fail without the contributing developer necessarily noticing.</p><p style="text-align: left;">This problem is exacerbated by limited continuous integration (CI) resources in GitHub Actions, especially for macOS which limits virtualization on ARM64 processors. Malcolm suggested evaluating <a href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue#about-merge-queues">GitHub's Merge Queue feature</a> as a potential way to solve this issue by requiring a small amount of testing on mobile platforms without blocking development of features.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEizihyphenhyphen3scy_eGOswab7CI_de9nl5dHwj4S-HnT0neRp6ezuEbs6qgDPo4Rx3wH98P3Rt2RoxtZzsouB-afH7Hs82s1AQD_76hk-b8Bz33U8cEpc8BHKeBKptWzlRjs313VU9YvA9lb8VezFqn1UjNoPHC_9-H4ySshqZd-QhEyHqFKNNMllvg/s1198/Screenshot%20from%202024-05-29%2012-47-34.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="180" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEizihyphenhyphen3scy_eGOswab7CI_de9nl5dHwj4S-HnT0neRp6ezuEbs6qgDPo4Rx3wH98P3Rt2RoxtZzsouB-afH7Hs82s1AQD_76hk-b8Bz33U8cEpc8BHKeBKptWzlRjs313VU9YvA9lb8VezFqn1UjNoPHC_9-H4ySshqZd-QhEyHqFKNNMllvg/s320/Screenshot%20from%202024-05-29%2012-47-34.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">Malcolm's proposal for better visibility of test failures for mobile<br /></td></tr></tbody></table><br /><p style="text-align: left;">Łukasz Langa agreed that CI was an issue, one that he's actively looking improving, but wasn't convinced that using a merge queue would decrease the number of jobs required to run. Malcolm clarified that he is proposing only running a smaller subset of jobs per-commit in pull requests and the complete set, including some buildbots, as a part of pre-merge testing. <br /></p><p style="text-align: left;"><span class="css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3"><span class="css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3">Many folks expressed concern about adding buildbots as a part of pre-merge or per-commit checks, because buildbots have no high-availability SLA and often suffer occasional outages, some buildbots not being reliable and therefore preventing merging of commits, and concerns about security of unreviewed changes running on buildbots.<br /></span></span></p><p style="text-align: left;"><span class="css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3"><span class="css-1jxf684 r-bcqeeo r-1ttztb7 r-qvutc0 r-poiln3">Thomas Wouters, Python 3.13 release manager, was "unconvinced" on adding pre-merge testing for Tier 3 platforms, something that is <a href="https://peps.python.org/pep-0011/#support-tiers">usually reserved for Tier 1 platforms</a>.</span></span></p><p style="text-align: left;">Ned Deily recommended doing iOS builds as a part
+ of existing macOS builds in GitHub Actions. This would catch build 
+errors for the platform and would likely find some issues early without 
+much additional investment.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 14, 2024 01:13 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/06/python-language-summit-2024-python-on-mobile.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1520,8 +1421,8 @@ asyncio.TaskGroup and asyncio.timeout.</p><p>Async programs that are structured 
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8770</a></li>
-    <li><a>Unique Feeds: 429</a></li>
+    <li><a>Total Entries: 8752</a></li>
+    <li><a>Unique Feeds: 428</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
