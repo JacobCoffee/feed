@@ -53,6 +53,688 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2024/07/finding-simple-rewrite-rules-jit-z3.html" class="hover:underline"
+              >Finding Simple Rewrite Rules for the JIT with Z3</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In June I was at the <a href="https://pldi24.sigplan.org/">PLDI conference</a> in
+Copenhagen to present a <a href="https://dl.acm.org/doi/10.1145/3652588.3663316">paper</a>
+I co-authored with <a href="https://bernsteinbear.com/">Max Bernstein</a>. I also finally
+met <a href="https://blog.regehr.org/">John Regehr</a>, who I'd been talking on social
+media for ages but had never met. John has been working on compiler correctness
+and better techniques for building compilers and optimizers since a very long
+time. The blog post <a href="https://www.pypy.org/posts/2022/12/jit-bug-finding-smt-fuzzing.html">Finding JIT Optimizer Bugs using SMT Solvers and
+Fuzzing</a>
+was heavily inspired by this work. We talked a lot about his and his groups
+work on using Z3 for
+<a href="https://en.wikipedia.org/wiki/Superoptimization">superoptimization</a> and for
+finding missing optimizations. I have applied some of the things John told me
+about to the traces of PyPy's JIT, and wanted to blog about that. However, my
+draft felt quite hard to understand. Therefore I have now written this current
+post, to at least try to provide a somewhat gentler on-ramp to the topic.</p>
+<p>In <em>this</em> post we will use the Python-API to Z3 to find local peephole rewrite
+rules for the operations in the intermediate representation of PyPy's tracing
+JIT. The code for this is simple enough that we can go through all of it.</p>
+<p>The PyPy JIT produces traces of machine level instructions, which are optimized
+and then turned into machine code. The optimizer uses a number of approaches to
+make the traces more efficient. For integer operations it applies a number of
+arithmetic simplification rules rules, for example <code>int_add(x, 0) -&gt; x</code>. When
+implementing these rules in the JIT there are <strong>two problems</strong>: How do we know
+that the rules are correct? And how do we know that we haven't forgotten any
+rules? We'll try to answer both of these, but the first one in particular.</p>
+<p>We'll be using Z3, a satisfiability module theories (SMT) solver which has good
+bitvector support and most importantly an excellent Python API. We can use the
+solver to reason about bitvectors, which are how we will model machine
+integers.</p>
+<p>To find rewrite rules, we will consider the binary operations (i.e. those
+taking two arguments) in PyPy traces that take and produce integers. The
+completely general form <code>op(x, y)</code> is not simplifiable on its own. But if
+either <code>x == y</code>
+or if one of the arguments is a constant, we can potentially simplify the
+operation into a simpler form. The results are either the variable <code>x</code>, or a
+(potentially different) constant. We'll ignore constant-folding where both
+arguments of the binary operation are constants. The possible results for a
+simplifiable binary operation are the variable <code>x</code> or another constant. This
+leaves the following patterns as possibilities:</p>
+<ul>
+<li><code>op(x, x) == x</code></li>
+<li><code>op(x, x) == c1</code></li>
+<li><code>op(x, c1) == x</code></li>
+<li><code>op(c1, x) == x</code></li>
+<li><code>op(x, c1) == c2</code></li>
+<li><code>op(c1, x) == c2</code></li>
+</ul>
+<p>Our approach will be to take every single supported binary integer operation,
+instantiate all of these patterns, and try to ask Z3 whether the resulting
+simplification is valid for all values of <code>x</code>.</p>
+<h3 id="quick-intro-to-the-z3-python-api">Quick intro to the Z3 Python-API</h3>
+<p>Here's a terminal session showing the use of the Z3 Python API:</p>
+<div class="code"><pre class="code literal-block"><span class="go">&gt;&gt;&gt;&gt; import z3</span>
+<span class="go">&gt;&gt;&gt;&gt; # construct a Z3 bitvector variable of width 8, with name x:</span>
+<span class="go">&gt;&gt;&gt;&gt; x = z3.BitVec('x', 8)</span>
+<span class="go">&gt;&gt;&gt;&gt; # construct a more complicated formula by using operator overloading:</span>
+<span class="go">&gt;&gt;&gt;&gt; x + x</span>
+<span class="go">x + x</span>
+<span class="go">&gt;&gt;&gt;&gt; x + 1</span>
+<span class="go">x + 1</span>
+</pre></div>
+
+<p>Z3 checks the "satisfiability" of a formula. This means that it tries to find
+an example set of concrete values for the variables that occur in a formula,
+such that the formula becomes true. Examples:</p>
+<div class="code"><pre class="code literal-block"><span class="go">&gt;&gt;&gt;&gt; solver = z3.Solver()</span>
+<span class="go">&gt;&gt;&gt;&gt; solver.check(x * x == 3)</span>
+<span class="go">unsat</span>
+<span class="go">&gt;&gt;&gt;&gt; # meaning no x fulfils this property</span>
+<span class="go">&gt;&gt;&gt;&gt;</span>
+<span class="go">&gt;&gt;&gt;&gt; solver.check(x * x == 9)</span>
+<span class="go">sat</span>
+<span class="go">&gt;&gt;&gt;&gt; model = solver.model()</span>
+<span class="go">&gt;&gt;&gt;&gt; model</span>
+<span class="go">[x = 253]</span>
+<span class="go">&gt;&gt;&gt;&gt; model[x].as_signed_long()</span>
+<span class="go">-3</span>
+<span class="go">&gt;&gt;&gt;&gt; # 253 is the same as -3 in two's complement arithmetic with 8 bits</span>
+</pre></div>
+
+<p>In order to use Z3 to prove something, we can ask Z3 to find counterexamples
+for the statement, meaning concrete values that would make the negation of the
+statement true:</p>
+<div class="code"><pre class="code literal-block"><span class="go">&gt;&gt;&gt;&gt; solver.check(z3.Not(x ^ -1 == ~x))</span>
+<span class="go">unsat</span>
+</pre></div>
+
+<p>The result <code>unsat</code> means that we just proved that <code>x ^ -1 == ~x</code> is true for
+all <code>x</code>, because there is no value for <code>x</code> that makes <code>not (x ^ -1 == ~x)</code>
+true (this works because -1 has all the bits set).</p>
+<p>If we try to prove something incorrect in this way, the following happens:</p>
+<div class="code"><pre class="code literal-block"><span class="go">&gt;&gt;&gt;&gt; solver.check(z3.Not(x ^ -1 == x))</span>
+<span class="go">sat</span>
+</pre></div>
+
+<p><code>sat</code> shows that <code>x ^ -1 == x</code> is (unsurprisingly) not always true, and we can
+ask for a counterexample:</p>
+<div class="code"><pre class="code literal-block"><span class="go">&gt;&gt;&gt;&gt; solver.model()</span>
+<span class="go">[x = 0]</span>
+</pre></div>
+
+<p>This way of proving this works because the <code>check</code> calls try to solve an
+(implicit) "exists" quantifier, over all the Z3 variables used in the formula.
+<code>check</code> will either return <code>z3.unsat</code>, which means that no concrete values make
+the formula true; or <code>z3.sat</code>, which means that you can get some concrete
+values that make the formula true by calling <code>solver.model()</code>.</p>
+<p>In math terms we prove things using <code>check</code> by de-Morgan's rules for quantifiers:</p>
+<p>$$ \lnot \exists x: \lnot f(x) \implies \forall x: f(x) $$</p>
+<p>Now that we've seen the basics of using the Z3 API on a few small examples,
+we'll use it in a bigger program.</p>
+<h3 id="encoding-the-integer-operations-of-rpythons-jit-into-z3-formulas">Encoding the integer operations of RPython's JIT into Z3 formulas</h3>
+<p>Now we'll use the API to reason about the integer operations of the PyPy JIT
+intermediate representation (IR). The binary integer operations are:</p>
+<div class="code"><pre class="code literal-block"><span class="n">opnames2</span> <span class="o">=</span> <span class="p">[</span>
+<span class="s2">"int_add"</span><span class="p">,</span>
+<span class="s2">"int_sub"</span><span class="p">,</span>
+<span class="s2">"int_mul"</span><span class="p">,</span>
+<span class="s2">"int_and"</span><span class="p">,</span>
+<span class="s2">"int_or"</span><span class="p">,</span>
+<span class="s2">"int_xor"</span><span class="p">,</span>
+<span class="s2">"int_eq"</span><span class="p">,</span>
+<span class="s2">"int_ne"</span><span class="p">,</span>
+<span class="s2">"int_lt"</span><span class="p">,</span>
+<span class="s2">"int_le"</span><span class="p">,</span>
+<span class="s2">"int_gt"</span><span class="p">,</span>
+<span class="s2">"int_ge"</span><span class="p">,</span>
+<span class="s2">"uint_lt"</span><span class="p">,</span>
+<span class="s2">"uint_le"</span><span class="p">,</span>
+<span class="s2">"uint_gt"</span><span class="p">,</span>
+<span class="s2">"uint_ge"</span><span class="p">,</span>
+<span class="s2">"int_lshift"</span><span class="p">,</span>
+<span class="s2">"int_rshift"</span><span class="p">,</span>
+<span class="s2">"uint_rshift"</span><span class="p">,</span>
+<span class="s2">"uint_mul_high"</span><span class="p">,</span>
+<span class="s2">"int_pydiv"</span><span class="p">,</span>
+<span class="s2">"int_pymod"</span><span class="p">,</span>
+<span class="p">]</span>
+</pre></div>
+
+<p>There's not much special about the integer operations. Like in LLVM, most of
+them are signedness-independent: <code>int_add</code>, <code>int_sub</code>, <code>int_mul</code>, ... work
+correctly for unsigned integers but also for
+<a href="https://en.wikipedia.org/wiki/Two%27s_complement">two's-complement</a> signed
+integers. Exceptions for that are order comparisons like <code>int_lt</code> etc. for
+which we have unsigned variants <code>uint_lt</code> etc. All operations that produce a
+boolean result return a full-width integer <code>0</code> or <code>1</code> (the PyPy JIT supports
+only word-sized integers in its intermediate representation)</p>
+<p>In order to reason about the IR operations, some ground work:</p>
+<div class="code"><pre class="code literal-block"><span class="kn">import</span> <span class="nn">z3</span>
+
+<span class="n">INTEGER_WIDTH</span> <span class="o">=</span> <span class="mi">64</span>
+<span class="n">solver</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">Solver</span><span class="p">()</span>
+<span class="n">solver</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s2">"timeout"</span><span class="p">,</span> <span class="mi">10000</span><span class="p">)</span> <span class="c1"># milliseconds, ie 10s</span>
+<span class="n">xvar</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">BitVec</span><span class="p">(</span><span class="s1">'x'</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+<span class="n">constvar</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">BitVec</span><span class="p">(</span><span class="s1">'const'</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+<span class="n">constvar2</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">BitVec</span><span class="p">(</span><span class="s1">'const2'</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+<span class="n">TRUEBV</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">BitVecVal</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+<span class="n">FALSEBV</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">BitVecVal</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+</pre></div>
+
+<p>And here's the a function to turn an integer IR operation of PyPy's JIT into Z3
+formulas:</p>
+<div class="code"><pre class="code literal-block"><span class="k">def</span> <span class="nf">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">""" computes a tuple of (result, valid_if) of Z3 formulas. `result` is the</span>
+<span class="sd">    formula representing the result of the operation, given argument formulas</span>
+<span class="sd">    arg0 and arg1. `valid_if` is a pre-condition that must be true for the</span>
+<span class="sd">    result to be meaningful. """</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">valid_if</span> <span class="o">=</span> <span class="kc">True</span> <span class="c1"># the precondition is mostly True, with few exceptions</span>
+    <span class="k">if</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_add"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">+</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_sub"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">-</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_mul"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">*</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_and"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">&amp;</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_or"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">|</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_xor"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">^</span> <span class="n">arg1</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_eq"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">==</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_ne"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">!=</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_lt"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">&lt;</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_le"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">&lt;=</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_gt"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">&gt;</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_ge"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">&gt;=</span> <span class="n">arg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_lt"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">ULT</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_le"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">ULE</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_gt"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">UGT</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_ge"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">UGE</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_lshift"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">&lt;&lt;</span> <span class="n">arg1</span>
+        <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">arg1</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">&lt;</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_rshift"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">&lt;&lt;</span> <span class="n">arg1</span>
+        <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">arg1</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">&lt;</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_rshift"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">LShR</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+        <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">arg1</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">&lt;</span> <span class="n">INTEGER_WIDTH</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"uint_mul_high"</span><span class="p">:</span>
+        <span class="c1"># zero-extend args to 2*INTEGER_WIDTH bit, then multiply and extract</span>
+        <span class="c1"># highest INTEGER_WIDTH bits</span>
+        <span class="n">zarg0</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">ZeroExt</span><span class="p">(</span><span class="n">INTEGER_WIDTH</span><span class="p">,</span> <span class="n">arg0</span><span class="p">)</span>
+        <span class="n">zarg1</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">ZeroExt</span><span class="p">(</span><span class="n">INTEGER_WIDTH</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">Extract</span><span class="p">(</span><span class="n">INTEGER_WIDTH</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">INTEGER_WIDTH</span><span class="p">,</span> <span class="n">zarg0</span> <span class="o">*</span> <span class="n">zarg1</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_pydiv"</span><span class="p">:</span>
+        <span class="n">valid_if</span> <span class="o">=</span> <span class="n">arg1</span> <span class="o">!=</span> <span class="mi">0</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">/</span> <span class="n">arg1</span>
+        <span class="n">psubx</span> <span class="o">=</span> <span class="n">r</span> <span class="o">*</span> <span class="n">arg1</span> <span class="o">-</span> <span class="n">arg0</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">r</span> <span class="o">+</span> <span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">If</span><span class="p">(</span><span class="n">arg1</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">,</span> <span class="n">psubx</span><span class="p">,</span> <span class="o">-</span><span class="n">psubx</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">INTEGER_WIDTH</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_pymod"</span><span class="p">:</span>
+        <span class="n">valid_if</span> <span class="o">=</span> <span class="n">arg1</span> <span class="o">!=</span> <span class="mi">0</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">arg0</span> <span class="o">%</span> <span class="n">arg1</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">r</span> <span class="o">+</span> <span class="p">(</span><span class="n">arg1</span> <span class="o">&amp;</span> <span class="n">z3</span><span class="o">.</span><span class="n">If</span><span class="p">(</span><span class="n">arg1</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="n">r</span><span class="p">,</span> <span class="n">r</span><span class="p">)</span> <span class="o">&gt;&gt;</span> <span class="p">(</span><span class="n">INTEGER_WIDTH</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_is_true"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">!=</span> <span class="n">FALSEBV</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_is_zero"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">cond</span><span class="p">(</span><span class="n">arg0</span> <span class="o">==</span> <span class="n">FALSEBV</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_neg"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="o">-</span><span class="n">arg0</span>
+    <span class="k">elif</span> <span class="n">opname</span> <span class="o">==</span> <span class="s2">"int_invert"</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="o">~</span><span class="n">arg0</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"unknown operation "</span> <span class="o">+</span> <span class="n">opname</span>
+    <span class="k">return</span> <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span>
+
+<span class="k">def</span> <span class="nf">cond</span><span class="p">(</span><span class="n">z3expr</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">""" helper function to turn a Z3 boolean result z3expr into a 1 or 0</span>
+<span class="sd">    bitvector, using z3.If """</span>
+    <span class="k">return</span> <span class="n">z3</span><span class="o">.</span><span class="n">If</span><span class="p">(</span><span class="n">z3expr</span><span class="p">,</span> <span class="n">TRUEBV</span><span class="p">,</span> <span class="n">FALSEBV</span><span class="p">)</span>
+</pre></div>
+
+<p>We map the semantics of a PyPy JIT operation to Z3 with the <code>z3_expression</code>
+function. It takes the name of a JIT operation and its two (or one) arguments
+into a pair of Z3 formulas, <code>result</code> and <code>valid_if</code>. The resulting formulas are
+constructed with the operator overloading of Z3 variables/formulas.</p>
+<p>The first element <code>result</code> of the result of <code>z3_expression</code> represents the result
+of performing the operation. <code>valid_if</code> is a bool that represents a condition that
+needs to be <code>True</code> in order for the result of the operation to be defined. E.g.
+<code>int_pydiv(a, b)</code> is only valid if <code>b != 0</code>. Most operations are always valid,
+so they return <code>True</code> as that condition (we'll ignore <code>valid_if</code> for a bit, but it
+will become more relevant further down in the post).</p>
+<p>We can define a helper function to prove things by finding counterexamples:</p>
+<div class="code"><pre class="code literal-block"><span class="k">def</span> <span class="nf">prove</span><span class="p">(</span><span class="n">cond</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">""" Try to prove a condition cond by searching for counterexamples of its negation. """</span>
+    <span class="n">z3res</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">Not</span><span class="p">(</span><span class="n">cond</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">z3res</span> <span class="o">==</span> <span class="n">z3</span><span class="o">.</span><span class="n">unsat</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">elif</span> <span class="n">z3res</span> <span class="o">==</span> <span class="n">z3</span><span class="o">.</span><span class="n">unknown</span><span class="p">:</span> <span class="c1"># eg on timeout</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">elif</span> <span class="n">z3res</span> <span class="o">==</span> <span class="n">z3</span><span class="o">.</span><span class="n">sat</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    <span class="k">assert</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"should be unreachable"</span>
+</pre></div>
+
+<h3 id="finding-rewrite-rules">Finding rewrite rules</h3>
+<p>Now we can start finding our first rewrite rules, following the first pattern
+<code>op(x, x) -&gt; x</code>. We do this by iterating over all the supported binary
+operation names, getting the z3 expression for <code>op(x, x)</code> and then asking Z3 to
+prove <code>op(x, x) == x</code>.</p>
+<div class="code"><pre class="code literal-block"><span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">prove</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">xvar</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, x) -&gt; x, </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</pre></div>
+
+<p>This yields the simplifications:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_and</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_or</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+</pre></div>
+
+<h3 id="synthesizing-constants">Synthesizing constants</h3>
+<p>Supporting the next patterns is harder: <code>op(x, x) == c1</code>, <code>op(x, c1) == x</code>, and
+<code>op(c1, x) == x</code>. We don't know which constants to pick to try to get Z3 to
+prove the equality. We could iterate over common constants like <code>0</code>, <code>1</code>,
+<code>MAXINT</code>, etc, or even over all the 256 values for a bitvector of length 8.
+However, we will instead ask Z3 to find the constants for us too.</p>
+<p>This can be done by using quantifiers, in this case <code>z3.ForAll</code>. The query we
+pose to Z3 is "does there exist a constant <code>c1</code> such that for all <code>x</code> the
+following is true: <code>op(x, c1) == x</code>? Note that the constant <code>c1</code> is not
+necessarily unique, there could be many of them. We generate several matching
+constant, and add that they must be different to the condition of the second
+and further queries.</p>
+<p>We can express this in a helper function:</p>
+<div class="code"><pre class="code literal-block"><span class="k">def</span> <span class="nf">find_constant</span><span class="p">(</span><span class="n">z3expr</span><span class="p">,</span> <span class="n">number_of_results</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+    <span class="n">condition</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">ForAll</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">xvar</span><span class="p">],</span>
+        <span class="n">z3expr</span>
+    <span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">number_of_results</span><span class="p">):</span>
+        <span class="n">checkres</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">checkres</span> <span class="o">==</span> <span class="n">z3</span><span class="o">.</span><span class="n">sat</span><span class="p">:</span>
+            <span class="c1"># if a solver check succeeds, we can ask for a model, which is</span>
+            <span class="c1"># concrete values for the variables constvar</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">model</span><span class="p">()</span>
+            <span class="n">const</span> <span class="o">=</span> <span class="n">model</span><span class="p">[</span><span class="n">constvar</span><span class="p">]</span><span class="o">.</span><span class="n">as_signed_long</span><span class="p">()</span>
+            <span class="k">yield</span> <span class="n">const</span>
+            <span class="c1"># make sure we don't generate the same constant again on the</span>
+            <span class="c1"># next call</span>
+            <span class="n">condition</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">constvar</span> <span class="o">!=</span> <span class="n">const</span><span class="p">,</span> <span class="n">condition</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># no (more) constants found</span>
+            <span class="k">break</span>
+</pre></div>
+
+<p>We can use this new function for the three mentioned patterns:</p>
+<div class="code"><pre class="code literal-block"><span class="c1"># try to find constants for op(x, x) == c</span>
+<span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">constvar</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, x) -&gt; </span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># try to find constants for op(x, c) == x and op(c, x) == x</span>
+<span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">constvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">xvar</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, </span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">) -&gt; x"</span><span class="p">)</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">constvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">xvar</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(</span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">, x) -&gt; x"</span><span class="p">)</span>
+<span class="c1"># this code is not quite correct, we'll correct it later</span>
+</pre></div>
+
+<p>Together this yields the following new simplifications:</p>
+<div class="code"><pre class="code literal-block"><span class="cp"># careful, these are not all correct!</span>
+<span class="n">int_sub</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_eq</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_ne</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_rshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_pymod</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_add</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_add</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_sub</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_and</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_and</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_or</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_or</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_lshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_rshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">uint_rshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_pydiv</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_pymod</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+</pre></div>
+
+<p>Most of these look good at first glance, but the last one reveals a problem:
+we've been ignoring the <code>valid_if</code> expression up to now. We can stop doing that by
+changing the code like this, which adds <code>z3.And(valid_if, ...)</code> to the argument of
+the calls to <code>find_constant</code>:</p>
+<div class="code"><pre class="code literal-block"><span class="c1"># try to find constants for op(x, x) == c, op(x, c) == x and op(c, x) == x</span>
+<span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">valid_if</span><span class="p">,</span> <span class="n">result</span> <span class="o">==</span> <span class="n">constvar</span><span class="p">)):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, x) -&gt; </span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="c1"># try to find constants for op(x, c) == x and op(c, x) == x</span>
+<span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">constvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">valid_if</span><span class="p">)):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, </span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">) -&gt; x"</span><span class="p">)</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">constvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">result</span> <span class="o">==</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">valid_if</span><span class="p">)):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(</span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">, x) -&gt; x"</span><span class="p">)</span>
+</pre></div>
+
+<p>And we get this list instead:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_sub</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_eq</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_ne</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_add</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_add</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_sub</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_and</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_and</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_or</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_or</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_lshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_rshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">uint_rshift</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+<span class="n">int_pydiv</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">x</span>
+</pre></div>
+
+<h3 id="synthesizing-two-constants">Synthesizing two constants</h3>
+<p>For the patterns <code>op(x, c1) == c2</code> and <code>op(c1, x) == c2</code> we need to synthesize
+two constants. We can again write a helper method for that:</p>
+<div class="code"><pre class="code literal-block"><span class="k">def</span> <span class="nf">find_2consts</span><span class="p">(</span><span class="n">z3expr</span><span class="p">,</span> <span class="n">number_of_results</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+    <span class="n">condition</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">ForAll</span><span class="p">(</span>
+        <span class="p">[</span><span class="n">xvar</span><span class="p">],</span>
+        <span class="n">z3expr</span>
+    <span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">number_of_results</span><span class="p">):</span>
+        <span class="n">checkres</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="n">condition</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">checkres</span> <span class="o">==</span> <span class="n">z3</span><span class="o">.</span><span class="n">sat</span><span class="p">:</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">solver</span><span class="o">.</span><span class="n">model</span><span class="p">()</span>
+            <span class="n">const</span> <span class="o">=</span> <span class="n">model</span><span class="p">[</span><span class="n">constvar</span><span class="p">]</span><span class="o">.</span><span class="n">as_signed_long</span><span class="p">()</span>
+            <span class="n">const2</span> <span class="o">=</span> <span class="n">model</span><span class="p">[</span><span class="n">constvar2</span><span class="p">]</span><span class="o">.</span><span class="n">as_signed_long</span><span class="p">()</span>
+            <span class="k">yield</span> <span class="n">const</span><span class="p">,</span> <span class="n">const2</span>
+            <span class="n">condition</span> <span class="o">=</span> <span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">Or</span><span class="p">(</span><span class="n">constvar</span> <span class="o">!=</span> <span class="n">const</span><span class="p">,</span> <span class="n">constvar2</span> <span class="o">!=</span> <span class="n">const2</span><span class="p">),</span> <span class="n">condition</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span>
+</pre></div>
+
+<p>And then use it like this:</p>
+<div class="code"><pre class="code literal-block"><span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="c1"># try to find constants c1, c2 such that op(c1, x) -&gt; c2</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">constvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+    <span class="n">consts</span> <span class="o">=</span> <span class="n">find_2consts</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">valid_if</span><span class="p">,</span> <span class="n">result</span> <span class="o">==</span> <span class="n">constvar2</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">const</span><span class="p">,</span> <span class="n">const2</span> <span class="ow">in</span> <span class="n">consts</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(</span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">, x) -&gt; </span><span class="si">{</span><span class="n">const2</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="c1"># try to find constants c1, c2 such that op(x, c1) -&gt; c2</span>
+    <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">constvar</span><span class="p">)</span>
+    <span class="n">consts</span> <span class="o">=</span> <span class="n">find_2consts</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">valid_if</span><span class="p">,</span> <span class="n">result</span> <span class="o">==</span> <span class="n">constvar2</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">const</span><span class="p">,</span> <span class="n">const2</span> <span class="ow">in</span> <span class="n">consts</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="si">%s</span><span class="s2">(x, </span><span class="si">%s</span><span class="s2">) -&gt; </span><span class="si">%s</span><span class="s2">"</span> <span class="o">%</span> <span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">const</span><span class="p">,</span> <span class="n">const2</span><span class="p">))</span>
+</pre></div>
+
+<p>Which yields some straightforward simplifications:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_mul</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_and</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_and</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_lshift</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_rshift</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_rshift</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_mul_high</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_mul_high</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_mul_high</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_mul_high</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_pymod</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_pymod</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+</pre></div>
+
+<p>A few require a bit more thinking:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_or</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+<span class="n">int_or</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span>
+</pre></div>
+
+<p>The are true because in two's complement, <code>-1</code> has all bits set.</p>
+<p>The following ones require recognizing that <code>-9223372036854775808 == -2**63</code> is
+the most negative signed 64-bit integer, and <code>9223372036854775807 == 2 ** 63 -
+1</code> is the most positive one:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_lt</span><span class="p">(</span><span class="mi">9223372036854775807</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">9223372036854775808</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_le</span><span class="p">(</span><span class="o">-</span><span class="mi">9223372036854775808</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">9223372036854775807</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_gt</span><span class="p">(</span><span class="o">-</span><span class="mi">9223372036854775808</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">9223372036854775807</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">int_ge</span><span class="p">(</span><span class="mi">9223372036854775807</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">int_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">9223372036854775808</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+</pre></div>
+
+<p>The following ones are true because the bitpattern for <code>-1</code> is the largest
+unsigned number:</p>
+<div class="code"><pre class="code literal-block"><span class="n">uint_lt</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">0</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="mi">1</span>
+</pre></div>
+
+<h3 id="strength-reductions">Strength Reductions</h3>
+<p>All the patterns so far only had a variable or a constant on the target of the
+rewrite. We can also use the machinery to do strengh-reductions where we
+generate a single-argument operation <code>op1(x)</code> for input operations <code>op(x, c1)</code>
+or <code>op(c1, x)</code>. To achieve this, we try all combinations of binary and unary
+operations. (We won't consider strength reductions where a binary operation
+gets turned into a "cheaper" other binary operation here.)</p>
+<div class="code"><pre class="code literal-block"><span class="n">opnames1</span> <span class="o">=</span> <span class="p">[</span>
+<span class="s2">"int_is_true"</span><span class="p">,</span>
+<span class="s2">"int_is_zero"</span><span class="p">,</span>
+<span class="s2">"int_neg"</span><span class="p">,</span>
+<span class="s2">"int_invert"</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">for</span> <span class="n">opname</span> <span class="ow">in</span> <span class="n">opnames2</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">opname1</span> <span class="ow">in</span> <span class="n">opnames1</span><span class="p">:</span>
+        <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">xvar</span><span class="p">,</span> <span class="n">constvar</span><span class="p">)</span>
+        <span class="c1"># try to find a constant op(x, c) == g(x)</span>
+        <span class="n">result1</span><span class="p">,</span> <span class="n">valid_if1</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname1</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+        <span class="n">consts</span> <span class="o">=</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">valid_if</span><span class="p">,</span> <span class="n">valid_if1</span><span class="p">,</span> <span class="n">result</span> <span class="o">==</span> <span class="n">result1</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">consts</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(x, </span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">) -&gt; </span><span class="si">{</span><span class="n">opname1</span><span class="si">}</span><span class="s2">(x)"</span><span class="p">)</span>
+
+        <span class="c1"># try to find a constant op(c, x) == g(x)</span>
+        <span class="n">result</span><span class="p">,</span> <span class="n">valid_if</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname</span><span class="p">,</span> <span class="n">constvar</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+        <span class="n">result1</span><span class="p">,</span> <span class="n">valid_if1</span> <span class="o">=</span> <span class="n">z3_expression</span><span class="p">(</span><span class="n">opname1</span><span class="p">,</span> <span class="n">xvar</span><span class="p">)</span>
+        <span class="n">consts</span> <span class="o">=</span> <span class="n">find_constant</span><span class="p">(</span><span class="n">z3</span><span class="o">.</span><span class="n">And</span><span class="p">(</span><span class="n">valid_if</span><span class="p">,</span> <span class="n">valid_if1</span><span class="p">,</span> <span class="n">result</span> <span class="o">==</span> <span class="n">result1</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">const</span> <span class="ow">in</span> <span class="n">consts</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">opname</span><span class="si">}</span><span class="s2">(</span><span class="si">{</span><span class="n">const</span><span class="si">}</span><span class="s2">, x) -&gt; </span><span class="si">{</span><span class="n">opname1</span><span class="si">}</span><span class="s2">(x)"</span><span class="p">)</span>
+</pre></div>
+
+<p>Which yields the following new simplifications:</p>
+<div class="code"><pre class="code literal-block"><span class="n">int_sub</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_neg</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_sub</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_invert</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_neg</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_mul</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_neg</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_invert</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_xor</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_invert</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_eq</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_eq</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_ne</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_ne</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_lt</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_lt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_le</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_gt</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_true</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">uint_ge</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_is_zero</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">int_pydiv</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="w"> </span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">-&gt;</span><span class="w"> </span><span class="n">int_neg</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+</pre></div>
+
+<h3 id="conclusions">Conclusions</h3>
+<p>With not very little code we managed to generate a whole lot of local
+simplifications for integer operations in the IR of PyPy's JIT. The rules
+discovered that way are "simple", in the sense that they only require looking
+at a single instruction, and not where the arguments of that instruction came
+from. They also don't require any knowledge about the properties of the
+arguments of the instructions (e.g. that they are positive).</p>
+<p>The rewrites in this post have mostly been in PyPy's JIT already. But now we
+mechanically confirmed that they are correct. I've also added the remaining
+useful looking ones, in particular <code>int_eq(x, 0) -&gt; int_is_zero(x)</code> etc.</p>
+<p>If we wanted to scale this approach up, we would have to work much harder!
+There are a bunch of problems that come with generalizing the approach to
+looking at sequences of instructions:</p>
+<ul>
+<li>
+<p>Combinatorial explosion: if we look at sequences of instructions, we very
+  quickly get a combinatorial explosion and it becomes untractable to try all
+  combinations.</p>
+</li>
+<li>
+<p>Finding non-minimal patterns: Some complicated simplifications can be
+  instances of simpler ones. For example, because <code>int_add(x, 0) -&gt; x</code>, it's
+  also true that <code>int_add(int_sub(x, y), 0) -&gt; int_sub(x, y)</code>. If we simply
+  generate all possible sequences, we will find the latter simplification rule,
+  which we would usually not care about.</p>
+</li>
+<li>
+<p>Unclear usefulness: if we simply generate all rewrites up to a certain number
+  of instructions, we will get a lot of patterns that are useless in the sense
+  that they typically aren't found in realistic programs. It would be much
+  better to somehow focus on the patterns that real benchmarks are using.</p>
+</li>
+</ul>
+<p>In the <a href="https://www.pypy.org/posts/2024/07/mining-jit-traces-missing-optimizations-z3.html">next blog post</a> I'll discuss an alternative approach to simply generating
+all possible sequences of instructions, that tries to address these problems.
+This works by analyzing the real traces of benchmarks and mining those for
+inefficiencies, which only shows problems that occur in actual programs.</p>
+<h3 id="sources">Sources</h3>
+<p>I've been re-reading a lot of blog posts from John's blog:</p>
+<ul>
+<li><a href="https://blog.regehr.org/archives/1109">Let’s Work on an LLVM Superoptimizer</a></li>
+<li><a href="https://blog.regehr.org/archives/1146">Early Superoptimizer Results</a></li>
+<li><a href="https://blog.regehr.org/archives/1252">A Few Synthesizing Superoptimizer Results</a></li>
+<li><a href="https://blog.regehr.org/archives/1636">Synthesizing Constants</a></li>
+</ul>
+<p>but also papers:</p>
+<ul>
+<li><a href="https://arxiv.org/pdf/1711.04422">A Synthesizing Superoptimizer</a></li>
+<li><a href="https://dl.acm.org/doi/pdf/10.1145/3649837">Hydra: Generalizing Peephole Optimizations with Program Synthesis</a></li>
+</ul>
+<p>Another of my favorite blogs has been <a href="https://www.philipzucker.com/">Philipp Zucker's
+blog</a> in the last year or two, lots of excellent
+posts about/using Z3 on there.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 12, 2024 07:14 PM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2024/07/finding-simple-rewrite-rules-jit-z3.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2024/07/announcing-our-new-pypi-support.html" class="hover:underline"
+              >Announcing Our New PyPI Support Specialist!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;">We are thrilled to announce that our </span><a href="https://pyfound.blogspot.com/2024/03/announcing-pypi-support-specialist.html" style="text-decoration: none;"><span style="color: #1155cc; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">first-ever search for a dedicated PyPI Support Specialist</span></a><span style="vertical-align: baseline; white-space: pre-wrap;"> has concluded with the hire of </span><a href="https://www.thetravelingguitar.net/" style="text-decoration: none;"><span style="color: #1155cc; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Maria Ashna</span></a><span style="vertical-align: baseline; white-space: pre-wrap;">, the newest member of the </span><a href="https://www.python.org/psf/records/staff/" style="text-decoration: none;"><span style="color: #1155cc; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Software Foundation (PSF) staff</span></a><span style="vertical-align: baseline; white-space: pre-wrap;">. Reporting to Ee Durbin, Director of Infrastructure, Maria joins us from a background in academic research, technical consulting, and theatre.</span></span></p><span id="docs-internal-guid-7d6ec32e-7fff-26a9-eaab-3132b6f14423"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;">Maria will help the PSF to support one of our most critical services, the </span><a href="https://pypi.org/" style="text-decoration: none;"><span style="color: #1155cc; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Package Index (PyPI)</span></a><span style="vertical-align: baseline; white-space: pre-wrap;">. Over the past </span><span style="font-style: italic; vertical-align: baseline; white-space: pre-wrap;">23 years,</span><span style="vertical-align: baseline; white-space: pre-wrap;"> PyPI has seen essentially exponential growth in traffic and users, relying for the most part on volunteers to support it. With the addition of requirements to keep all Python maintainers and users safe, our support load has outstretched our support resources for some time now. The Python Software Foundation committed to hiring to increase this capacity in April and we’re excited to have Maria on board to begin providing crucially needed support.</span></span></p></span><p></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;"></span></span></p><div class="separator" style="clear: both; text-align: center;"><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;"><a href="https://blogger.googleusercontent.com/img/a/AVvXsEiQGpPAAP5MvvslbmTukVKnZdYch87AA0ya3qoyAPFNhPncEMaeK3WidlNofLAP52lQzBnaEO7z05uH238PsqCYGy5uA8N1xFuK5sF6KaPfwSx92ZSMSSy7qr7COdNVyxeAXh4qTqzsjcqKfUqVFk8HbvYXA0lgJd9_e043s19R8n5GwjAVx6U" style="margin-left: 1em; margin-right: 1em;"><img alt="" height="240" src="https://blogger.googleusercontent.com/img/a/AVvXsEiQGpPAAP5MvvslbmTukVKnZdYch87AA0ya3qoyAPFNhPncEMaeK3WidlNofLAP52lQzBnaEO7z05uH238PsqCYGy5uA8N1xFuK5sF6KaPfwSx92ZSMSSy7qr7COdNVyxeAXh4qTqzsjcqKfUqVFk8HbvYXA0lgJd9_e043s19R8n5GwjAVx6U" width="191" /></a></span></span></div><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;"><br /></span></span><p style="text-align: left;"><span style="font-family: inherit;"><span style="vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: inherit;">From Maria, <i>“I am a firm believer in democratizing tech. The Open Source community is the lifeblood of such democratization, which is why I am excited to be part of PSF and to serve this community.”</i></span></span></span></p><p style="text-align: left;"><span style="font-family: inherit; white-space: pre-wrap;">As you see Maria around the PyPI support inbox, issue tracker, and discuss.python.org in the future we hope that you’ll extend a warm welcome! We’re eager to get her up and running to reduce the stress that users have been experiencing around PyPI support and further our work to improve and extend PyPI sustainably.</span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 12, 2024 05:12 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2024/07/announcing-our-new-pypi-support.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonmorsels.com/what-are-lists/" class="hover:underline"
               >What are lists in Python?</a
             >
@@ -1380,144 +2062,6 @@ from Wing 9 and earlier, and <a class="reference" href="https://wingware.com/doc
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://pyright.blogspot.com/2024/07/dag-hamilton-workflow-for-toy-text.html" class="hover:underline"
-              >DAG Hamilton Workflow for Toy Text Processing Script</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><span style="font-family: times;">Hello. It's been a minute.<br /><br />I was fortunate to attend PYCON US in Pittsburgh earlier this year. <a href="https://www.dagworks.io/">DAGWorks</a> had a booth on the expo floor where I discovered <a href="https://hamilton.dagworks.io/en/latest/" target="_blank">Hamilton</a>. The project grabbed my attention as something that could help organize and present my code workflow better. My reaction could be compared to browsing Walmart while picking up a hardware item and seeing the perfect storage medium for your clothes or crafts at a bargain price, but even better, having someone there to explain the whole thing to you. The folks at the booth were really helpful.<br /><br /><br /></span></p><div class="separator" style="clear: both; text-align: center;"><span style="font-family: times;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjyLxpoeRC00rV0RLN-yWXODL9staHDkRAVV76HmF9mplPthZGOBv9YprGgMFWgjzmD2vCNJCRnb6vgv_7TIp1_9jJEtPjYnfjomY2Ii1Mxqm8pf7WdkhpupCB9fLUt5dhO360cVcB6oo3Zr8FLM0dIqRZBqZj2vbEQIUDf-dO3fRI4BsmzgGqQ9QTjqkI/s202/hamiltonlogo.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="202" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjyLxpoeRC00rV0RLN-yWXODL9staHDkRAVV76HmF9mplPthZGOBv9YprGgMFWgjzmD2vCNJCRnb6vgv_7TIp1_9jJEtPjYnfjomY2Ii1Mxqm8pf7WdkhpupCB9fLUt5dhO360cVcB6oo3Zr8FLM0dIqRZBqZj2vbEQIUDf-dO3fRI4BsmzgGqQ9QTjqkI/s1600/hamiltonlogo.png" width="197" /></a><br /><br /></span><div style="text-align: left;"><span style="font-family: times;">Below I take on a contrived web scraping (it's crude) script in my domain (metals mining) and create a Hamilton workflow from it.<br /><br />Pictured below is the Hamilton flow in the graphviz output format the project uses for flowcharts (<a href="https://graphviz.org/">graphviz</a> has been around for decades - an oldie but goodie as it were).</span><br /><br /><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjCVDMpSbwREl9Yts19rbI3MHiFNka48G5R1AOOQODbyKZm7dKkdKGF91QehN6ucjCbZno86WE33XDyR08Enl_OPY2D7YZdYD8LmCfdJCXOBj53kGH133q9aRMY5AEEyYvy5-FMwAxvuT6443euLasM3XsAkY0nY-XErUavLkYLZhLkHvoGCuGwIzhvD78/s862/ts.png" style="margin-left: 1em; margin-right: 1em; text-align: center;"><img border="0" height="320" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjCVDMpSbwREl9Yts19rbI3MHiFNka48G5R1AOOQODbyKZm7dKkdKGF91QehN6ucjCbZno86WE33XDyR08Enl_OPY2D7YZdYD8LmCfdJCXOBj53kGH133q9aRMY5AEEyYvy5-FMwAxvuT6443euLasM3XsAkY0nY-XErUavLkYLZhLkHvoGCuGwIzhvD78/s320/ts.png" width="307" /></a><br /><br /><br /><br /><span style="font-family: times;">I start with a csv file that has some really basic data on three big American metal mines (I did have to research the Wikipedia addresses - for instance, I originally looked for the Goldstrike Mine under the name "Post-Betze." It goes by several different names and encompasses several mines - more on that anon):</span><br /><br /><div><span style="font-family: courier; font-size: xx-small;"><b>mine,state,commodity,wikipedia page,colloquial association</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>Red Dog,Alaska,zinc,https://en.wikipedia.org/wiki/Red_Dog_mine,Teck</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>Goldstrike,Nevada,gold,https://en.wikipedia.org/wiki/Goldstrike_mine,Nevada Gold Mines</b></span></div><div><span style="font-family: courier; font-size: xx-small; font-weight: bold;">Bingham Canyon,Utah,copper,https://en.wikipedia.org/wiki/Bingham_Canyon_Mine,Kennecott</span><br /><br /><span style="font-family: times;">Basically, I am going to attempt to scrape Wikipedia for information on who owns the three mines. Then I will try to use heuristics to gather information on what I think I know about them and gauge how up to date the Wikipedia information is.</span><br /><br /><span style="font-family: times;">Hamilton uses a system whereby you name your functions in a noun-like fashion ("def stuff()" instead of "def getstuff()") and feed those names as variables to the other functions in the workflow as parameters. This is what allows the tool to check your workflow for inconsistencies (types, for instance) and build the graphviz chart shown above.</span><br /><br /><span style="font-family: times;">You can use separate modules with functions and import them. I've done some of this on the bigger workflows I work with. Your Hamilton functions then end up being little one liners that call the bigger functions in the modules. This is necessary if you have functions you use repeatedly in your workflow that take different values at different stages. For this toy project, I've kept the whole thing self contained in one module toyscriptiii.py (yes, the iii in the filename represents my multiple failed attempts at web scraping and text processing - it's harder than it looks).</span><br /><br /><span style="font-family: times;">Below is the Hamilton main file run.py (I believe the "run.py" name is convention.) I have done my best to preserve the dictionary return values as "faux immutable" through use of the copy module in each function. This helps me in debugging and examining output, much of which can be done from the run.py file (all the return values are stored in a dictionary). I've worked with a dataset with about 600,000 rows that had about 10 nodes. My computer has 32GB of RAM (Windows 11); it handled memory fine (less than half). For really big data, keeping all these dictionaries in memory might be a problem.</span><br /><br /><div><span style="font-family: courier; font-size: xx-small;"><b># python 3.12</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>"""</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>Hamilton demo.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>"""</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import sys</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import pprint</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>from hamilton import driver</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import toyscriptiii as ts</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>dr = driver.Builder().with_modules(ts).build()</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>dr.display_all_functions("ts.png", deduplicate_inputs=True, keep_dot=True, orient='BR')</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>results = dr.execute(['parsed_data',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'data_with_wikipedia',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'data_with_company',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'info_output',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'commodity_word_counts',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'colloquial_company_word_counts',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'info_dict_merged',</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 'wikipedia_report'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; inputs={'datafile':'data.csv'})</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>pprint.pprint(results['info_dict_merged'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>print(results['info_output'])</b></span></div><div><b style="font-family: courier; font-size: x-small;">print(results['wikipedia_report'])</b><br /><br /><span style="font-family: times;">The main toy module with functions configured for the Hamilton graph:</span><br /><br /><div><span style="font-family: courier; font-size: xx-small;"><b># python 3.12</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>"""</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>Toy script.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>Takes some input from a csv file on big American</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>mines and looks at Wikipedia text for some extra</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>context.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>"""</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import copy</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import pprint</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import sys</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>from urllib import request</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>import re</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>from bs4 import BeautifulSoup</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def parsed_data(datafile:str) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Get csv data into a dictionary keyed on mine name.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = {}</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; with open(datafile, 'r') as f:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; headers = [x.strip() for x in next(f).split(',')]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; for linex in f:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; vals = [x.strip() for x in linex.split(',')]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; retval[vals[0]] = {key:val for key, val in zip(headers, vals)}&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; pprint.pprint(retval)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp;&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def data_with_wikipedia(parsed_data:dict) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Connect to wikipedia sites and fill in</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; raw html data.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Return dictionary.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = copy.deepcopy(parsed_data)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; for minex in retval:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; obj = request.urlopen(retval[minex]['wikipedia page'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; html = obj.read()</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; soup = BeautifulSoup(html, 'html.parser')</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(soup.title)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; # Text from html and strip out newlines.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; newstring = soup.get_text().replace('\n', '')</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; retval[minex]['wikipediatext'] = newstring</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def data_with_company(data_with_wikipedia:dict) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Fetches company ownership for mine out of&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Wikipedia text dump.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Returns a new dictionary with the company name</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; without the big wikipedia text dump.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; # Wikipedia setup for mine company name.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; COMPANYPAT = r'[a-z]Company'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; # Lower case followed by upper case heuristic.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; ENDCOMPANYPAT = '[a-z][A-Z]'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = copy.deepcopy(data_with_wikipedia)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; companypat = re.compile(COMPANYPAT)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; endcompanypat = re.compile(ENDCOMPANYPAT)&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; for minex in retval:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(minex)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; match = re.search(companypat, retval[minex]['wikipediatext'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; if match:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print('Company match span = ', match.span())</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; companyidx = match.span()[1]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; match2 = re.search(endcompanypat, retval[minex]['wikipediatext'][companyidx:])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print('End Company match span = ', match2.span())</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; retval[minex]['company'] = retval[minex]['wikipediatext'][companyidx:companyidx + match2.span()[0] + 1]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; # Get rid of big text dump in return value.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; retval[minex].pop('wikipediatext')</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def info_output(data_with_company:dict) -&gt; str:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Prints some output text to a file for each</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; mine in the data_with_company dictionary.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Returns string filename of output.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; INFOLINEFMT = 'The {mine:s} mine is a big {commodity:s} mine in the State of {state:s} in the US.'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; COMPANYLINEFMT = '\n&nbsp; &nbsp; {company:s} owns the mine.\n\n'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = 'mine_info.txt'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; with open(retval, 'w') as f:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; for minex in data_with_company:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print(INFOLINEFMT.format(**data_with_company[minex]), file=f)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print(COMPANYLINEFMT.format(**data_with_company[minex]), file=f)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def commodity_word_counts(data_with_wikipedia:dict, data_with_company:dict) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Return dictionary keyed on mine with counts of</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; commodity (e.g., zinc etc.) mentions on Wikipedia</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; page (excluding ones in the company name).</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = {}</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; # This will probably miss some occurrences at mashed together</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; # word boundaries. It is a rough estimate.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; # '\b[Gg]old\b'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; commoditypatfmt = r'\b[{0:s}{1:s}]{2:s}\b'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; for minex in data_with_wikipedia:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(minex)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; commodityuc = data_with_wikipedia[minex]['commodity'][0].upper()</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; commoditypat = commoditypatfmt.format(commodityuc,</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; data_with_wikipedia[minex]['commodity'][0],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; data_with_wikipedia[minex]['commodity'][1:])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(commoditypat)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; commoditymatches = re.findall(commoditypat, data_with_wikipedia[minex]['wikipediatext'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; # pprint.pprint(commoditymatches)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; nummatchesraw = len(commoditymatches)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print('Initial length of commoditymatches is {0:d}.'.format(nummatchesraw))</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; companymatches = re.findall(data_with_company[minex]['company'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; data_with_wikipedia[minex]['wikipediatext'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; numcompanymatches = len(companymatches)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print('Length of companymatches is {0:d}.'.format(numcompanymatches))</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; # Is the commodity name part of the company name?</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print('commoditypat = ', commoditypat)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(data_with_company[minex]['company'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; commoditymatchcompany = re.search(commoditypat, data_with_company[minex]['company'])</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; if commoditymatchcompany:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print('commoditymatchcompany.span() = ', commoditymatchcompany.span())</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; nummatchesfinal = nummatchesraw - numcompanymatches</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; retval[minex] = nummatchesfinal&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; else:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; retval[minex] = nummatchesraw&nbsp;</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def colloquial_company_word_counts(data_with_wikipedia:dict) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Find the number of times the company you associate with</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; the property/mine (very subjective) is within the</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; text of the mine's wikipedia article.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = {}</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; for minex in data_with_wikipedia:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; colloquial_pat = data_with_wikipedia[minex]['colloquial association']</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print(minex)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; nummatches = len(re.findall(colloquial_pat, data_with_wikipedia[minex]['wikipediatext']))</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; print('{0:d} matches for colloquial association {1:s}.'.format(nummatches, colloquial_pat))</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; retval[minex] = nummatches</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def info_dict_merged(data_with_company:dict,</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;commodity_word_counts:dict,</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;colloquial_company_word_counts:dict) -&gt; dict:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Get a dictionary with all the collected information</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; in it minus the big Wikipedia text dump.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = copy.deepcopy(data_with_company)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; for minex in retval:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; retval[minex]['colloquial association count'] = colloquial_company_word_counts[minex]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; retval[minex]['commodity word count'] = commodity_word_counts[minex]</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; return retval</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>def wikipedia_report(info_dict_merged:dict) -&gt; str:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Writes out Wikipedia information (word counts)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; to file in prose; returns string filename.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; """</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; retval = 'wikipedia_info.txt'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; colloqfmt = 'The {0:s} mine has {1:d} occurrences of colloquial association {2:s} in its Wikipedia article text.\n'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; commodfmt = 'The {0:s} mine has {1:d} occurrences of commodity name {2:s} in its Wikipedia article text.\n\n'</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; with open(retval, 'w') as f:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; for minex in info_dict_merged:</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print(colloqfmt.format(info_dict_merged[minex]['mine'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;info_dict_merged[minex]['colloquial association count'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;info_dict_merged[minex]['colloquial association']), file=f)</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; print(commodfmt.format(info_dict_merged[minex]['mine'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;info_dict_merged[minex]['commodity word count'],</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;info_dict_merged[minex]['commodity']), file=f)</b></span></div><div><b style="font-family: courier; font-size: x-small;">&nbsp; &nbsp; return retval</b><br /><br /><span style="font-family: times;">My REGEX abilities are somewhere between "I've heard the term REGEX and know regular expressions exist" and bracketed characters in each slot brute force. It worked for this toy example. Each Wikipedia page features the word "Company" followed by the name of the owning corporate entity.</span><br /><br /><span style="font-family: times;">Here is are the two text outputs the script produces from the information provided (Wikipedia articles from July, 2024):</span><br /><br /><div><span style="font-family: courier; font-size: xx-small;"><b>The Red Dog mine is a big zinc mine in the State of Alaska in the US.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; NANA Regional Corporation owns the mine.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>The Goldstrike mine is a big gold mine in the State of Nevada in the US.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>&nbsp; &nbsp; Barrick Gold owns the mine.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b>The Bingham Canyon mine is a big copper mine in the State of Utah in the US.</b></span></div><div><span style="font-family: courier; font-size: xx-small;"><b><br /></b></span></div><div><b style="font-family: courier; font-size: x-small;">&nbsp; &nbsp; Rio Tinto Group owns the mine.</b><br /><br /><div style="font-family: courier; font-size: x-small;"><b>The Red Dog mine has 21 occurrences of colloquial association Teck in its Wikipedia article text.</b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b>The Red Dog mine has 29 occurrences of commodity name zinc in its Wikipedia article text.</b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b>The Goldstrike mine has 0 occurrences of colloquial association Nevada Gold Mines in its Wikipedia article text.</b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b>The Goldstrike mine has 16 occurrences of commodity name gold in its Wikipedia article text.</b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div style="font-family: courier; font-size: x-small;"><b>The Bingham Canyon mine has 49 occurrences of colloquial association Kennecott in its Wikipedia article text.</b></div><div style="font-family: courier; font-size: x-small;"><b><br /></b></div><div><b style="font-family: courier; font-size: x-small;">The Bingham Canyon mine has 84 occurrences of commodity name copper in its Wikipedia article text.</b><br /><br /><span style="font-family: times;">Company names are relatively straightforward, although mining company and properties acquisitions and mergers being what they are, it can get complicated. I unwittingly chose three properties that Wikipedia reports as having one owner. Other big mines like Morenci, Arizona (copper) and Cortez, Nevada (gold) show more than one owner; that case is for another programming day. The Goldstrike information might be out of date - no mention of Nevada Gold Mines or Newmont (one mention, but in a different context). The <a href="https://en.wikipedia.org/wiki/Cortez_Gold_Mine">Cortez</a> Wikipedia page is more current, although it still doesn't mention Nevada Gold Mines.<br /><br />The inclusion of colloquial association in the input csv file was an afterthought based on a lot of the Wikipedia information not being completely in line with what I thought I knew. Teck is the operator of the Red Dog Mine in Alaska. That name does get mentioned frequently in the Wikipedia article.<br /><br />Enough mining stuff - it is a programming blog after all. Next time (not written yet) I hope to cover dressing up and highlighting the graphviz output a bit.<br /><br />Thank you for stopping by.</span></div></div></div></div></div><br /></div><br /><br /></div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 04, 2024 10:04 PM UTC by
-            <a href="http://pyright.blogspot.com/feeds/posts/default?alt=rss" class="link link-hover text-primary"
-              >Carl Trachte</a
-            >
-          </div>
-          <a
-            href="http://pyright.blogspot.com/2024/07/dag-hamilton-workflow-for-toy-text.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/strings-in-python/" class="hover:underline"
-              >Strings in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Strings are used to store text-based data.</p>
-
-
-<div>
-  
-    <img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1891310579-9786a2b441806c3c2d3e7c7d26be7d75bc2c211cc6c4666c73c408c40e2c9669-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" />
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#strings-store-text" target="_blank">Strings store text</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#how-are-strings-used" target="_blank">How are strings used?</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#string-methods-in-python" target="_blank">String methods in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#string-concatenation" target="_blank">String concatenation</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#double-quotes-vs-single-quotes" target="_blank">Double quotes vs single quotes</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#escape-characters" target="_blank">Escape characters</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/strings-in-python/#strings-are-everywhere-in-python" target="_blank">Strings are everywhere in Python</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Strings store text</h2>
-    
-      
-        <p>This is a string:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">message</span> <span class="o">=</span> <span class="s2">"This is text"</span>
-</code></pre></div>
-
-
-      
-        <p>Python strings <strong>store text</strong>:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">message</span>
-<span class="go">'This is text'</span>
-</code></pre></div>
-
-
-      
-    
-  
-    <h2>How are strings used?</h2>
-    
-      <p>Strings are often used <strong>for …</strong></p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/strings-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/strings-in-python/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 04, 2024 03:16 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/strings-in-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1529,8 +2073,8 @@ from Wing 9 and earlier, and <a class="reference" href="https://wingware.com/doc
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8755</a></li>
-    <li><a>Unique Feeds: 428</a></li>
+    <li><a>Total Entries: 8776</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
