@@ -53,6 +53,371 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/400/celebrating-episode-400" class="hover:underline"
+              >#400 Celebrating episode 400</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include , Docker images using uv's python, 10 years of sustainable open source, and humanize.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 09, 2024 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/400/celebrating-episode-400"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/python-scheduler.html" class="hover:underline"
+              >Service-oriented API task scheduling</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/python-scheduler.html">Service-oriented API task scheduling</a>
+</h1>
+<div class="article-meta">
+  2024-09-09, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p><a href="https://zato.io/en/blog/python-scheduler.html"><img src="https://zato.io/static/blog/images/python-scheduler/banner-scheduler-1200-01-full.webp" /></a></p>
+<p>An integral part of
+Zato, its scalable, service-oriented scheduler makes it is possible to execute high-level API integration processes as background tasks. The scheduler runs periodic jobs which in turn trigger services and services are what is used to integrate systems.</p>
+<h2 id="integration-process">Integration process</h2>
+<p>In this article we will check how to use the scheduler with three kinds of jobs, one-time, interval-based and Cron-style ones.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/arch.png" /></p>
+<p>What we want to achieve is a sample yet fairly common use-case:</p>
+<ul>
+<li>Periodically consult a remote REST endpoint for new data</li>
+<li>Store data found in Redis</li>
+<li>Push data found as an e-mail attachment</li>
+</ul>
+<p>Instead of, or in addition to, Redis or e-mail, we could use SQL and SMS, or MongoDB and AMQP or anything else - Redis and e-mail are just example technologies frequently used in data synchronisation processes that we use to highlight the workings of the scheduler.</p>
+<p>No matter the input and output channels, the scheduler works always the same - a definition of a job is created and the job's underlying service is invoked according to the schedule. It is then up to the service to perform all the actions required in a given integration process.</p>
+<h2 id="python-code">Python code</h2>
+<p>Our integration service will read as below:</p>
+<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
+<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
+<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
+<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.common.api</span> <span class="kn">import</span> <span class="n">SMTPMessage</span>
+<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
+<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a>
+<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">SyncData</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
+<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.scheduler.sync'</span>
+<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>
+<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>
+<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="c1"># Which REST outgoing connection to use</span>
+<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>        <span class="n">rest_out_name</span> <span class="o">=</span> <span class="s1">'My Data Source'</span>
+<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>
+<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="c1"># Which SMTP connection to send an email through</span>
+<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>        <span class="n">smtp_out_name</span> <span class="o">=</span> <span class="s1">'My SMTP'</span>
+<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>
+<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>        <span class="c1"># Who the recipient of the email will be</span>
+<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>        <span class="n">smtp_to</span> <span class="o">=</span> <span class="s1">'hello@example.com'</span>
+<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>
+<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>        <span class="c1"># Who to put on CC</span>
+<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>        <span class="n">smtp_cc</span> <span class="o">=</span> <span class="s1">'hello.cc@example.com'</span>
+<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a>
+<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a>        <span class="c1"># Now, let's get the new data from a remote endpoint ..</span>
+<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>
+<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>        <span class="c1"># .. get a REST connection by name ..</span>
+<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>        <span class="n">rest_conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">plain_http</span><span class="p">[</span><span class="n">rest_out_name</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span>
+<a id="line-0-28" name="line-0-28"></a><a href="#line-0-28"><span class="linenos"></span></a>
+<a id="line-0-29" name="line-0-29"></a><a href="#line-0-29"><span class="linenos"></span></a>        <span class="c1"># .. download newest data ..</span>
+<a id="line-0-30" name="line-0-30"></a><a href="#line-0-30"><span class="linenos"></span></a>        <span class="n">data</span> <span class="o">=</span> <span class="n">rest_conn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cid</span><span class="p">)</span><span class="o">.</span><span class="n">text</span>
+<a id="line-0-31" name="line-0-31"></a><a href="#line-0-31"><span class="linenos"></span></a>
+<a id="line-0-32" name="line-0-32"></a><a href="#line-0-32"><span class="linenos"></span></a>        <span class="c1"># .. construct a new e-mail message ..</span>
+<a id="line-0-33" name="line-0-33"></a><a href="#line-0-33"><span class="linenos"></span></a>        <span class="n">message</span> <span class="o">=</span> <span class="n">SMTPMessage</span><span class="p">()</span>
+<a id="line-0-34" name="line-0-34"></a><a href="#line-0-34"><span class="linenos"></span></a>        <span class="n">message</span><span class="o">.</span><span class="n">subject</span> <span class="o">=</span> <span class="s1">'New data'</span>
+<a id="line-0-35" name="line-0-35"></a><a href="#line-0-35"><span class="linenos"></span></a>        <span class="n">message</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="s1">'Check attached data'</span>
+<a id="line-0-36" name="line-0-36"></a><a href="#line-0-36"><span class="linenos"></span></a>
+<a id="line-0-37" name="line-0-37"></a><a href="#line-0-37"><span class="linenos"></span></a>        <span class="c1"># .. add recipients ..</span>
+<a id="line-0-38" name="line-0-38"></a><a href="#line-0-38"><span class="linenos"></span></a>        <span class="n">message</span><span class="o">.</span><span class="n">to</span> <span class="o">=</span> <span class="n">smtp_to</span>
+<a id="line-0-39" name="line-0-39"></a><a href="#line-0-39"><span class="linenos"></span></a>        <span class="n">message</span><span class="o">.</span><span class="n">cc</span> <span class="o">=</span> <span class="n">smtp_cc</span>
+<a id="line-0-40" name="line-0-40"></a><a href="#line-0-40"><span class="linenos"></span></a>
+<a id="line-0-41" name="line-0-41"></a><a href="#line-0-41"><span class="linenos"></span></a>        <span class="c1"># .. attach the new data to the message ..</span>
+<a id="line-0-42" name="line-0-42"></a><a href="#line-0-42"><span class="linenos"></span></a>        <span class="n">message</span><span class="o">.</span><span class="n">attach</span><span class="p">(</span><span class="s1">'my.data.txt'</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+<a id="line-0-43" name="line-0-43"></a><a href="#line-0-43"><span class="linenos"></span></a>
+<a id="line-0-44" name="line-0-44"></a><a href="#line-0-44"><span class="linenos"></span></a>        <span class="c1"># .. get an SMTP connection by name ..</span>
+<a id="line-0-45" name="line-0-45"></a><a href="#line-0-45"><span class="linenos"></span></a>        <span class="n">smtp_conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">smtp</span><span class="p">[</span><span class="n">smtp_out_name</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span>
+<a id="line-0-46" name="line-0-46"></a><a href="#line-0-46"><span class="linenos"></span></a>
+<a id="line-0-47" name="line-0-47"></a><a href="#line-0-47"><span class="linenos"></span></a>        <span class="c1"># .. send the e-mail message with newest data ..</span>
+<a id="line-0-48" name="line-0-48"></a><a href="#line-0-48"><span class="linenos"></span></a>        <span class="n">smtp_conn</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+<a id="line-0-49" name="line-0-49"></a><a href="#line-0-49"><span class="linenos"></span></a>
+<a id="line-0-50" name="line-0-50"></a><a href="#line-0-50"><span class="linenos"></span></a>        <span class="c1"># .. and now store the data in Redis.</span>
+<a id="line-0-51" name="line-0-51"></a><a href="#line-0-51"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">kvdb</span><span class="o">.</span><span class="n">conn</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s1">'newest.data'</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+</code></pre></div>
+<p>Now, we just need to make it run periodically in background.</p>
+<h2 id="mind-the-timezone">Mind the timezone</h2>
+<p>In the next steps, we will use
+the Zato Dashboard
+to configure new jobs for the scheduler.</p>
+<p>Keep it mind that any date and time that you enter in web-admin is always interepreted to be in your web-admin user's timezone and this applies to the scheduler too - by default the timezone is UTC. You can change it by clicking Settings and picking the right timezone to make sure that the scheduled jobs run as expected.</p>
+<p>It does not matter what timezone your Zato servers are in - they may be in different ones than the user that is configuring the jobs.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/settings.png" /></p>
+<h2 id="endpoint-definitions">Endpoint definitions</h2>
+<p>First, let's use web-admin to define the endpoints that the service uses. Note that Redis does not need an explicit declaration because it is always available under "self.kvdb" in each service.</p>
+<ul>
+<li>Configuring outgoing REST APIs</li>
+</ul>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/out-rest-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/out-rest-form.png" /></p>
+<ul>
+<li>Configuring SMTP e-mail</li>
+</ul>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/out-smtp-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/out-smtp-form.png" /></p>
+<p>Now, we can move on to the actual scheduler jobs.</p>
+<h1 id="three-types-of-jobs">Three types of jobs</h1>
+<p>To cover different integration needs, three types of jobs are available:</p>
+<ul>
+<li>One-time - fires once only at a specific date and time and then never runs again</li>
+<li>Interval-based - for periodic processes, can use any combination of weeks, days, hours, minutes and seconds for the interval</li>
+<li>Cron-style - similar to interval-based but uses the syntax of Cron for its configuration</li>
+</ul>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/scheduler-menu.png" /></p>
+<h2 id="one-time">One-time</h2>
+<p>Select <strong>one-time</strong> if the job should not be repeated after it runs once.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/scheduler-form-one-time.png" /></p>
+<h2 id="interval-based">Interval-based</h2>
+<p>Select <strong>interval-based</strong> if the job should be repeated periodically. Note that such a job will by default run indefinitely but you can also specify after how many times it should stop, letting you to express concepts such as "Execute once per hour but for the next seven days".</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/scheduler-form-interval-based.png" /></p>
+<h2 id="cron-style">Cron-style</h2>
+<p>Select <strong>cron-style</strong> if you are already familiar with the syntax of
+<a href="https://en.wikipedia.org/wiki/Cron">Cron</a>
+or if you have some Cron tasks that you would like to migrate to Zato.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/scheduler-form-cron-style.png" /></p>
+<h2 id="running-jobs-manually">Running jobs manually</h2>
+<p>At times, it is convenient to run a job on demand, no matter what its schedule is and regardless of what type a particular job is. Web-admin lets you always execute a job directly. Simply find the job in the listing, click "Execute" and it will run immediately.</p>
+<h2 id="extra-context">Extra context</h2>
+<p>It is very often useful to provide additional context data to a service that the scheduler runs - to achieve it, simply enter any arbitrary value in the "Extra" field when creating or an editing a job in web-admin.</p>
+<p>Afterwards, that information will be available as self.request.raw_request in the service's handle method.</p>
+<h2 id="reusability">Reusability</h2>
+<p>There is nothing else required - all is done and the service will run in accordance with a job's schedule.</p>
+<p>Yet, before concluding, observe that our integration service is completely reusable - there is nothing scheduler-specific in it despite the fact that we currently run it from the scheduler.</p>
+<p>We could now invoke the service from command line. Or we could mount it on a REST, AMQP, WebSocket or trigger it from any other channel - exactly the same Python code will run in exactly the same fashion, without any new programming effort needed.</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.2/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a></p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 09, 2024 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/python-scheduler.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/commenting-in-python/" class="hover:underline"
+              >Commenting in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python's comments start with an octothorpe character.</p>
+
+
+<div>
+  
+    <img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1924385346-b33ec3502eea293e83d55af1cbb10d4d7bae1d6d290660f8b95e7d338ed0ffc8-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" />
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/commenting-in-python/#writing-a-comment-in-python" target="_blank">Writing a comment in Python</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/commenting-in-python/#inline-comments-in-python" target="_blank">Inline comments in Python</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/commenting-in-python/#best-practices-for-commenting-in-python" target="_blank">Best practices for commenting in Python</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/commenting-in-python/#comment-as-needed-but-not-too-much" target="_blank">Comment as needed, but not too much</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>Writing a comment in Python</h2>
+    
+      
+        <p>We have a Python program that prints out <code>Hello!</code>, pauses for a second, and then prints <code>Goodbye!</code> on the same line:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="kn">from</span> <span class="nn">time</span> <span class="kn">import</span> <span class="n">sleep</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"Hello!"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># ANSI code to clear current line</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\r\033</span><span class="s2">[K"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"Goodbye!"</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>It prints <code>Hello!</code>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code>~ $ python3 hello.py
+Hello!
+</code></pre></div>
+
+
+      
+        <p>And then one second later it overwrites <code>Hello!</code> with <code>Goodbye!</code>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code>~ $ python3 hello.py
+Goodbye!
+</code></pre></div>
+
+
+      
+        <p>It does this using an <a href="https://en.wikipedia.org/wiki/ANSI_escape_code" target="_blank">ANSI escape code</a> (that <code>\033[K</code> string).</p>
+
+      
+        <p>The line above the <code>print</code> call in our code is called a <strong>comment</strong>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="c1"># ANSI code to clear current line</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\r\033</span><span class="s2">[K"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>Python's <strong>comments</strong> all <strong>start with the <code>#</code> character</strong>.</p>
+
+      
+        <p>I call this character an <strong>octothorpe</strong>, though it goes by many names.
+Some of the more common names for <code>#</code> are hashmark, number sign, and pound sign.</p>
+
+      
+        <p>You can <strong>write a comment</strong> in Python by putting an octothorpe character (<code>#</code>) at the beginning of a line, and then writing your comment.
+The comment <strong>stops at the end of the line</strong>, meaning the next line is code... <em>unless</em> you write another octothorpe character!</p>
+
+      
+        <p>Here we've written more details and added an additional line to note that this code doesn't yet work on Windows:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="c1"># ANSI code to clear current line: \r moves to beginning, \033[K erases to end.</span>
+<span class="c1"># Note: This will not work on Windows without code to enable ANSI escape codes.</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\r\033</span><span class="s2">[K"</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">""</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>This is sometimes called a <strong>block comment</strong> because it's a way to write a block of text that represents a comment.</p>
+
+      
+        <p>Unlike some programming languages, <strong>Python has <em>no</em> multiline comment syntax</strong>.
+If you think you've seen a multiline comment, it may have been a <a href="https://www.pythonmorsels.com/docstrings/" target="_blank">docstring</a> or a <a href="https://www.pythonmorsels.com/multi-line-strings/" target="_blank">multiline string</a>.
+More on that in <a href="https://www.pythonmorsels.com/multiline-comments/" target="_blank">multiline comments in Python</a>.</p>
+
+      
+    
+  
+    <h2>Inline comments in Python</h2>
+    
+      <p>Comments don't need to be …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/commenting-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/commenting-in-python/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 09, 2024 01:02 AM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/commenting-in-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="http://lucumr.pocoo.org/2024/9/9/multiversion-python" class="hover:underline"
               >Multiversion Python Thoughts</a
             >
@@ -752,6 +1117,46 @@ Also, if we'd like someone to be able to import our code as a module, they can't
           </div>
           <a
             href="https://realpython.com/podcasts/rpp/219/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/blog/2024/kamal-on-a-droplet-building-saas-201/" class="hover:underline"
+              >Kamal On A Droplet - Building SaaS #201</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, we continued working with the Kamal deploy tool. Last time, we build a demo image. With this session, we created a Digital Ocean Droplet (i.e., VM) and deployed to that. Along the journey, we learned a lot about how Kamal operates.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 06, 2024 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/blog/2024/kamal-on-a-droplet-building-saas-201/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2130,244 +2535,6 @@ Bash redirects. I hope it will do the same for you.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/" class="hover:underline"
-              >ANN: JupyterLab 101 Kickstarter</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>My latest Python book is now available for pre-order on Kickstarter. JupyterLab, the latest iteration of the Jupyter Notebook, is a versatile tool for sharing code in an easily understandable format. Hundreds of thousands of people around the world use Jupyter Notebooks or variations of the Notebook architecture for any or all of the following: [&#8230;]</p>
-<p>The post <a href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/">ANN: JupyterLab 101 Kickstarter</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 03, 2024 02:08 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/pydantic-simplify-data-validation/" class="hover:underline"
-              >Using Pydantic to Simplify Python Data Validation</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Discover the power of Pydantic, Python's most popular data parsing, validation, and serialization library. In this hands-on video course, you'll learn how to make your code more robust, trustworthy, and easier to debug with Pydantic.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 03, 2024 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/pydantic-simplify-data-validation/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2024/sep/03/security-releases/" class="hover:underline"
-              >Django security releases issued: 5.1.1, 5.0.9, and 4.2.16</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In accordance with <a class="reference external" href="https://docs.djangoproject.com/en/dev/internals/security/">our security release policy</a>, the Django team
-is issuing releases for
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.1.1/">Django 5.1.1</a>,
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.0.9/">Django 5.0.9</a>, and
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/4.2.16/">Django 4.2.16</a>.
-These releases address the security issues detailed below. We encourage all
-users of Django to upgrade as soon as possible.</p>
-<div class="section" id="s-cve-2024-45230-potential-denial-of-service-vulnerability-in-django-utils-html-urlize">
-<h3>CVE-2024-45230: Potential denial-of-service vulnerability in <tt class="docutils literal">django.utils.html.urlize()</tt></h3>
-<p><tt class="docutils literal">urlize</tt> and <tt class="docutils literal">urlizetrunc</tt> were subject to a potential
-denial-of-service attack via very large inputs with a specific sequence of
-characters.</p>
-<p>Thanks to <a class="reference external" href="https://hackerone.com/mprogrammer">MProgrammer</a> for the report.</p>
-<p>This issue has severity &quot;moderate&quot; according to the Django security policy.</p>
-</div>
-<div class="section" id="s-cve-2024-45231-potential-user-email-enumeration-via-response-status-on-password-reset">
-<h3>CVE-2024-45231: Potential user email enumeration via response status on password reset</h3>
-<p>Due to unhandled email sending failures, the
-<tt class="docutils literal">django.contrib.auth.forms.PasswordResetForm</tt> class allowed remote
-attackers to enumerate user emails by issuing password reset requests and
-observing the outcomes.</p>
-<p>To mitigate this risk, exceptions occurring during password reset email sending
-are now handled and logged using the <tt class="docutils literal">django.contrib.auth</tt> logger.</p>
-<p>Thanks to Thibaut Spriet for the report.</p>
-<p>This issue has severity &quot;low&quot; according to the Django security policy.</p>
-</div>
-<div class="section" id="s-affected-supported-versions">
-<h3>Affected supported versions</h3>
-<ul class="simple">
-<li>Django main branch</li>
-<li>Django 5.1</li>
-<li>Django 5.0</li>
-<li>Django 4.2</li>
-</ul>
-</div>
-<div class="section" id="s-resolution">
-<h3>Resolution</h3>
-<p>Patches to resolve the issue have been applied to Django's
-main, 5.1, 5.0, and 4.2 branches.
-The patches may be obtained from the following changesets.</p>
-<div class="section" id="s-id1">
-<h4>CVE-2024-45230: Potential denial-of-service vulnerability in django.utils.html.urlize()</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/320dd27412e791e119d088281913d8f649617a13">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/022ab0a75c76ab2ea31dfcc5f2cf5501e378d397">5.1 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/813de2672bd7361e9a453ab62cd6e52f96b6525b">5.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/d147a8ebbdf28c17cafbbe2884f0bc57e2bf82e2">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-id2">
-<h4>CVE-2024-45231: Potential user email enumeration via response status on password reset</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/8c35a0a903fd979e3262fe300ca084ffbfb300d6">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/3c733c78d6f8e50296d6e248968b6516c92a53ca">5.1 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/96d84047715ea1715b4bd1594e46122b8a77b9e2">5.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/bf4888d317ba4506d091eeac6e8b4f1fcc731199">4.2 branch</a></li>
-</ul>
-</div>
-</div>
-<div class="section" id="s-the-following-releases-have-been-issued">
-<h3>The following releases have been issued</h3>
-<ul class="simple">
-<li>Django 5.1.1 (<a class="reference external" href="https://www.djangoproject.com/m/releases/5.1/Django-5.1.1.tar.gz">download Django 5.1.1</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-5.1.1.checksum.txt">5.1.1 checksums</a>)</li>
-<li>Django 5.0.9 (<a class="reference external" href="https://www.djangoproject.com/m/releases/5.0/Django-5.0.9.tar.gz">download Django 5.0.9</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-5.0.9.checksum.txt">5.0.9 checksums</a>)</li>
-<li>Django 4.2.16 (<a class="reference external" href="https://www.djangoproject.com/m/releases/4.2/Django-4.2.16.tar.gz">download Django 4.2.16</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-4.2.16.checksum.txt">4.2.16 checksums</a>)</li>
-</ul>
-<p>The PGP key ID used for this release is Natalia Bidart: <a class="reference external" href="https://github.com/nessita.gpg">2EE82A8D9470983E</a></p>
-</div>
-<div class="section" id="s-general-notes-regarding-security-reporting">
-<h3>General notes regarding security reporting</h3>
-<p>As always, we ask that potential security issues be reported via private email
-to <tt class="docutils literal">security&#64;djangoproject.com</tt>, and not via Django's Trac instance, nor via
-the Django Forum, nor via the django-developers list. Please see <a class="reference external" href="https://www.djangoproject.com/security/">our security
-policies</a> for further information.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 03, 2024 11:00 AM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2024/sep/03/security-releases/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/399/c-will-watch-you-in-silence" class="hover:underline"
-              >#399 C will watch you in silence</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Why I Still Use Python Virtual Environments in Docker, Python Developer Survey Results, Anaconda Code add-in for Microsoft Excel, and Disabling Scheduled Dependency Updates.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 03, 2024 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/399/c-will-watch-you-in-silence"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -2379,12 +2546,12 @@ policies</a> for further information.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8706</a></li>
-    <li><a>Unique Feeds: 429</a></li>
+    <li><a>Total Entries: 9033</a></li>
+    <li><a>Unique Feeds: 431</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (476)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://blog.pythonanywhere.com/feed/">Python Bytes (401)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (221)</a></li><li><a href="http://testandcode.com/rss">Python Anywhere (208)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (476)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (401)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (312)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (221)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
