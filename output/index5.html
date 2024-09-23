@@ -53,6 +53,148 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2024/08/portaone.html" class="hover:underline"
+              >Guest Post: How PortaOne uses PyPy for high-performance processing, connecting over 1B of phone calls every month</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The PyPy project is always happy to hear about industrial use  and deployments
+of PyPy. For the <a href="https://www.pypy.org/posts/2024/03/fixing-bug-incremental-gc.html">GC bug
+finding</a>
+task earlier this year, we collaborated with PortaOne and we're super happy
+that Serhii Titov, head of the QA department at PortaOne, was up to writing
+this guest post to describe their use and experience with the project.</p>
+<hr />
+<h3 id="what-does-portaone-do">What does PortaOne do?</h3>
+<p>We at <a href="https://www.portaone.com/">PortaOne Inc.</a> allow telecom operators to
+launch new services (or provide existing services more efficiently) using our
+VoIP platform (PortaSIP) and our real-time charging system (PortaBilling),
+which provides additional features for cloud PBX, such as call transfer,
+queues, interactive voice response (IVR) and more. At this moment our support
+team manages several thousand servers with our software installed in 100
+countries, through which over 500 telecommunication service providers connect
+millions of end users every day. The unique thing about PortaOne is that we
+supply the source code of our product to our customers - something unheard of
+in the telecom world! Thus we attract "telco innovators", who use our APIs to
+build around the system and the source code to create unique tweaks of
+functionality, which produces amazing products.</p>
+<p>At the core of PortaSIP is the middle-ware component (the proper name for it is
+"B2BUA", but that probably does not say much to anyone outside of experts in
+VoIP), which implements the actual handling of SIP calls, messages, etc. and
+all added features (for instance, trying to send a call via telco operators
+through which the cost per minute is lower). It has to be fast (since even a
+small delay in establishing a call is noticed by a customer), reliable
+(everyone hates when a call drops or cannot be completed) and yet easily
+expandable with new functionality. This is why we decided to use Python as
+opposed to C/C++ or similar programming languages, which are often used in
+telecom equipment.</p>
+<p>The B2BUA component is a batch of similar Python processes that are looped
+inside a
+<a href="https://docs.python.org/3.10/library/asyncore.html"><code>asyncore.dispatcher</code></a>
+wrapper. The load balancing between these Python processes is done by our
+stateless SIP proxy server written in C++. All our sockets are served by this
+B2BUA. We have our custom client-wrappers around <code>pymysql</code>, <code>redis</code>,
+<code>cassandra-driver</code> and <code>requests</code> to communicate with external services. Some
+of the Python processes use <a href="https://cffi.readthedocs.io/en/stable/"><code>cffi</code></a>
+wrappers around C-code to improve their performance (examples: an Oracle DB
+driver, a client to a radius server, a custom C logger).</p>
+<p>The I/O operations that block the main thread of the Python processes are
+processed in sub-threads. We have custom wrappers  around <code>threading.Thread</code>
+and also <code>asyncore.dispatcher</code>. The results of such operations are returned to
+the main thread.</p>
+<h3 id="improving-our-performance-with-pypy">Improving our performance with PyPy</h3>
+<p>We started with CPython and then in 2014 switched to PyPy because it was
+faster. Here's an exact quote from our first testing notes: "PyPy gives
+significant performance boost, ~50%". Nowadays, after years of changes in all
+the software involved, PyPy still gives us +50% boost compared to CPython.</p>
+<p>Taking care of real time traffic for so many people around the globe is
+something we're really proud of. I hope the PyPy team can be proud of it as
+well, as the PyPy product is a part of this solution.</p>
+<h3 id="finding-a-garbage-collector-bug-stage-1-the-gc-hooks">Finding a garbage collector bug: stage 1, the GC hooks</h3>
+<p>However our path with PyPy wasn't perfectly smooth. There were very rare cases
+of crashes on PyPy that we weren't able to catch. That's because to make
+coredump useful we needed to switch to PyPy with debug, but we cannot let it
+run in that mode on a production system for an extended period of time, and we
+did not have any STR (steps-to-reproduce) to make PyPy crash again in our lab.
+That's why we kept (and still keep) both interpreters installed just in case,
+and we would switch to CPython if we noticed it happening.</p>
+<p>At the time of updating PyPy from 3.5 to 3.6 our QA started noticing those
+crashes more often, but we still had no luck with STR or collecting proper
+coredumps with debug symbols. Then it became even worse after our development
+played with the <a href="https://doc.pypy.org/en/latest/gc_info.html">Garbage Collector's
+options</a> to increase performance
+of our middleware component. The crashes started to affect our regular
+performance testing (controlled by QA manager Yevhenii Bovda). At that point it
+was decided that we can no longer live like that and so we started an intense
+investigation.</p>
+<p>During the first stage of our investigation (following the best practice of
+troubleshooting) we narrowed down the issue as much as we could. So, it was not
+our code, it was definitely somewhere in PyPy. Eventually our SIP software
+engineer <a href="https://github.com/Yevhenii-Yatchenko">Yevhenii Yatchenko</a> found out
+that this bug is connected with the use of our <a href="https://doc.pypy.org/en/latest/gc_info.html#gc-hooks">custom hooks in the
+GC</a>. Yevhenii created
+ticket <a href="https://github.com/pypy/pypy/issues/4899">#4899</a> and within 2-3 days we
+got a fix from a <a href="https://github.com/cfbolz">member of the PyPy team</a>, in true open-source fashion.</p>
+<h3 id="finding-a-garbage-collector-bug-stage-2-the-real-bug">Finding a garbage collector bug: stage 2, the real bug</h3>
+<p>Then came stage 2. In parallel with the previous ticket, Yevhenii created
+<a href="https://github.com/pypy/pypy/issues/4900">#4900</a> that we still see failing
+with coredumps quite often, and they are not connected to GC custom hooks. In a
+nutshell, it took us dozens of back and forward emails, three Zoom sessions and
+four versions of a patch to solve the issue. During the last iteration we got a
+new set of options to try and a new version of the patch. Surprisingly, that
+helped! What a relief! So, the next logical step was to remove all debug
+options and run PyPy only with the patch. Unfortunately, it started to fail
+again and we came to the obvious conclusion that what will help us is not a
+patch, but one of options we were testing out. At that point we found out that
+<a href="https://doc.pypy.org/en/latest/gc_info.html#environment-variables"><code>PYPY_GC_MAX_PINNED=0</code></a>
+is a necessary and sufficient condition to solve our issue. This points to
+another bug in the garbage collector, somehow related to object pinning.</p>
+<p>Here's our current state: we have to add <code>PYPY_GC_MAX_PINNED=0</code>, but we do not
+face the crashes anymore.</p>
+<h3 id="conclusion-and-next-steps">Conclusion and next steps</h3>
+<p>Gratitude is extended to Carl for his invaluable assistance in resolving the
+nasty bugss, because it seems we're the only ones who suffered from the last
+one and we really did not want to fall back to CPython due to its performance
+disadvantage.</p>
+<p>Serhii Titov, head of the QA department at PortaOne Inc.</p>
+<p>P.S. If you are a perfectionist and at this point you have mixed feelings and
+you are still bothered by the question "But there might still be a bug in the
+GC, what about that?" - Carl has some ideas about it and he will sort it out
+(we will help with the testing/verification part).</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 29, 2024 09:00 AM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2024/08/portaone.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://rickardlindberg.me/2024/08/29/linking-and-how.html" class="hover:underline"
               >Linking (and how it has evolved) in Smart Notes</a
             >
@@ -2219,46 +2361,6 @@ is setting us up for a new user environment that should be coming soon.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/primer-on-jinja-templating/" class="hover:underline"
-              >Primer on Jinja Templating</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            With Jinja, you can build rich templates that power the front end of your web applications. But you can use Jinja without a web framework running in the background. Anytime you want to create text files with programmatic content, Jinja can help you out.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 21, 2024 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/primer-on-jinja-templating/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2270,12 +2372,12 @@ is setting us up for a new user environment that should be coming soon.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9033</a></li>
-    <li><a>Unique Feeds: 431</a></li>
+    <li><a>Total Entries: 9012</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (476)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (401)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (312)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (221)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (476)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Bytes (402)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (312)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (221)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
