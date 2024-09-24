@@ -53,6 +53,309 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html" class="hover:underline"
+              >Bash Redirects Explained</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I thought I knew how Bash redirects worked.</p>
+<p>If I wanted to redirect the output of a command to a file, I&rsquo;d type this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &gt; /tmp/log.txt
+</code></pre></div><p>If I wanted to pipe both stdout and stderr to a text editor for further
+processing, I&rsquo;d type this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program 2&gt;&amp;<span style="color: #ae81ff;">1</span> | vim -
+</code></pre></div><p>I knew that <code>2&gt;&amp;1</code> meant redirect stderr to stdout making it appear on stdout
+as well.</p>
+<p>I knew certain patterns for certain situations. But when I encountered
+situations where I had not learned a pattern, I was lost. For example, I could
+not explain the difference between</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program 2&gt;&amp;<span style="color: #ae81ff;">1</span> &gt;/tmp/log.txt
+</code></pre></div><p>and</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &gt;/tmp/log.txt 2&gt;&amp;<span style="color: #ae81ff;">1</span>
+</code></pre></div><p>And I got scared when I saw something like this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &lt; input.txt &gt; output.txt 2&gt;&amp;<span style="color: #ae81ff;">1</span>
+</code></pre></div><p>Have you also been there? What did you do?</p>
+<p>I would search the Internet for a pattern that matched the use case, or just
+try different alternatives and notice how they behaved.</p>
+<p>I did this until one day when I learned a mental model for how Bash redirects
+work. Now I no longer need to rely on patterns. I can easily parse any
+situation and use any combination of redirects for my purposes.</p>
+<p>The rest of this article explains this mental model.</p>
+<h2 id="the-standard-streams">The Standard Streams</h2>
+<p>A process has three standard streams attached to it:</p>
+<ul>
+<li>stdin (0)</li>
+<li>stdout (1)</li>
+<li>stderr (2)</li>
+</ul>
+<p><img alt="Diagram of the three streams of a process." height="227" src="https://cdn.uploads.micro.blog/173380/2024/process-streams.png" width="600" /></p>
+<p>When we start a program from the terminal, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>What redirects do is to modify what the standard streams point to before the
+program starts executing.</p>
+<ul>
+<li><code>&lt;</code> means modify stdin.</li>
+<li><code>&gt;</code> means modify stdout.</li>
+<li><code>2&gt;</code> means modify stderr.</li>
+</ul>
+<p>That is the mental model: <strong>redirects modify standard streams before program
+execution</strong>.</p>
+<p>Let&rsquo;s evaluate a few examples using this mental model to see how it works.</p>
+<h2 id="logcat-utility">Logcat Utility</h2>
+<p>To be able to show what happens in different examples, we have a utility
+program, <code>logcat.py</code>, that makes use of all three streams. It reads text from
+stdin, logs the arguments and the length of the text to stderr, and writes the
+text to stdout. It looks like this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-python"><span style="color: #75715e;">#!/usr/bin/env python</span>
+
+<span style="color: #f92672;">import</span> sys
+
+text <span style="color: #f92672;">=</span> sys<span style="color: #f92672;">.</span>stdin<span style="color: #f92672;">.</span>read()
+
+sys<span style="color: #f92672;">.</span>stderr<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"Args: </span><span style="color: #e6db74;">{</span>(sys<span style="color: #f92672;">.</span>argv[<span style="color: #ae81ff;">1</span>:])<span style="color: #e6db74;">}</span><span style="color: #ae81ff;">\n</span><span style="color: #e6db74;">"</span>)
+sys<span style="color: #f92672;">.</span>stderr<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"Read </span><span style="color: #e6db74;">{</span>len(text)<span style="color: #e6db74;">}</span><span style="color: #e6db74;"> characters.</span><span style="color: #ae81ff;">\n</span><span style="color: #e6db74;">"</span>)
+
+sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>write(text)
+</code></pre></div><h2 id="example-no-redirect">Example: No Redirect</h2>
+<p>Let&rsquo;s start with an example without redirects to see the operation of
+<code>logcat.py</code>:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments
+</code></pre></div><p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, <code>logcat.py</code> waits for input. If we type <code>hello</code> in the
+terminal (followed by a return and ctrl+d), the following is printed to the
+terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 6 characters.
+hello
+</code></pre></div><p>We can see that it read our input from the terminal/keyboard and wrote the log
+messages along with our input to the terminal as well.</p>
+<h2 id="example-redirect-stdin">Example: Redirect Stdin</h2>
+<p>Now let&rsquo;s modify stdin to instead of the terminal/keyboard be the <code>logcat.py</code>
+source code:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments &lt;logcat.py
+</code></pre></div><p>This instructs Bash to modify stdin to point to the file <code>logcat.py</code>.</p>
+<p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, the following is printed to the terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><p>We can see that the redirect operation is stripped from the arguments. Only
+Bash sees it and does not pass it along to the program. Furthermore we can see
+that the <code>logcat.py</code> source code is printed to the terminal.</p>
+<h2 id="example-redirect-stdin-and-stdout">Example: Redirect Stdin and Stdout</h2>
+<p>Let&rsquo;s say we&rsquo;re only interested in the log messages, and want to throw away
+stdout:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments &lt;logcat.py &gt;/dev/null
+</code></pre></div><p>This instructs Bash to modify stdin to point to the file <code>logcat.py</code> and to
+modify stdout to point to the file <code>/dev/null</code>.</p>
+<p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>/dev/null</code> (opened in write mode)</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, the following is printed to the terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 182 characters.
+</code></pre></div><p>We can see that the redirect operations are all stripped from the arguments and
+the source code has been written to <code>/dev/null</code> and is thus not shown in the
+terminal.</p>
+<h2 id="extended-mental-model">Extended Mental Model</h2>
+<p>Let&rsquo;s extended the mental model to clarify how Bash operates.</p>
+<p>When Bash parses a command, it divides it into two parts: the arguments and the
+redirects. Before it starts executing the program with the arguments, it goes
+through the redirects, in order, and configures the standard streams before
+execution.</p>
+<h2 id="example-redirect-all-streams">Example: Redirect All Streams</h2>
+<p>Let&rsquo;s see how we can interpret a more complex command using the extended mental
+model:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py &lt;logcat.py is the &gt;out.txt best 2&gt;&amp;1 thing
+</code></pre></div><p>If we split this into arguments and redirects, we get this:</p>
+<ul>
+<li>Arguments: <code>./logcat.py</code>, <code>is</code>, <code>the</code>, <code>best</code>, <code>thing</code></li>
+<li>Redirects: <code>&lt;logcat.py</code>, <code>&gt;out.txt</code>, <code>2&gt;&amp;1</code></li>
+</ul>
+<p>Now, let&rsquo;s evaluate the redirects in order. The state of the standard streams
+at start is this:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>&lt;logcat.py</code> and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>&gt;out.txt</code> and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>out.txt</code> (opened in write mode)</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>2&gt;&amp;1</code>, which means modify stderr (<code>2&gt;</code>) to be whatever
+stdout points to (<code>&amp;1</code>), and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>out.txt</code> (opened in write mode)</li>
+<li>stderr: <code>out.txt</code> (opened in write mode)</li>
+</ul>
+<p>After the standard streams have been set up, execution of <code>./logcat.py is the best thing</code> starts. Nothing appears on the terminal since all output has been
+redirected to <code>out.txt</code>:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ cat out.txt
+Args: ['is', 'the', 'best', 'thing']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><h2 id="mini-shell">Mini Shell</h2>
+<p>I created a mini version of a shell to demonstrate how straight forward it is
+to implement redirects with POSIX system calls. It works exactly as the
+extended mental model, and because it is running software, it fills in some
+more details of the model. I would guess that Bash does something similar even
+though I haven&rsquo;t read its source code.</p>
+<p>First off, here is a demo that shows how the mini shell can replicate the
+complex example from above:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./minishell.py
+~~?~~&gt; ./logcat.py &lt;logcat.py is the &gt;out.txt best 2&gt;&amp;1 thing
+~~0~~&gt; cat out.txt
+Args: ['is', 'the', 'best', 'thing']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><p>And here is the implementation in only 31 lines of Python:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-python"><span style="color: #75715e;">#!/usr/bin/env python</span>
+
+<span style="color: #f92672;">import</span> os
+<span style="color: #f92672;">import</span> sys
+
+STDIN  <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">0</span>
+STDOUT <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">1</span>
+STDERR <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">2</span>
+
+statuscode <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"?"</span>
+<span style="color: #66d9ef;">while</span> <span style="color: #66d9ef;">True</span>:
+    sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"~~</span><span style="color: #e6db74;">{</span>statuscode<span style="color: #e6db74;">}</span><span style="color: #e6db74;">~~&gt; "</span>)
+    sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>flush()
+    command <span style="color: #f92672;">=</span> input()
+    pid <span style="color: #f92672;">=</span> os<span style="color: #f92672;">.</span>fork()
+    <span style="color: #66d9ef;">if</span> pid <span style="color: #f92672;">==</span> <span style="color: #ae81ff;">0</span>:
+        args <span style="color: #f92672;">=</span> []
+        <span style="color: #66d9ef;">for</span> part <span style="color: #f92672;">in</span> command<span style="color: #f92672;">.</span>split(<span style="color: #e6db74;">" "</span>):
+            <span style="color: #66d9ef;">if</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"&lt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">1</span>:], os<span style="color: #f92672;">.</span>O_RDONLY), STDIN)
+            <span style="color: #66d9ef;">elif</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"&gt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">1</span>:], os<span style="color: #f92672;">.</span>O_WRONLY<span style="color: #f92672;">|</span>os<span style="color: #f92672;">.</span>O_CREAT, <span style="color: #ae81ff;">0o644</span>), STDOUT)
+            <span style="color: #66d9ef;">elif</span> part <span style="color: #f92672;">==</span> <span style="color: #e6db74;">"2&gt;&amp;1"</span>:
+                os<span style="color: #f92672;">.</span>dup2(STDOUT, STDERR)
+            <span style="color: #66d9ef;">elif</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"2&gt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">2</span>:], os<span style="color: #f92672;">.</span>O_WRONLY<span style="color: #f92672;">|</span>os<span style="color: #f92672;">.</span>O_CREAT, <span style="color: #ae81ff;">0o644</span>), STDERR)
+            <span style="color: #66d9ef;">else</span>:
+                args<span style="color: #f92672;">.</span>append(part)
+        os<span style="color: #f92672;">.</span>execvp(args[<span style="color: #ae81ff;">0</span>], args)
+    <span style="color: #66d9ef;">else</span>:
+        _, statuscode <span style="color: #f92672;">=</span> os<span style="color: #f92672;">.</span>waitpid(pid, <span style="color: #ae81ff;">0</span>)
+</code></pre></div><p>To understand how this works, you need some knowledge of the POSIX system calls
+<code>fork</code>, <code>waitpid</code>, <code>open</code>, <code>dup2</code>, and <code>execvp</code>. But even if you don&rsquo;t
+understand the specifics, I think this codified model can help in understanding
+how Bash operates. Let&rsquo;s look at an example.</p>
+<h2 id="example-duplicated-files">Example: Duplicated Files</h2>
+<p>Let&rsquo;s see if we can explain the difference between the following commands using
+the mini shell for the model:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py &lt;logcat.py &gt;out.txt 2&gt;out.txt
+$ ./logcat.py &lt;logcat.py &gt;out.txt 2&gt;&amp;1
+</code></pre></div><p>At a first glance, it looks like both commands redirect both stdout and stderr
+to the <code>out.txt</code> file. But if we evaluate it like mini shell does, we see that
+the first example will open the file twice (two calls to <code>os.open</code> creating two
+file handles), whereas the second example will open the file only once and then
+duplicate the file handle for stderr.</p>
+<p>When two file handles are created, writes to the two streams will attempt to
+write to the same location in the file and they will overwrite each other.
+Furthermore, buffering might alter in which order writes happen, so it is not
+clear what will actually end up in the file. So to make sure all output is
+captured in the file, the second example should be used where the file is only
+opened once.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>There is still more to Bash redirects than what I have explained here. But this
+mental model (along with its extended versions) have helped me reason about
+Bash redirects. I hope it will do the same for you.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 04, 2024 04:39 AM UTC by
+            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
+              >Rickard Lindberg</a
+            >
+          </div>
+          <a
+            href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/645" class="hover:underline"
               >Issue #645 (Sept. 3, 2024)</a
             >
@@ -641,6 +944,46 @@ scalable and future-proof architectures that integrate your airport systems and 
           </div>
           <a
             href="https://labs.quansight.org/blog/pydata-theme-a11y-fixes"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://wrongsideofmemphis.com/2024/09/01/insights-from-shipitcon-2024/" class="hover:underline"
+              >Insights from ShipItCon 2024</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Another year, another ShipItCon! I&#8217;ve talked already on the previous instances of the conference. To keep things short, it&#8217;s an annual conference based in Dublin that works around the idea of releasing software. Because it&#8217;s very open-ended topic that can be approached from lots of angles, and it&#8217;s something different from the more stereotypical &#8220;conference around a technology&#8221;, the talks are quite varied. The organisation always finds good speakers that talk about interesting concepts, from very different points of view, making it quite broad in scope. It&#8217;s full of, as the MC... <a class="read-more" href="https://wrongsideofmemphis.com/2024/09/01/insights-from-shipitcon-2024/">Read More</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 01, 2024 04:23 PM UTC by
+            <a href="http://wrongsideofmemphis.wordpress.com/feed/atom/?tag=english+python" class="link link-hover text-primary"
+              >Jaime Buelta</a
+            >
+          </div>
+          <a
+            href="https://wrongsideofmemphis.com/2024/09/01/insights-from-shipitcon-2024/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1328,188 +1671,6 @@ My first attempt to get svg to show up in Blogger has the DAG Hamilton logo as i
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2024/08/python-developers-survey-2023-results.html" class="hover:underline"
-              >Python Developers Survey 2023 Results</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We are excited to share <a href="https://jb.gg/vvtizf" target="_blank">the results of the seventh official annual Python Developers Survey</a>. This survey is done yearly as a collaborative effort between the Python Software Foundation and <a href="https://www.jetbrains.com/" target="_blank">JetBrains</a>. Responses were collected from November 2023 through February 2024. This year, we kept the response period open longer to facilitate as much global representation as possible. More than 25,000 Python developers and enthusiasts from almost 200 countries and regions participated in the survey to reveal the current state of the language and the ecosystem around it.<br /></p><p style="text-align: center;"><b><span style="font-size: medium;">Check out the <a href="https://jb.gg/vvtizf" target="_blank">survey results</a>!</span></b><br /></p><p>The survey aims to map the Python landscape and covers the following topics:<br /></p><ul style="text-align: left;"><li>General Python usage</li><li>Purpose for using Python</li><li>Python versions</li><li>Frameworks and Libraries</li><li>Cloud Platforms</li><li>Data science</li><li>Development tools</li><li>Python packaging</li><li>Demographics</li></ul><p>We encourage you to check out the <a href="https://lp.jetbrains.com/python-developers-survey-2023/#methodology" target="_blank">methodology</a> and the <a href="https://drive.google.com/drive/folders/1lbekmGU40UNFrUrc9YvB6msDvYYETgHa?usp=share_link" target="_blank">raw data</a> for this year's Python Developers Survey, as well as those from past years (<a href="https://lp.jetbrains.com/python-developers-survey-2022/" target="_blank">2022</a>, <a href="https://lp.jetbrains.com/python-developers-survey-2021/" target="_blank">2021</a>, <a href="https://www.jetbrains.com/lp/python-developers-survey-2020" target="_blank">2020</a>, <a href="https://www.jetbrains.com/lp/python-developers-survey-2019/" target="_blank">2019</a>, <a href="https://www.jetbrains.com/research/python-developers-survey-2018/" target="_blank">2018</a>, and <a href="https://www.jetbrains.com/research/python-developers-survey-2017/" target="_blank">2017</a>). We would love to hear about what you learn by digging into the numbers! Share your results and comments with us on social media by mentioning JetBrains (<a href="https://www.linkedin.com/company/jetbrains" target="_blank">LinkedIn</a>, <a href="https://twitter.com/jetbrains" target="_blank">X</a>) and the PSF (<a href="https://fosstodon.org/@ThePSF" target="_blank">Mastodon</a>, <a href="https://www.linkedin.com/company/thepsf" target="_blank">LinkedIn</a>, <a href="https://x.com/ThePSF" target="_blank">X</a>) using the #pythondevsurvey hashtag. Based on the feedback we received last year, we made adjustments to the 2023 survey- so we welcome suggestions and feedback that could help us improve again for next year!</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 29, 2024 01:46 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2024/08/python-developers-survey-2023-results.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pypy.org/posts/2024/08/portaone.html" class="hover:underline"
-              >Guest Post: How PortaOne uses PyPy for high-performance processing, connecting over 1B of phone calls every month</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The PyPy project is always happy to hear about industrial use  and deployments
-of PyPy. For the <a href="https://www.pypy.org/posts/2024/03/fixing-bug-incremental-gc.html">GC bug
-finding</a>
-task earlier this year, we collaborated with PortaOne and we're super happy
-that Serhii Titov, head of the QA department at PortaOne, was up to writing
-this guest post to describe their use and experience with the project.</p>
-<hr />
-<h3 id="what-does-portaone-do">What does PortaOne do?</h3>
-<p>We at <a href="https://www.portaone.com/">PortaOne Inc.</a> allow telecom operators to
-launch new services (or provide existing services more efficiently) using our
-VoIP platform (PortaSIP) and our real-time charging system (PortaBilling),
-which provides additional features for cloud PBX, such as call transfer,
-queues, interactive voice response (IVR) and more. At this moment our support
-team manages several thousand servers with our software installed in 100
-countries, through which over 500 telecommunication service providers connect
-millions of end users every day. The unique thing about PortaOne is that we
-supply the source code of our product to our customers - something unheard of
-in the telecom world! Thus we attract "telco innovators", who use our APIs to
-build around the system and the source code to create unique tweaks of
-functionality, which produces amazing products.</p>
-<p>At the core of PortaSIP is the middle-ware component (the proper name for it is
-"B2BUA", but that probably does not say much to anyone outside of experts in
-VoIP), which implements the actual handling of SIP calls, messages, etc. and
-all added features (for instance, trying to send a call via telco operators
-through which the cost per minute is lower). It has to be fast (since even a
-small delay in establishing a call is noticed by a customer), reliable
-(everyone hates when a call drops or cannot be completed) and yet easily
-expandable with new functionality. This is why we decided to use Python as
-opposed to C/C++ or similar programming languages, which are often used in
-telecom equipment.</p>
-<p>The B2BUA component is a batch of similar Python processes that are looped
-inside a
-<a href="https://docs.python.org/3.10/library/asyncore.html"><code>asyncore.dispatcher</code></a>
-wrapper. The load balancing between these Python processes is done by our
-stateless SIP proxy server written in C++. All our sockets are served by this
-B2BUA. We have our custom client-wrappers around <code>pymysql</code>, <code>redis</code>,
-<code>cassandra-driver</code> and <code>requests</code> to communicate with external services. Some
-of the Python processes use <a href="https://cffi.readthedocs.io/en/stable/"><code>cffi</code></a>
-wrappers around C-code to improve their performance (examples: an Oracle DB
-driver, a client to a radius server, a custom C logger).</p>
-<p>The I/O operations that block the main thread of the Python processes are
-processed in sub-threads. We have custom wrappers  around <code>threading.Thread</code>
-and also <code>asyncore.dispatcher</code>. The results of such operations are returned to
-the main thread.</p>
-<h3 id="improving-our-performance-with-pypy">Improving our performance with PyPy</h3>
-<p>We started with CPython and then in 2014 switched to PyPy because it was
-faster. Here's an exact quote from our first testing notes: "PyPy gives
-significant performance boost, ~50%". Nowadays, after years of changes in all
-the software involved, PyPy still gives us +50% boost compared to CPython.</p>
-<p>Taking care of real time traffic for so many people around the globe is
-something we're really proud of. I hope the PyPy team can be proud of it as
-well, as the PyPy product is a part of this solution.</p>
-<h3 id="finding-a-garbage-collector-bug-stage-1-the-gc-hooks">Finding a garbage collector bug: stage 1, the GC hooks</h3>
-<p>However our path with PyPy wasn't perfectly smooth. There were very rare cases
-of crashes on PyPy that we weren't able to catch. That's because to make
-coredump useful we needed to switch to PyPy with debug, but we cannot let it
-run in that mode on a production system for an extended period of time, and we
-did not have any STR (steps-to-reproduce) to make PyPy crash again in our lab.
-That's why we kept (and still keep) both interpreters installed just in case,
-and we would switch to CPython if we noticed it happening.</p>
-<p>At the time of updating PyPy from 3.5 to 3.6 our QA started noticing those
-crashes more often, but we still had no luck with STR or collecting proper
-coredumps with debug symbols. Then it became even worse after our development
-played with the <a href="https://doc.pypy.org/en/latest/gc_info.html">Garbage Collector's
-options</a> to increase performance
-of our middleware component. The crashes started to affect our regular
-performance testing (controlled by QA manager Yevhenii Bovda). At that point it
-was decided that we can no longer live like that and so we started an intense
-investigation.</p>
-<p>During the first stage of our investigation (following the best practice of
-troubleshooting) we narrowed down the issue as much as we could. So, it was not
-our code, it was definitely somewhere in PyPy. Eventually our SIP software
-engineer <a href="https://github.com/Yevhenii-Yatchenko">Yevhenii Yatchenko</a> found out
-that this bug is connected with the use of our <a href="https://doc.pypy.org/en/latest/gc_info.html#gc-hooks">custom hooks in the
-GC</a>. Yevhenii created
-ticket <a href="https://github.com/pypy/pypy/issues/4899">#4899</a> and within 2-3 days we
-got a fix from a <a href="https://github.com/cfbolz">member of the PyPy team</a>, in true open-source fashion.</p>
-<h3 id="finding-a-garbage-collector-bug-stage-2-the-real-bug">Finding a garbage collector bug: stage 2, the real bug</h3>
-<p>Then came stage 2. In parallel with the previous ticket, Yevhenii created
-<a href="https://github.com/pypy/pypy/issues/4900">#4900</a> that we still see failing
-with coredumps quite often, and they are not connected to GC custom hooks. In a
-nutshell, it took us dozens of back and forward emails, three Zoom sessions and
-four versions of a patch to solve the issue. During the last iteration we got a
-new set of options to try and a new version of the patch. Surprisingly, that
-helped! What a relief! So, the next logical step was to remove all debug
-options and run PyPy only with the patch. Unfortunately, it started to fail
-again and we came to the obvious conclusion that what will help us is not a
-patch, but one of options we were testing out. At that point we found out that
-<a href="https://doc.pypy.org/en/latest/gc_info.html#environment-variables"><code>PYPY_GC_MAX_PINNED=0</code></a>
-is a necessary and sufficient condition to solve our issue. This points to
-another bug in the garbage collector, somehow related to object pinning.</p>
-<p>Here's our current state: we have to add <code>PYPY_GC_MAX_PINNED=0</code>, but we do not
-face the crashes anymore.</p>
-<h3 id="conclusion-and-next-steps">Conclusion and next steps</h3>
-<p>Gratitude is extended to Carl for his invaluable assistance in resolving the
-nasty bugss, because it seems we're the only ones who suffered from the last
-one and we really did not want to fall back to CPython due to its performance
-disadvantage.</p>
-<p>Serhii Titov, head of the QA department at PortaOne Inc.</p>
-<p>P.S. If you are a perfectionist and at this point you have mixed feelings and
-you are still bothered by the question "But there might still be a bug in the
-GC, what about that?" - Carl has some ideas about it and he will sort it out
-(we will help with the testing/verification part).</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 29, 2024 09:00 AM UTC by
-            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
-              >PyPy</a
-            >
-          </div>
-          <a
-            href="https://www.pypy.org/posts/2024/08/portaone.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1521,8 +1682,8 @@ GC, what about that?" - Carl has some ideas about it and he will sort it out
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8959</a></li>
-    <li><a>Unique Feeds: 428</a></li>
+    <li><a>Total Entries: 9013</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
