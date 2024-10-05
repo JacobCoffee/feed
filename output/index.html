@@ -53,6 +53,138 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://beauty-of-imagination.blogspot.com/2024/10/simpler-than-pysimplegui-and-python.html" class="hover:underline"
+              >Simpler than PySimpleGUI and python tkinter: talking  directly to tcl/tk</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Well, the PySimpleGUI pull rug of licence reminded me how much dependencies are not a good thing.<br /><br />
+
+Even though <a href="https://pypi.org/project/FreeSimpleGUI">FreeSimpleGUI</a> is a good approach to simpler tk/tcl binding in python : <b>we can do better</b>, especially if your linux distro split the python package and you don't have access to tkinter. I am watching you debian, splitting ALL packages and breaking them including ... tcl from tk (what a crime).
+
+<br /><br />
+Under debian this stunt requires you to install tk : <pre>apt install tk8.6</pre><br /><br />
+How hard is it to remove when tcl/tk is installed to do GUI programming in tk <b>without</b> tkinter?
+<br /><br />
+Well, it's fairly easy, first and foremost coders are coders, they code in whatever language. If you do code in one language you can't do docker, simple sysadmin tasks (shell), compile C extensions (make syntax) or web applications (HTML + javascript). Hence, learning more than one language is part of doing python applications.<br /><br />
+
+How hard is codinig in <a href="https://tkdocs.com/tutorial/">tcl/tk</a> natively?<br /><br />
+Fairly easy: it's difficulty is a little above lua, and way below perl thanks to the absence of references.<br /><br />
+What value tcl have ?<br /><br />
+It's still used in domain specific field such as VLSI (Very Large Scale Integration of electronic component).<br /><br />
+
+So here is the plan : we are gonna do an application that do the math in python which is perfect for expressing complex math in more readable than tcl way and push all the GUI to the tk interpreter (albeit <b>wish</b>).<br /><br />
+
+We are gonna make a simple wall clock ... and all tcl commands are injected to tcl through the <b>puts</b> function.<br />
+
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg13NYQX3hIZxtzetbtXq7H3RhgaeHhYfRzDvaBPzugBDlK1z08ujUFodzCMK2s2855vhqM-bTNtreEcZgPGlXIbwTeaQQJxIG1g4myu1f83IN_v6hKgVk4WSOEFdOD2kuPf6yJBL3DYberaK23F5crb9qa0d_ZtUtebgPjULRcSV3x-r4KnoH_vsPIX-I/s1600/462054760_10228706598502515_3037434182282097028_n.jpg" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg13NYQX3hIZxtzetbtXq7H3RhgaeHhYfRzDvaBPzugBDlK1z08ujUFodzCMK2s2855vhqM-bTNtreEcZgPGlXIbwTeaQQJxIG1g4myu1f83IN_v6hKgVk4WSOEFdOD2kuPf6yJBL3DYberaK23F5crb9qa0d_ZtUtebgPjULRcSV3x-r4KnoH_vsPIX-I/s1600/462054760_10228706598502515_3037434182282097028_n.jpg" /></a></div>
+
+<pre>
+#!/usr/bin/env python
+from subprocess import Popen, PIPE
+from time import sleep, time, localtime
+
+# let's talk to tk/tcl directly through p.stdin
+p = Popen(['wish'], stdin=PIPE)
+
+def puts(s):
+    for l in s.split("\n"):
+        p.stdin.write((l + "\n").encode())
+        p.stdin.flush()
+
+WIDTH=HEIGHT=400
+
+puts(f"""
+canvas .c -width {WIDTH} -height {HEIGHT} -bg white
+pack .c
+""")
+
+# Constant are CAPitalized in python by convention
+from cmath import  pi as PI, e as E
+ORIG=complex(WIDTH/2, HEIGHT/2)
+
+# correcting python notations j => I  
+I = complex("j")
+rad_per_sec = 2.0 * PI /60.0
+rad_per_min = rad_per_sec / 60
+rad_per_hour = rad_per_min / 12
+
+origin_vector_hand = WIDTH/2 *  I
+
+size_of_sec_hand = .9
+size_of_min_hand = .8
+size_of_hour_hand = .65
+
+rot_sec = lambda sec : -E ** (I * sec * rad_per_sec )
+rot_min = lambda min : -E ** (I *  min * rad_per_min )
+rot_hour = lambda hour : -E ** (I * hour * rad_per_hour )
+
+to_real = lambda c1,c2 : "%f %f %f %f" % (c1.real,c1.imag,c2.real, c2.imag)
+for n in range(60):
+    direction= origin_vector_hand * rot_sec(n)
+    start=.9 if n%5 else .85
+    puts(f".c create line {to_real(ORIG+start*direction,ORIG+.95*direction)}")
+    sleep(.1)
+
+diff_offset_in_sec = (time() % (24*3600)) - \
+    localtime()[3]*3600 -localtime()[4] * 60.0 \
+    - localtime()[5] 
+n=0
+while True:
+    t = time()
+    s= t%60
+    m = m_in_sec = t%(60 * 60)
+    h = h_in_sec = (t- diff_offset_in_sec)%(24*60*60)
+    puts(".c delete second")
+    puts(".c delete minute")
+    puts(".c delete hour")
+    c0=ORIG+ -.1 * origin_vector_hand * rot_sec(s)
+    c1=ORIG+ size_of_sec_hand * origin_vector_hand * rot_sec(s)
+    puts( f".c create line {to_real(c0,c1)} -tag second -fill blue -smooth true")
+    c1=ORIG+size_of_min_hand * origin_vector_hand * rot_min(m)
+    puts(f".c create line {to_real(ORIG, c1)} -tag minute -fill green -smooth true")
+    c1=ORIG+size_of_hour_hand * origin_vector_hand * rot_hour(h)
+    puts(f".c create line {to_real(ORIG,c1)} -tag hour -fill red -smooth true")
+    sleep(.1)
+
+</pre>
+
+
+Next time as a bonus, I'm gonna do something tkinter cannot do: bidirectional communications (REP/REQ pattern).
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 05, 2024 07:48 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="http://beauty-of-imagination.blogspot.com/2024/10/simpler-than-pysimplegui-and-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-october-2024-release/" class="hover:underline"
               >Python in Visual Studio Code – October 2024 Release</a
             >
@@ -1870,84 +2002,6 @@ several issues <a href="https://bugs.tryton.org/13335">[1]</a> <a href="https://
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://kushaldas.in/posts/breaking-out-of-algorithm.html" class="hover:underline"
-              >Breaking out of algorithm</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <!--
-.. title: Breaking out of algorithm
-.. slug: breaking-out-of-algorithm
-.. date: 2024-09-30T18:16:26+02:00
-.. tags: Blog, Python, Fedora, Photography, News, AI
-.. link:
-.. description:
-.. type: text
--->
-<p>Many of you already know about my love of photography. I am taking photos for
-many years, mostly people photos. Portraits in conferences like PyCon or Fedora
-events. I regularly post photos to wikipedia too, specially for the
-people/accounts which does not have good quality profile photos. I stopped
-doing photography as we moved to Sweden, digital camera was old and becoming
-stable in a new country (details in a different future blog) takes time. But,
-last year <a href="https://anweshadas.in">Anwesha</a> bought me a new camera, actually two
-different cameras. And I started taking photos again.</p>
-<p>I started regular photos of the weekly climate protests / demonstrations of <a href="https://fridaysforfuture.se/lokala-grupper/stockholm/">Fridays for
-Future</a> Stockholm group.
-And then more different street protests and some dance/music events too. I
-don't have a Facebook account and most people asked me to share over Instagram,
-so I did that. But, as I covered more &amp; more various protests as a photographer,
-I noticed <a href="https://instagram.com/kushaldas">my Instagram postos</a> are showing up
-less in people's feeds. Very less. Was wondering different ways of breaking out
-of the algorithmic restriction.</p>
-<p><a href="https://pixelfed.org/">Pixelfed</a> is a decentralized, federated ActivityPub
-based system to share photos. I am going to share photos more on this platform,
-and hoping people will slowly see more. I started my account yesterday.</p>
-<p><img alt="screenshot of my account" src="https://kushaldas.in/images/pixelfed_kushal.png" /></p>
-<p>You can follow me from any standard ActivityPub system, say your mastodon
-account itself. Search for <code>@kushal@pixel.kushaldas.photography</code> or
-<a href="https://pixel.kushaldas.photography/kushal">https://pixel.kushaldas.photography/kushal</a> in your system and you can then follow it
-like any other account. If you like the photos, then please share the account
-(or this blog post) more to your followers and help me to break out of the
-algorithmic restrictions.</p>
-<p>In the technology side, the server runs Debian and containers. On my Fedora
-system I am super happy to add a few scripts for Gnome Files, they help me to
-resize the selected images before upload (I will write a blog post tomorrow on
-this).</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 30, 2024 04:16 PM UTC by
-            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
-              >Kushal Das</a
-            >
-          </div>
-          <a
-            href="https://kushaldas.in/posts/breaking-out-of-algorithm.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1959,8 +2013,8 @@ this).</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8947</a></li>
-    <li><a>Unique Feeds: 428</a></li>
+    <li><a>Total Entries: 9035</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
