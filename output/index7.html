@@ -53,6 +53,350 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html" class="hover:underline"
+              >Bash Redirects Explained</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I thought I knew how Bash redirects worked.</p>
+<p>If I wanted to redirect the output of a command to a file, I&rsquo;d type this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &gt; /tmp/log.txt
+</code></pre></div><p>If I wanted to pipe both stdout and stderr to a text editor for further
+processing, I&rsquo;d type this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program 2&gt;&amp;<span style="color: #ae81ff;">1</span> | vim -
+</code></pre></div><p>I knew that <code>2&gt;&amp;1</code> meant redirect stderr to stdout making it appear on stdout
+as well.</p>
+<p>I knew certain patterns for certain situations. But when I encountered
+situations where I had not learned a pattern, I was lost. For example, I could
+not explain the difference between</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program 2&gt;&amp;<span style="color: #ae81ff;">1</span> &gt;/tmp/log.txt
+</code></pre></div><p>and</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &gt;/tmp/log.txt 2&gt;&amp;<span style="color: #ae81ff;">1</span>
+</code></pre></div><p>And I got scared when I saw something like this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">program &lt; input.txt &gt; output.txt 2&gt;&amp;<span style="color: #ae81ff;">1</span>
+</code></pre></div><p>Have you also been there? What did you do?</p>
+<p>I would search the Internet for a pattern that matched the use case, or just
+try different alternatives and notice how they behaved.</p>
+<p>I did this until one day when I learned a mental model for how Bash redirects
+work. Now I no longer need to rely on patterns. I can easily parse any
+situation and use any combination of redirects for my purposes.</p>
+<p>The rest of this article explains this mental model.</p>
+<h2 id="the-standard-streams">The Standard Streams</h2>
+<p>A process has three standard streams attached to it:</p>
+<ul>
+<li>stdin (0)</li>
+<li>stdout (1)</li>
+<li>stderr (2)</li>
+</ul>
+<p><img alt="Diagram of the three streams of a process." height="227" src="https://cdn.uploads.micro.blog/173380/2024/process-streams.png" width="600" /></p>
+<p>When we start a program from the terminal, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>What redirects do is to modify what the standard streams point to before the
+program starts executing.</p>
+<ul>
+<li><code>&lt;</code> means modify stdin.</li>
+<li><code>&gt;</code> means modify stdout.</li>
+<li><code>2&gt;</code> means modify stderr.</li>
+</ul>
+<p>That is the mental model: <strong>redirects modify standard streams before program
+execution</strong>.</p>
+<p>Let&rsquo;s evaluate a few examples using this mental model to see how it works.</p>
+<h2 id="logcat-utility">Logcat Utility</h2>
+<p>To be able to show what happens in different examples, we have a utility
+program, <code>logcat.py</code>, that makes use of all three streams. It reads text from
+stdin, logs the arguments and the length of the text to stderr, and writes the
+text to stdout. It looks like this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-python"><span style="color: #75715e;">#!/usr/bin/env python</span>
+
+<span style="color: #f92672;">import</span> sys
+
+text <span style="color: #f92672;">=</span> sys<span style="color: #f92672;">.</span>stdin<span style="color: #f92672;">.</span>read()
+
+sys<span style="color: #f92672;">.</span>stderr<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"Args: </span><span style="color: #e6db74;">{</span>(sys<span style="color: #f92672;">.</span>argv[<span style="color: #ae81ff;">1</span>:])<span style="color: #e6db74;">}</span><span style="color: #ae81ff;">\n</span><span style="color: #e6db74;">"</span>)
+sys<span style="color: #f92672;">.</span>stderr<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"Read </span><span style="color: #e6db74;">{</span>len(text)<span style="color: #e6db74;">}</span><span style="color: #e6db74;"> characters.</span><span style="color: #ae81ff;">\n</span><span style="color: #e6db74;">"</span>)
+
+sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>write(text)
+</code></pre></div><h2 id="example-no-redirect">Example: No Redirect</h2>
+<p>Let&rsquo;s start with an example without redirects to see the operation of
+<code>logcat.py</code>:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments
+</code></pre></div><p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, <code>logcat.py</code> waits for input. If we type <code>hello</code> in the
+terminal (followed by a return and ctrl+d), the following is printed to the
+terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 6 characters.
+hello
+</code></pre></div><p>We can see that it read our input from the terminal/keyboard and wrote the log
+messages along with our input to the terminal as well.</p>
+<h2 id="example-redirect-stdin">Example: Redirect Stdin</h2>
+<p>Now let&rsquo;s modify stdin to instead of the terminal/keyboard be the <code>logcat.py</code>
+source code:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments &lt;logcat.py
+</code></pre></div><p>This instructs Bash to modify stdin to point to the file <code>logcat.py</code>.</p>
+<p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, the following is printed to the terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><p>We can see that the redirect operation is stripped from the arguments. Only
+Bash sees it and does not pass it along to the program. Furthermore we can see
+that the <code>logcat.py</code> source code is printed to the terminal.</p>
+<h2 id="example-redirect-stdin-and-stdout">Example: Redirect Stdin and Stdout</h2>
+<p>Let&rsquo;s say we&rsquo;re only interested in the log messages, and want to throw away
+stdout:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py ignored arguments &lt;logcat.py &gt;/dev/null
+</code></pre></div><p>This instructs Bash to modify stdin to point to the file <code>logcat.py</code> and to
+modify stdout to point to the file <code>/dev/null</code>.</p>
+<p>Before <code>logcat.py</code> starts executing, Bash sets up the standard streams as
+follows:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>/dev/null</code> (opened in write mode)</li>
+<li>stderr: terminal</li>
+</ul>
+<p>When execution starts, the following is printed to the terminal:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">Args: ['ignored', 'arguments']
+Read 182 characters.
+</code></pre></div><p>We can see that the redirect operations are all stripped from the arguments and
+the source code has been written to <code>/dev/null</code> and is thus not shown in the
+terminal.</p>
+<h2 id="extended-mental-model">Extended Mental Model</h2>
+<p>Let&rsquo;s extended the mental model to clarify how Bash operates.</p>
+<p>When Bash parses a command, it divides it into two parts: the arguments and the
+redirects. Before it starts executing the program with the arguments, it goes
+through the redirects, in order, and configures the standard streams before
+execution.</p>
+<h2 id="example-redirect-all-streams">Example: Redirect All Streams</h2>
+<p>Let&rsquo;s see how we can interpret a more complex command using the extended mental
+model:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py &lt;logcat.py is the &gt;out.txt best 2&gt;&amp;1 thing
+</code></pre></div><p>If we split this into arguments and redirects, we get this:</p>
+<ul>
+<li>Arguments: <code>./logcat.py</code>, <code>is</code>, <code>the</code>, <code>best</code>, <code>thing</code></li>
+<li>Redirects: <code>&lt;logcat.py</code>, <code>&gt;out.txt</code>, <code>2&gt;&amp;1</code></li>
+</ul>
+<p>Now, let&rsquo;s evaluate the redirects in order. The state of the standard streams
+at start is this:</p>
+<ul>
+<li>stdin: terminal/keyboard</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>&lt;logcat.py</code> and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: terminal</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>&gt;out.txt</code> and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>out.txt</code> (opened in write mode)</li>
+<li>stderr: terminal</li>
+</ul>
+<p>Then we evaluate <code>2&gt;&amp;1</code>, which means modify stderr (<code>2&gt;</code>) to be whatever
+stdout points to (<code>&amp;1</code>), and get this:</p>
+<ul>
+<li>stdin: <code>logcat.py</code> (opened in read mode)</li>
+<li>stdout: <code>out.txt</code> (opened in write mode)</li>
+<li>stderr: <code>out.txt</code> (opened in write mode)</li>
+</ul>
+<p>After the standard streams have been set up, execution of <code>./logcat.py is the best thing</code> starts. Nothing appears on the terminal since all output has been
+redirected to <code>out.txt</code>:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ cat out.txt
+Args: ['is', 'the', 'best', 'thing']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><h2 id="mini-shell">Mini Shell</h2>
+<p>I created a mini version of a shell to demonstrate how straight forward it is
+to implement redirects with POSIX system calls. It works exactly as the
+extended mental model, and because it is running software, it fills in some
+more details of the model. I would guess that Bash does something similar even
+though I haven&rsquo;t read its source code.</p>
+<p>First off, here is a demo that shows how the mini shell can replicate the
+complex example from above:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./minishell.py
+~~?~~&gt; ./logcat.py &lt;logcat.py is the &gt;out.txt best 2&gt;&amp;1 thing
+~~0~~&gt; cat out.txt
+Args: ['is', 'the', 'best', 'thing']
+Read 182 characters.
+#!/usr/bin/env python
+
+import sys
+
+text = sys.stdin.read()
+
+sys.stderr.write(f"Args: {(sys.argv[1:])}\n")
+sys.stderr.write(f"Read {len(text)} characters.\n")
+
+sys.stdout.write(text)
+</code></pre></div><p>And here is the implementation in only 31 lines of Python:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-python"><span style="color: #75715e;">#!/usr/bin/env python</span>
+
+<span style="color: #f92672;">import</span> os
+<span style="color: #f92672;">import</span> sys
+
+STDIN  <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">0</span>
+STDOUT <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">1</span>
+STDERR <span style="color: #f92672;">=</span> <span style="color: #ae81ff;">2</span>
+
+statuscode <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"?"</span>
+<span style="color: #66d9ef;">while</span> <span style="color: #66d9ef;">True</span>:
+    sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>write(<span style="color: #e6db74;">f</span><span style="color: #e6db74;">"~~</span><span style="color: #e6db74;">{</span>statuscode<span style="color: #e6db74;">}</span><span style="color: #e6db74;">~~&gt; "</span>)
+    sys<span style="color: #f92672;">.</span>stdout<span style="color: #f92672;">.</span>flush()
+    command <span style="color: #f92672;">=</span> input()
+    pid <span style="color: #f92672;">=</span> os<span style="color: #f92672;">.</span>fork()
+    <span style="color: #66d9ef;">if</span> pid <span style="color: #f92672;">==</span> <span style="color: #ae81ff;">0</span>:
+        args <span style="color: #f92672;">=</span> []
+        <span style="color: #66d9ef;">for</span> part <span style="color: #f92672;">in</span> command<span style="color: #f92672;">.</span>split(<span style="color: #e6db74;">" "</span>):
+            <span style="color: #66d9ef;">if</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"&lt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">1</span>:], os<span style="color: #f92672;">.</span>O_RDONLY), STDIN)
+            <span style="color: #66d9ef;">elif</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"&gt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">1</span>:], os<span style="color: #f92672;">.</span>O_WRONLY<span style="color: #f92672;">|</span>os<span style="color: #f92672;">.</span>O_CREAT, <span style="color: #ae81ff;">0o644</span>), STDOUT)
+            <span style="color: #66d9ef;">elif</span> part <span style="color: #f92672;">==</span> <span style="color: #e6db74;">"2&gt;&amp;1"</span>:
+                os<span style="color: #f92672;">.</span>dup2(STDOUT, STDERR)
+            <span style="color: #66d9ef;">elif</span> part<span style="color: #f92672;">.</span>startswith(<span style="color: #e6db74;">"2&gt;"</span>):
+                os<span style="color: #f92672;">.</span>dup2(os<span style="color: #f92672;">.</span>open(part[<span style="color: #ae81ff;">2</span>:], os<span style="color: #f92672;">.</span>O_WRONLY<span style="color: #f92672;">|</span>os<span style="color: #f92672;">.</span>O_CREAT, <span style="color: #ae81ff;">0o644</span>), STDERR)
+            <span style="color: #66d9ef;">else</span>:
+                args<span style="color: #f92672;">.</span>append(part)
+        os<span style="color: #f92672;">.</span>execvp(args[<span style="color: #ae81ff;">0</span>], args)
+    <span style="color: #66d9ef;">else</span>:
+        _, statuscode <span style="color: #f92672;">=</span> os<span style="color: #f92672;">.</span>waitpid(pid, <span style="color: #ae81ff;">0</span>)
+</code></pre></div><p>To understand how this works, you need some knowledge of the POSIX system calls
+<code>fork</code>, <code>waitpid</code>, <code>open</code>, <code>dup2</code>, and <code>execvp</code>. But even if you don&rsquo;t
+understand the specifics, I think this codified model can help in understanding
+how Bash operates. Let&rsquo;s look at an example.</p>
+<h2 id="example-duplicated-files">Example: Duplicated Files</h2>
+<p>Let&rsquo;s see if we can explain the difference between the following commands using
+the mini shell for the model:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ ./logcat.py &lt;logcat.py &gt;out.txt 2&gt;out.txt
+$ ./logcat.py &lt;logcat.py &gt;out.txt 2&gt;&amp;1
+</code></pre></div><p>At a first glance, it looks like both commands redirect both stdout and stderr
+to the <code>out.txt</code> file. But if we evaluate it like mini shell does, we see that
+the first example will open the file twice (two calls to <code>os.open</code> creating two
+file handles), whereas the second example will open the file only once and then
+duplicate the file handle for stderr.</p>
+<p>When two file handles are created, writes to the two streams will attempt to
+write to the same location in the file and they will overwrite each other.
+Furthermore, buffering might alter in which order writes happen, so it is not
+clear what will actually end up in the file. So to make sure all output is
+captured in the file, the second example should be used where the file is only
+opened once.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>There is still more to Bash redirects than what I have explained here. But this
+mental model (along with its extended versions) have helped me reason about
+Bash redirects. I hope it will do the same for you.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 04, 2024 04:39 AM UTC by
+            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
+              >Rickard Lindberg</a
+            >
+          </div>
+          <a
+            href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/" class="hover:underline"
+              >ANN: JupyterLab 101 Kickstarter</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>My latest Python book is now available for pre-order on Kickstarter. JupyterLab, the latest iteration of the Jupyter Notebook, is a versatile tool for sharing code in an easily understandable format. Hundreds of thousands of people around the world use Jupyter Notebooks or variations of the Notebook architecture for any or all of the following: [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/">ANN: JupyterLab 101 Kickstarter</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 03, 2024 02:08 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2024/09/03/ann-jupyterlab-101-kickstarter/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/courses/pydantic-simplify-data-validation/" class="hover:underline"
               >Using Pydantic to Simplify Python Data Validation</a
             >
@@ -1558,222 +1902,6 @@ try to notice what features in Smart Notes maximize that.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/arithmetic-in-python/" class="hover:underline"
-              >Arithmetic in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>An explanation of Python's two number types (integers and floating point numbers), supported arithmetic operations, and an explanation of operator precedence.</p>
-
-
-<div>
-  
-    <img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1920268496-e41ddb51f19daceed01e0a3becb9dffe7f7fd2aab3adcefe19cc16c4005591a4-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" />
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#integers" target="_blank">Integers</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#floating-point-numbers" target="_blank">Floating point numbers</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#mixing-integers-and-floating-point-numbers" target="_blank">Mixing integers and floating point numbers</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#arithmetic-operations" target="_blank">Arithmetic operations</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#operator-precedence-in-python" target="_blank">Operator precedence in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/arithmetic-in-python/#arithmetic-in-python-is-similar-to-in-math" target="_blank">Arithmetic in Python is similar to in math</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Integers</h2>
-    
-      
-        <p>Integers are used for representing whole numbers.</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="mi">5</span>
-<span class="go">5</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="mi">0</span>
-<span class="go">0</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="mi">999999999999</span>
-<span class="go">999999999999</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="o">-</span><span class="mi">10</span>
-<span class="go">-10</span>
-</code></pre></div>
-
-
-      
-        <p>Any number that doesn't have a decimal point in it is an integer.</p>
-
-      
-    
-  
-    <h2>Floating point numbers</h2>
-    
-      <p>Floating point numbers are used …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/arithmetic-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/arithmetic-in-python/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 28, 2024 09:10 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/arithmetic-in-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2024/aug/28/could-you-host-djangocon-europe-2026-cfp/" class="hover:underline"
-              >Could you host DjangoCon Europe 2026? Call for organizers</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We are looking for the next group of organizers to own and lead the 2026 DjangoCon Europe conference. Could your town - or your football stadium, circus tent, private island or city hall - host this wonderful community event?</p>
-<p>DjangoCon Europe is a major pillar of the Django community, as people from across the world meet and share. This includes many qualities that make it a unique event - unconventional and conventional venues, creative happenings, a feast of talks and a dedication to inclusion and diversity.</p>
-<p>Hosting a DjangoCon is an ambitious undertaking. It's hard work, but each year it has been successfully run by a team of community volunteers, not all of whom have had previous experience - more important is enthusiasm, organizational skills, the ability to plan and manage budgets, time and people - and plenty of time to invest in the project.</p>
-<p>For 2026, we want to kickstart the organization much earlier than in previous years to allow more flexibility for the organizing team, and open up more opportunities for support from our <a href="https://github.com/django/dsf-working-groups/blob/main/active/dceu.md">DjangoCon Europe support working group</a>.</p>
-<h2 id="step-1-submit-your-expression-of-interest">Step 1: Submit your expression of interest</h2>
-<p>If you’re considering organizing DjangoCon Europe (🙌 great!), fill in our<a href="https://docs.google.com/forms/d/e/1FAIpQLSf_uFodt6nHghd7uCpQnaCVVT2Rcc2-53c7NTG59iGSFCcxYw/viewform"> DjangoCon Europe 2026 expression of interest form</a> with your contact details. No need to fill in all the information at this stage if you don’t have it all already, we’ll reach out and help you figure it out.</p>
-<p><a class="cta" href="https://docs.google.com/forms/d/e/1FAIpQLSf_uFodt6nHghd7uCpQnaCVVT2Rcc2-53c7NTG59iGSFCcxYw/viewform">Express your interest in organizing</a></p>
-<h2 id="step-2-we-re-here-to-help">Step 2: We’re here to help!</h2>
-<p>We've set up a<a href="https://github.com/django/dsf-working-groups/blob/main/active/dceu.md"> DjangoCon Europe support working group</a> of previous organizers that you can reach out to with questions about organizing and running a DjangoCon Europe.</p>
-<p>The group will be in touch with everyone submitting the expression of interest form, or you can reach out to them directly: european-organizers-support@djangoproject.com</p>
-<p>We'd love to hear from you as soon as possible, so your proposal can be finalized and sent to the DSF board <strong>by October 6th 2024</strong>. The selected hosts will be publicly announced at <a href="https://2025.djangocon.eu/">DjangoCon Europe 2025</a> by the current organizers.</p>
-<h2 id="step-3-submitting-the-proposal">Step 3: Submitting the proposal</h2>
-<p>The more detailed and complete your final proposal is, the better. Basic details include:</p>
-<ul>
-<li>Organizing committee members: You won’t have a full team yet, probably, naming just some core team members is enough.</li>
-<li>The legal entity that is intended to run the conference: Even if the entity does not exist yet, please share how you are planning to set it up.</li>
-<li>Dates: See “What dates are possible in 2026?” below. We must avoid conflicts with major holidays, EuroPython, DjangoCon US, and PyCon US.</li>
-<li>Venue(s), including size, number of possible attendees, pictures, accessibility concerns, catering, etc.</li>
-<li>Transport links and accommodation: Can your venue be reached by international travelers?</li>
-<li>Budgets and ticket prices: Talk to the DjangoCon Europe Support group to get help with this, including information on past event budgets.</li>
-</ul>
-<p>We also like to see:</p>
-<ul>
-<li>Timelines</li>
-<li>Pictures</li>
-<li>Plans for online participation, and other ways to make the event more inclusive and reduce its environmental footprint</li>
-<li>Draft agreements with providers</li>
-<li>Alternatives you have considered</li>
-</ul>
-<p>Have a look at our proposed (draft, feedback welcome) <a href="https://docs.google.com/document/d/1hegUjHc-ifEN9W9VI-8ekOZFHXkBOKY1FOeREgeD1JE/edit?usp=sharing">DjangoCon Europe 2026 Licensing Agreement</a> for the fine print on contractual requirements and involvement of the Django Software Foundation.</p>
-<p>Submit your completed proposal by October 6th 2024 via our<a href="https://docs.google.com/forms/d/e/1FAIpQLSf_uFodt6nHghd7uCpQnaCVVT2Rcc2-53c7NTG59iGSFCcxYw/viewform?usp=sf_link"> DjangoCon Europe 2026 expression of interest form</a>, this time filling in as many fields as possible. We look forward to reviewing great proposals that continue the excellence the whole community associates with DjangoCon Europe.</p>
-<h2 id="q-a">Q&amp;A</h2>
-<h3 id="can-i-organize-a-conference-alone">Can I organize a conference alone?</h3>
-<p>We strongly recommend that a team of people submit an application.</p>
-<h3 id="i-we-don-t-have-a-legal-entity-yet-is-that-a-problem-">I/we don’t have a legal entity yet, is that a problem?</h3>
-<p>Depending on your jurisdiction, this is usually not a problem. But please share your plans about the entity you will use or form in your application.</p>
-<h3 id="do-i-we-need-experience-with-organizing-conferences">Do I/we need experience with organizing conferences?</h3>
-<p>The support group is here to help you succeed. From experience, we know that many core groups of 2-3 people have been able to run a DjangoCon with guidance from previous organizers and help from volunteers.</p>
-<h3 id="what-is-required-in-order-to-announce-an-event">What is required in order to announce an event?</h3>
-<p>Ultimately, a contract with the venue confirming the dates is crucial, since announcing a conference makes people book calendars, holidays, buy transportation and accommodation etc. This, however, would only be relevant after the DSF board has concluded the application process. Naturally, the application itself cannot contain any guarantees, but it’s good to check concrete dates with your venues to ensure they are actually open and currently available, before suggesting these dates in the application.</p>
-<h3 id="do-we-have-to-do-everything-ourselves">Do we have to do everything ourselves?</h3>
-<p>No. You will definitely be offered lots of help by the community. Typically, conference organizers will divide responsibilities into different teams, making it possible for more volunteers to join. Local organizers are free to choose which areas they want to invite the community to help out with, and a call will go out through a blog post announcement on djangoproject.com and social media.</p>
-<h3 id="what-kind-of-support-can-we-expect-from-the-django-software-foundation-">What kind of support can we expect from the Django Software Foundation?</h3>
-<p>The DSF regularly provides grant funding to DjangoCon organizers, to the extent of $6,000 in recent editions. We also offer support via specific working groups:</p>
-<ul>
-<li>The dedicated<a href="https://github.com/django/dsf-working-groups/blob/main/active/dceu.md"> DjangoCon Europe support working group</a>.</li>
-<li>The<a href="https://github.com/django/dsf-working-groups/blob/main/active/social-media.md"> social media working group</a> can help you promote the event.</li>
-<li>The<a href="https://github.com/django/dsf-working-groups/blob/main/active/code-of-conduct.md"> Code of Conduct working group</a> works with all event organizers.</li>
-</ul>
-<p>In addition, a lot of<a href="https://www.djangoproject.com/foundation/individual-members/"> Individual Members</a> of the DSF regularly volunteer at community events. If your team aren’t Individual Members, we can reach out to them on your behalf to find volunteers.</p>
-<h3 id="what-dates-are-possible-in-2026">What dates are possible in 2026?</h3>
-<p>For 2026, DjangoCon Europe should happen between January 5th and April 27th, or June 4th and June 28th. This is to avoid the following community events’ provisional dates:</p>
-<ul>
-<li>PyCon US 2026: May 2026</li>
-<li>EuroPython 2026: July 2026</li>
-<li>DjangoCon US 2026: September - October 2026</li>
-<li>DjangoCon Africa 2026: August - September 2026</li>
-</ul>
-<p>We also want to avoid the following holidays:</p>
-<ul>
-<li>New Year's Day: Wednesday 1st January 2026</li>
-<li>Chinese New Year: Tuesday 17th February 2026</li>
-<li>Eid Al-Fitr: Friday 20th March 2026</li>
-<li>Passover: Wednesday 1st - Thursday 9th April 2026</li>
-<li>Easter: Sunday 5th April 2026</li>
-<li>Eid Al-Adha: Tuesday 26th - Friday 29th May 2026</li>
-<li>Rosh Hashanah: Friday 11th - Sunday 13th September 2026</li>
-<li>Yom Kippur: Sunday 20th - Monday 21st September 2026</li>
-</ul>
-<h3 id="what-cities-or-countries-are-possible-">What cities or countries are possible?</h3>
-<p>Any city in Europe. This can be a city or country where DjangoCon Europe has happened in the past (Vigo, Edinburgh, Porto, Copenhagen, Heidelberg, Florence, Budapest, Cardiff, Toulon, Warsaw, Zurich, Amsterdam, Berlin), or a new locale.</p>
-<h2 id="references">References</h2>
-<h3 id="past-calls">Past calls</h3>
-<ul>
-<li><a href="https://www.djangoproject.com/weblog/2015/may/18/interested-organizing-djangocon-europe-2016/">Interested in organizing DjangoCon Europe 2016?</a></li>
-<li><a href="https://www.djangoproject.com/weblog/2016/mar/04/host-djangocon-europe-2017/">Could you host DjangoCon Europe 2017?</a></li>
-<li><a href="https://www.djangoproject.com/weblog/2018/may/10/djangocon-europe-2019-where-will-it-be/">DjangoCon Europe 2019 - where will it be?</a></li>
-<li><a href="https://www.djangoproject.com/weblog/2022/feb/03/could-you-host-djangocon-europe-2023/">Could you host DjangoCon Europe 2023?</a></li>
-<li><a href="https://www.djangoproject.com/weblog/2022/jun/12/last-chance-for-a-djangocon-europe-2023/">Last Chance for a DjangoCon Europe 2023</a></li>
-</ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 28, 2024 12:59 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2024/aug/28/could-you-host-djangocon-europe-2026-cfp/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index6.html" class="btn">«</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</button><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index8.html" class="btn">»</a></div></div>
 </div>
@@ -1785,8 +1913,8 @@ try to notice what features in Smart Notes maximize that.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8979</a></li>
-    <li><a>Unique Feeds: 428</a></li>
+    <li><a>Total Entries: 9035</a></li>
+    <li><a>Unique Feeds: 429</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
