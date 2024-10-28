@@ -53,6 +53,202 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://beauty-of-imagination.blogspot.com/2024/10/revisiting-hello-world-coding-print.html" class="hover:underline"
+              >Revisiting hello world : coding print from scratch part I</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            The <a href="https://en.wikipedia.org/wiki/%22Hello,_World!%22_program">« hello world »</a> example is about standing on the shoulders of the giant and learn how to use function as tools.<br /><br />
+Most coders will use <a href="https://docs.python.org/fr/3/library/functions.html#print">print</a> during their whole life without actually coding it. However, it is a fun exercise.
+<br />
+<br />
+<h1>The framebuffer</h1>
+<br /><br />
+Given you are on linux you probably have a device named /dev/fb0 if you don't, you can't do this. The framebuffer is a view of the linear graphical memory used by your video card where what you see on the screen is stored ... at the condition you are in console mode and you have the rights.<br /><br />
+
+On my debian centric distribution, to give the_user permissions to write in the framebuffer I must add the_user to group_video. This can be done with <code>sudo adduser the_user video </code>  or <code>sudo vigr</code>.<br /><br />
+Then, you have to be in console mode. To switch from xorg/wayland to the console back and forth I use the Ctrl + Alt + Fn combination to switch off from X and Alt + Fn to switch back to X (it's called switching the virtual console). <br /><br />
+Once this is done you check you have rights by doing 
+<pre>
+cat /dev/urandom > /dev/fb0
+</pre> 
+which should fill your screen with random colors and insult you stating there is no more room left on the device. SNAFU : everyhting works as intended.<br />
+<br />
+<br /><h1>The pixel</h1>
+<br /><br />
+Framebuffer don't know about pixels made of Red, Green, Blue and alpha (given you have a video card that is less than 20 years old), they are just made of memory. We will have to slowly build up our understanding of what this is all about. <br />
+<br />The in memory layout may differ according to the hardware, some are having a RGBA layout, mine, the i915 is having a BGRA layout. The following example may need to be rewritten with different hardware if the output is not consistent with your assumption.<br /><br />
+<h1>Determining the memory layout and coordinates</h1><br /><br />
+We will do a test and validate code session : first we make assumption on where the colours are by writting 3 squares of Red, Blue and Green on the screen, then, we will snapshot the screen.<br /><br />
+<pre>
+$ cat fb.py
+#!/usr/bin/env python3
+from struct import pack
+w,h =map(int, open("/sys/class/graphics/fb0/virtual_size").read().split(","))
+midx = w//2
+midy = h//2
+
+encode = lambda b,g,r,a : pack("4B",b,g,r,a)
+
+with open("/dev/fb0", "wb") as f:
+    for y in range(0,h):
+        for x in range(0,w):
+            f.write(encode(
+                not x%100 and 0xA0 or x&lt;midx and 0xFF or 0, #blue
+                y&lt;midy and 0xFF or 0,                       #green
+                x>midx and y>midy and 0xFF or 0,            #red
+                0,
+            ))
+</pre>
+The only « trick » is the use of pack to encode the four colour bytes in a byte array that is written to the framebuffer filehandler. 
+
+
+If the code works correctly we should validate the following assumptions: 
+<ul>
+  <li>coordinates are such as 0 is top left of the screen where green and blue should superpose</li>
+  <li>my 1920x1080 screen should have 19 weired stripes (hence validating the geometry)</li>
+  <li>each colours should be in its square, red bottom right, green top right, blue bottom left.</li>
+  <li>RAM as a char device is accessing a low level file</li>
+</ul>
+And if the world is consistent we can read from the framebuffer and snapshot it in the most trivial picture encoding witch is <a href="https://fr.wikipedia.org/wiki/Portable_pixmap">Portable PixMap format</a>.
+A portable Pixmap is made of 
+<ul>
+  <li>a magic number P3 followed by</li>
+  <li>width</li>
+  <li>height</li>
+  <li>the maximum colour value (here 255)</li>
+  <li>the 3 colour bytes Red, Blue, Green without Alpha value per pixel</li>
+</ul><br />
+The code for this is straigh forward : 
+<pre>
+$ cat snap.py
+#!/usr/bin/env python
+from struct import unpack
+w,h = map( int,open("/sys/class/graphics/fb0/virtual_size").read().split(","))
+
+# returns b g r a
+decode = lambda pixel : unpack("4B", pixel)
+
+def pr(b,g,r,a):
+    print("%d %d %d" % (r,g,b))
+
+print(f"""P3
+{w} {h}
+255
+""")
+
+with open("/dev/fb0", "rb") as fin:
+    while pixel := fin.read(4):
+        pr(*decode(pixel))
+</pre>
+Here the only trick is we use the symetrical function of pack, unpack to decode the pixel in the four colour bytes.<br /><br />
+<h1>wrapping up part one</h1>
+<br /><br />
+Asumming you can install <b>fim</b> the framebuffer image wiewer and you installed imagemagick : you can now do 
+<pre>
+./fb.py &amp;&amp; snap.py > this.ppm  &amp;&amp; convert this.ppm this.jpg &amp;&amp; fim this.jpg
+</pre>
+Doing so, you should have the same picture showing twice without an error like this :
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgnjBtUJU2yXFWqgMGndgGgbpD1vXJ_9Ve_TmU_EE88pBGTvx8qc0QLCPMRqbj2qoHPJZqA0fdiml31HFTkfoUay_HgWlc05AnSfdyqcxBFnMn_fJZU_lIbQDQwCIfl8b4CN0MNPeikTjzeEkuuJWh-SbnXPoFtnTPLzSU7qJveO2gllFmz7VdljDp5X8g/s1920/this.jpg" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgnjBtUJU2yXFWqgMGndgGgbpD1vXJ_9Ve_TmU_EE88pBGTvx8qc0QLCPMRqbj2qoHPJZqA0fdiml31HFTkfoUay_HgWlc05AnSfdyqcxBFnMn_fJZU_lIbQDQwCIfl8b4CN0MNPeikTjzeEkuuJWh-SbnXPoFtnTPLzSU7qJveO2gllFmz7VdljDp5X8g/s400/this.jpg" width="400" /></a></div>
+
+
+As an exercise, you can vary the fb.py to make funny output, or code a PPM viewer that print back your ppm to the screen.
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgSzu1xQ7jAk2XUAWkbwGxXbZKMWnuLnzCqk89yO68Jx5LXFUSGl0zdjFLG8EnkrMpSvt1sngyBlPXAPIGDqnI7jMBnMzwuAIsE2ied8VR5hwCFP-NTHTfjItqVApsqgIPU5Xlc8odEmznSzBsxsfylUCnyZ-TYx-GFbnTjnYBmmOZCHKNd-ftGuAlZU2k/s1920/fb_out.jpg" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgSzu1xQ7jAk2XUAWkbwGxXbZKMWnuLnzCqk89yO68Jx5LXFUSGl0zdjFLG8EnkrMpSvt1sngyBlPXAPIGDqnI7jMBnMzwuAIsE2ied8VR5hwCFP-NTHTfjItqVApsqgIPU5Xlc8odEmznSzBsxsfylUCnyZ-TYx-GFbnTjnYBmmOZCHKNd-ftGuAlZU2k/s400/fb_out.jpg" width="400" /></a></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 20, 2024 10:01 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="http://beauty-of-imagination.blogspot.com/2024/10/revisiting-hello-world-coding-print.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythondoeswhat.com/2024/10/enums-make-good-singletons.html" class="hover:underline"
+              >Enums make good singletons</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            It's simple and common to allocate a marker object to represent missing or null data.<br />
+
+<pre><code lang="python">MISSING = object()</code></pre>
+
+There's a slightly more verbose construct with some advantages:<br />
+
+<pre><code lang="python">import enum
+
+class MissingType(enum.Enum):
+    MISSING = "MISSING"
+
+MISSING = MissingEnum.MISSING</code></pre>
+
+Type checkers understand that MISSING is the only possible value of MissingType; so you can use is checks:<br />
+<pre><code lang="python">def or_1(val: float | MissingType = MISSING) -> float:
+    if scale is not MISSING:
+        return 1.0
+    return scale</code></pre>
+
+<a href="https://mypy-play.net/?mypy=latest&amp;python=3.12&amp;gist=1de68fd0b35b201aeb2e1957aa8b9489">mypy understands this is type correct.</a><br />
+
+More broadly, the semantics of a single-value enum are the same as a singleton.  For example, neither singletons nor enums should have additional instances allocated.  Instead of fixing bugs one by one with custom __init__ and __deepcopy__, the correct behaviors come for free.<br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 19, 2024 11:20 PM UTC by
+            <a href="http://pythondoeswhat.blogspot.com/feeds/posts/default" class="link link-hover text-primary"
+              >Python Does What?!</a
+            >
+          </div>
+          <a
+            href="https://www.pythondoeswhat.com/2024/10/enums-make-good-singletons.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="http://lucumr.pocoo.org/2024/10/19/serendipity" class="hover:underline"
               >Serendipity</a
             >
@@ -1150,265 +1346,6 @@ click on the buttons below to reveal the various changes brought …</p></div>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/405/oh-really" class="hover:underline"
-              >#405 Oh Really?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Briefer: Dashboards and notebooks in a single place, Introduction to programming with Python, setup-uv, and HTML for people.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/405/oh-really"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/what-is-an-api-gateway.html" class="hover:underline"
-              >What is an API gateway?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/what-is-an-api-gateway.html">What is an API gateway?</a>
-</h1>
-<div class="article-meta">
-  2024-10-14, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p><a href="https://zato.io/en/blog/what-is-an-api-gateway.html"><img src="https://upcdn.io/kW15bqq/raw/root/en/docs/3.2/gfx/banner/banner-api-gateway-1200-01-full.webp" /></a></p>
-<p>In this article, we are going to use
-Zato
-in its capacity as a multi-protocol Python API gateway - we will integrate a few popular technologies, accepting requests sent
-over protocols commonly used in frontend systems, enriching and passing them to backend systems and returning
-responses to the API clients using their preferred data formats. But first, let's define what an API gateway is.</p>
-<h2 id="clearing-up-the-terminology">Clearing up the terminology</h2>
-<p>Although we will be focusing on complex API integrations later on today, to understand the term API
-gateway we first need to give proper consideration to the very term <strong>gateway</strong>.</p>
-<p>What comes to mind when we hear the word "gateway", and what is correct etymologically indeed, is an opening
-in an otherwise impermissible barrier. We use a gateway to access that which is in other circumstances
-inaccessible for various reasons. We use it to leave such a place too.</p>
-<p>In fact, both "gate" and the verb "to go" stem from the same basic root and
-that, again, brings to mind a notion of passing through space specifically set aside for the purpose of granting
-access to what normally would be unavailable. And once more, when we depart from such an area, we use a gateway too.</p>
-<p>From the perspective of its true intended purpose, a gateway letting everyone in and out as they are would
-amount to little more than a hole in a wall. In other words, a gateway without a gate is not the whole story.</p>
-<p>Yes, there is undoubtedly an immense aesthetic gratification to be drawn from being close to marvels of architecture
-that virtually all medieval or Renaissance gates and gateways represent, but we know that, nowadays,
-they do not function to the fullest of their capacities as originally intended.</p>
-<p>Rather, we can intuitively say that a gateway is in service as a means of entry and departure if it lets its operators achieve
-the following, though not necessarily all at the same time, depending on one's particular needs:</p>
-<ul>
-<li>Telling arrivals where they are, including projection of might and self-confidence</li>
-<li>Confirming that arrivals are who they say they are</li>
-<li>Checking if their port of origin is friendly or not</li>
-<li>Checking if they are allowed to enter that which is protected</li>
-<li>Directing them to specific areas behind the gateway</li>
-<li>Keeping a long term and short term log of arrivals</li>
-<li>Answering potential questions right by the gate, if answers are known to gatekeepers</li>
-<li>Cooperating with translators and coordinators that let arrivals make use of what is required during their stay</li>
-</ul>
-<p>We can now recognize that a gateway operates on the border of what is internal and external and in itself, it is
-a relatively narrow, though possibly deep, piece of an architecture. It is narrow because it is only through
-the gateway that entry is possible but it may be deeper or not, depending on how much it should offer to arrivals.</p>
-<p>We also keep in mind that there may very well be more than a single gateway in existence at a time, each potentially
-dedicated to different purposes, some overlapping, some not.</p>
-<p>Finally, it is crucial to remember that gateways are structural, architectural elements - what a gateway should
-do and how it should do it is a decision left to architects.</p>
-<p>With all of that in mind, it is easy to transfer our understanding of what a physical gateway is into
-what an API one should be.</p>
-<ul>
-<li>API clients should be presented with clear information that they are entering a restricted area</li>
-<li>Source IP addresses or their equivalents should be checked and requests rejected if an IP address
-  or equivalent information is not among the allowed ones</li>
-<li>Usernames, passwords, API keys and similar representations of what they are should be checked by the gateway</li>
-<li>Permissions to access backend systems should be checked seeing as not every API client should have access to everything</li>
-<li>Requests should be dispatched to relevant backend systems</li>
-<li>Requests and responses should be logged in various formats, some meant to be read by programs and applications,
-  some by human operators</li>
-<li>If applicable, responses can be served from the gateway's cache, taking the burden off the shoulders of the backend systems</li>
-<li>Requests and responses can be transformed or enriched which potentially means contacting multiple backend systems
-  before an API caller receives a response</li>
-</ul>
-<p>We can now define an API gateway as an element of a systems architecture that is certainly related to security,
-permissions and granting or rejecting access to backend systems, applications and data sources. On top of it,
-it may provide audit, data transformation and caching services. The definition will be always fluid to a degree,
-depending on an architect's vision, but this is what can be expected from it nevertheless.</p>
-<p>Having defined what an API gateway is, let's create one in Zato and Python.</p>
-<h2 id="clients-and-backend-systems">Clients and backend systems</h2>
-<p>In this article, we will integrate two frontend systems and one backend application. Frontend ones will use REST
-and WebSockets whereas the backend one will use AMQP. Zato will act as an API gateway between them all.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/arch.png" /></p>
-<p>Not granting frontend API clients direct access to backend systems is usually a good idea because the dynamics
-involved in creation of systems on either side are typically very different. But they still need to communicate
-and hence the usage of Zato as an API gateway.</p>
-<h2 id="python-code">Python code</h2>
-<p>First, let's show the Python code that is needed to integrate the systems in our architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">APIGateway</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Dispatches requests to backend systems, enriching them along the way.</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.gateway'</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>        <span class="c1"># Enrich incoming request with metadata ..</span>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_receiver'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_correlation_id'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cid</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_date_received'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">utcnow</span><span class="p">()</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>        <span class="c1"># .. AMQP configuration ..</span>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>        <span class="n">outconn</span> <span class="o">=</span> <span class="s1">'My Backend'</span>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="n">exchange</span> <span class="o">=</span> <span class="s1">'/incoming'</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>        <span class="n">routing_key</span> <span class="o">=</span> <span class="s1">'api'</span>
-<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>
-<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a>        <span class="c1"># .. publish the message to an AMQP broker ..</span>
-<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">amqp</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">outconn</span><span class="p">,</span> <span class="n">exchange</span><span class="p">,</span> <span class="n">routing_key</span><span class="p">)</span>
-<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>
-<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>        <span class="c1"># .. and return a response to our API client.</span>
-<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'result'</span><span class="p">:</span> <span class="s1">'OK, data accepted'</span><span class="p">}</span>
-</code></pre></div>
-<p>There are a couple of points of interest:</p>
-<ul>
-<li>
-<p>The gateway service enriches incoming requests with metadata but it could very well enrich it with
-  business data too, e.g. it could communicate with yet another system to obtain required information
-  and only then pass the request to the final backend system(s)</p>
-</li>
-<li>
-<p>In its current form we send all the information to AMQP brokers only but we could just as well
-  send it to other systems, possibly modifying the requests along the way</p>
-</li>
-<li>
-<p>The code is very abstract and all of its current configuration could be moved
-  to a config file, Redis or another data source to make it even more high-level</p>
-</li>
-<li>
-<p>Security configuration and other details are not declared directly in the body of the gateway
-  service but they need to exist somewhere - we will describe it in the next section</p>
-</li>
-</ul>
-<h2 id="configuration">Configuration</h2>
-<p>In Zato, API clients access the platform's services using channels - let's create a channel
-for REST and WebSockets then.</p>
-<p>First REST:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-rest-menu.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-rest-form.png" /></p>
-<p>Now WebSockets:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-wsx-form.png" /></p>
-<p>We create a new outgoing AMQP connection in the same way:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/outconn-amqp-form.png" /></p>
-<h2 id="using-the-api-gateway">Using the API gateway</h2>
-<p>At this point, the gateway is ready - you can invoke it from REST or WebSockets and any JSON
-data it receives will be processed by the gateway service, the AMQP broker will receive it,
-and API clients will have replies from the gateway as JSON responses.</p>
-<p>Let's use curl to invoke the REST channel with JSON payload on input:</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>  $ curl http://api:&lt;password-here&gt;@localhost:11223/api/v1/user ; echo
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>  curl --data-binary @request.json http://localhost:11223/api/v1/user ; echo
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>  {&quot;result&quot;: &quot;OK, data accepted&quot;}
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a>  $
-</code></pre></div>
-<p>Taken together, the channels and the service allowed us to achieve this:</p>
-<ul>
-<li>Multiple API clients can access the backend AMQP systems, each client using its own preferred technology</li>
-<li>Client credentials are checked on input, before the service starts to process requests (authentication)</li>
-<li>It is possible to assign RBAC roles to clients, in this way ensuring they have access
-  only to selected parts of the backend API (authorization)</li>
-<li>Message logs keep track of data incoming and outgoing</li>
-<li>Responses from channels can be cached which lessens the burden put on the shoulders of backend systems</li>
-<li>Services accepting requests are free to modify, enrich and transform the data in any way required by
-  business logic. E.g., in the code above we only add metadata but we could as well reach out
-  to other applications before requests are sent to the intended recipients.</li>
-</ul>
-<p>We can take it further. For instance, the gateway service is currently completely oblivious to the
-actual content of the requests.</p>
-<p>But, since we just have a regular Python dict in self.request.payload,
-we can with no effort modify the service to dispatch requests to different backend systems, depending
-on what the request contains or possibly what other backend systems decide the destination should be.</p>
-<p>Such additional logic is specific to each environment or project which is why it is not shown here,
-and this is also why we end the article at this point, but the central part of it all is already done,
-the rest is only a matter of customization and plugging in more channels for API clients or
-outgoing connections for backend systems.</p>
-<p>Finally, it is perfectly fine to split access to systems among multiple gateways - each may handle
-requests from selected technologies on the one hand but on the other hand, each may use different
-caching or rate-limiting policies. If there is more than one, it may be easier to configure
-such details on a per-gateway basis.</p>
-<h2 id="next-steps">Next steps:</h2>
-<p>➤  Read about <a href="https://zato.io/articles/integration-platform.html">how to use Python to build and integrate enterprise APIs</a> that your tests will cover
-<br />
-➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.2/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a></p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/what-is-an-api-gateway.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1420,8 +1357,8 @@ such details on a per-gateway basis.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8985</a></li>
-    <li><a>Unique Feeds: 427</a></li>
+    <li><a>Total Entries: 8784</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
