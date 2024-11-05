@@ -53,6 +53,305 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/" class="hover:underline"
+              >Django and the Python 3.13 REPL</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Your new Django project uses Python 3.13.</p>
+
+<p>You&rsquo;re really looking forward to using the new REPL&hellip; but <code>python manage.py shell</code> just shows the same old Python REPL.
+What gives?</p>
+
+<p>Well, Django&rsquo;s management shell uses Python&rsquo;s <a href="https://docs.python.org/3/library/code.html">code</a> module to launch a custom REPL, but the <code>code</code> module doesn&rsquo;t (<a href="https://github.com/python/cpython/issues/119512">yet</a>) use the new Python REPL.</p>
+
+<p>So you&rsquo;re out of luck&hellip; or are you?</p>
+
+<h2>How stable do you need your <code>shell</code> command to be?</h2>
+
+<p>The new Python REPL&rsquo;s code lives in a <a href="https://github.com/python/cpython/tree/v3.13.0/Lib/_pyrepl">_pyrepl</a> package.
+Surely there must be some way to launch the new REPL using that <code>_pyrepl</code> package!</p>
+
+<p>First, note the <code>_</code> before that package name.
+It&rsquo;s <code>_pyrepl</code>, not <code>pyrepl</code>.</p>
+
+<p>Any solution that relies on this module may break in future Python releases.</p>
+
+<p>So&hellip; should we give up on looking for a solution, if we can&rsquo;t get a &ldquo;stable&rdquo; one?</p>
+
+<p>I don&rsquo;t think so.</p>
+
+<p>My <code>shell</code> command doesn&rsquo;t usually <em>need</em> to be stable in more than one version of Python at a time.
+So I&rsquo;m fine with a solution that <em>attempts</em> to use the new REPL and then falls back to the old REPL if it fails.</p>
+
+<h2>A working solution</h2>
+
+<p>So, let&rsquo;s look at a working solution.</p>
+
+<p>Stick <a href="https://pym.dev/p/2zqeq/">this code</a> in a <code>management/commands/shell.py</code> file within one of your Django apps:</p>
+
+<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
+<span class="line-number">2</span>
+<span class="line-number">3</span>
+<span class="line-number">4</span>
+<span class="line-number">5</span>
+<span class="line-number">6</span>
+<span class="line-number">7</span>
+<span class="line-number">8</span>
+<span class="line-number">9</span>
+<span class="line-number">10</span>
+</pre></td><td class="code"><pre><code class="python"><span class="line"><span class="sd">&quot;&quot;&quot;Python 3.13 REPL support using the unsupported _pyrepl module.&quot;&quot;&quot;</span>
+</span><span class="line"><span class="kn">from</span> <span class="nn">django.core.management.commands.shell</span> <span class="kn">import</span> <span class="n">Command</span> <span class="k">as</span> <span class="n">BaseShellCommand</span>
+</span><span class="line">
+</span><span class="line">
+</span><span class="line"><span class="k">class</span> <span class="nc">Command</span><span class="p">(</span><span class="n">BaseShellCommand</span><span class="p">):</span>
+</span><span class="line">    <span class="n">shells</span> <span class="o">=</span> <span class="p">[</span><span class="s">&quot;ipython&quot;</span><span class="p">,</span> <span class="s">&quot;bpython&quot;</span><span class="p">,</span> <span class="s">&quot;pyrepl&quot;</span><span class="p">,</span> <span class="s">&quot;python&quot;</span><span class="p">]</span>
+</span><span class="line">
+</span><span class="line">    <span class="k">def</span> <span class="nf">pyrepl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">):</span>
+</span><span class="line">        <span class="kn">from</span> <span class="nn">_pyrepl.main</span> <span class="kn">import</span> <span class="n">interactive_console</span>
+</span><span class="line">        <span class="n">interactive_console</span><span class="p">()</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>How it works</h2>
+
+<p>Django&rsquo;s <code>shell</code> command has made it very simple to add support for your favorite REPL of choice.</p>
+
+<p><a href="https://github.com/django/django/blob/5.1.2/django/core/management/commands/shell.py">The code for the <code>shell</code> command</a> loops through the <code>shells</code> list and attempts to run a method with that name on its own class.
+If an <code>ImportError</code> is raised then it attempts the next command, stopping once no exception occurs.</p>
+
+<p>Our new command will try to use IPython and bpython if they&rsquo;re installed and then it will try the new Python 3.13 REPL followed by the old Python REPL.</p>
+
+<p>If Python 3.14 breaks our import by moving the <code>interactive_console</code> function, then an <code>ImportError</code> will be raised, causing us to fall back to the old REPL after we upgrade to Python 3.14 one day.
+If instead, the <code>interactive_console</code> function&rsquo;s usage changes (maybe it will require arguments) then our <code>shell</code> command will completely break and we&rsquo;ll need to manually fix it when we upgrade to Python 3.14.</p>
+
+<h2>What&rsquo;s so great about the new REPL?</h2>
+
+<p>If you&rsquo;re already using IPython or BPython as your REPL and you&rsquo;re enjoying them, I would stick with them.</p>
+
+<p>Third-party libraries move faster than Python itself and they&rsquo;re often more feature-rich.
+IPython has about 20 years worth of feature development and it has features that the built-in Python REPL will likely never have.</p>
+
+<p>If you&rsquo;re using the default Python REPL though, this new REPL is a <em>huge</em> upgrade.
+I&rsquo;ve been using it as my default REPL since May and I <em>love</em> it.
+See <a href="https://pym.dev/python-313-whats-new/">my screencast on Python 3.13</a> for my favorite features in the new REPL.</p>
+
+<p><strong>P.S. for Python Morsels users</strong>: if you want to try using that <code>code</code> module, check out the (fairly advanced) <a href="https://www.pythonmorsels.com/exercises/3efdd9e172a346d08679ec39419ed822/?level=advanced">replr</a> or (even more advanced) <a href="https://www.pythonmorsels.com/exercises/5800cdcbbc5b4936b3e253dc15050480/?level=advanced">replsync</a> exercises.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 14, 2024 04:03 AM UTC by
+            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
+              >Trey Hunner</a
+            >
+          </div>
+          <a
+            href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://lucumr.pocoo.org/2024/10/14/mixing-oss-and-money" class="hover:underline"
+              >The Inevitability of Mixing Open Source and Money</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This year, one of the projects I was involved in at Sentry was the launch
+of <a class="reference external" href="https://opensourcepledge.com/">The Open Source Pledge</a>.  The idea
+behind it is simple: companies pledge an amount proportional to the number
+of developers they employ to fund the Open Source projects they depend on.
+I <a class="reference external" href="http://lucumr.pocoo.org/2024/9/19/open-source-tax/">have written about this before</a>.</p>
+<p>Since then, I've had the chance to engage in many insightful discussions
+about Open Source funding and licensing.  In the meantime we have
+officially launched the pledge, and almost simultaneously <a class="reference external" href="https://techcrunch.com/2024/10/10/wordpress-vs-wp-engine-drama-explained/">WordPress
+entered a crisis</a>.
+At the heart of that crisis is a clash between Open Source ideals and
+financial interests by people other than the original creators.</p>
+<p>You might have a lot of opinions on David Heinemeier Hansson, but I
+encourage you to read two of his recent posts on that very topic.
+In <a class="reference external" href="https://world.hey.com/dhh/automattic-is-doing-open-source-dirty-b95cf128">Automattic is doing open source dirty</a>
+David is laying out the case that Automattic has no right to impose moral
+obligations on beyond the scope of the license.  This has been followed by
+<a class="reference external" href="https://world.hey.com/dhh/open-source-royalty-and-mad-kings-a8f79d16">Open source royalty and mad kings</a>
+in which he goes deeper into the fallout that Matt Mullenweg (the creator
+of WordPress) is causing with his fight.</p>
+<p>I'm largely in agreement with the posts.  However I want to talk a bit
+about some pretty significant difference between David's opinions on Open
+Source funding (on which these posts appear to be based): the money
+element.  In 2013 David <a class="reference external" href="https://dhh.dk/2013/the-perils-of-mixing-open-source-and-money.html">wrote the following about money and Open Source</a>:</p>
+<blockquote>
+<p>[…] it's tempting to cash in on goodwill earned. […] It's a cliché,
+but once you've sold out, the goodwill might well be spent for good.</p>
+<p>[…] part of the reason much of open source is so good, and often
+so superior to closed-source commercial projects, is the natural
+boundary of constraints.  If you are not being paid or otherwise
+compensated directly for your work, you're less likely to needlessly
+embellish it. […]</p>
+<p class="attribution">&mdash;David Heinemeier Hansson, <a class="reference external" href="https://dhh.dk/2013/the-perils-of-mixing-open-source-and-money.html">The perils of mixing open source and
+money</a></p>
+</blockquote>
+<p>At face value, this suggests that Open Source and money shouldn’t mix,
+and that the absence of monetary rewards fosters a unique creative
+process.  There's certainly truth to this, but in reality, Open Source and
+money often mix quickly.</p>
+<p>If you look under the cover of many successful Open Source projects you
+will find companies with their own commercial interests supporting
+them (eg: Linux via contributors), companies outright leading projects
+they are also commercializing (eg: MariaDB, redis) or companies funding
+Open Source projects primarily for marketing / up-sell purposes (uv,
+next.js, pydantic, …).  Even when money doesn't directly fund an Open
+Source project, others may still profit from it, yet often those are not
+the original creators.  These dynamics create stresses and moral dilemmas.</p>
+<p>I’ve said this before, but it’s no coincidence that Rails has a
+foundation, large conferences, a strong core team, and a trademark, while
+Flask has none of it.  There are barriers and it takes a lot of energy and
+determination to push a project to a level where it can sustain itself.</p>
+<p>Rails pushed through this barrier.  I never did with any of my projects
+and I'm at peace with that.  I got to learn a lot through my Open Source
+work, I achieved a certain level of popularity that I benefit from.  I built
+a meaningful career by leveraging my work and I even met my wonderful wife
+that way.  All are consequences of my Open Source contributions.  There
+were clear and indisputable benefits to it and by all accounts I'm a happy
+and grateful person.</p>
+<p>But every now and then <a class="reference external" href="http://lucumr.pocoo.org/2023/2/9/everybody-is-complex/">doubts creep in</a> and I wonder if I should have done
+something more commercial with Flask, or if I should have pushed Rye
+further.  As much as I love listening to Charlie talking about uv, there
+is also an unavoidable doubt lingering there what could have been if I
+dared to <a class="reference external" href="http://lucumr.pocoo.org/2024/8/21/harvest-season/">build out Rye</a> with funding on my
+own.</p>
+<p>Over the years, I have seen too many of my colleagues and acquaintances
+struggle one way or another.  Psychological, mentally and professionally.
+Midlife crises, burnout, health, and dealing with a strong feeling of
+dread and disappointment.  Many of this as a indirect or even direct
+result of their Open Source work.  While projects like Rails and Laravel
+are great examples of successful open source stewardship, they are also
+outliers.  Many others don't survive or grow to that level.</p>
+<p>And yet even some of those lighthouse projects can become fallen stars and
+face challenges.  WordPress by all accounts is a massive success.
+WordPress is in the top 1% of open source projects in terms of impact,
+success, and financial return for its creator.  Yet despite that — and it
+finding an actual business model to commercialize it — its creator
+suffers from the same fate as many small Open Source libraries: a feeling
+of being wronged.</p>
+<p>This is where the lines between law and morality blur.  Matt feels
+mistreated, especially by a private equity firm, but neither trademarks
+nor license terms can resolve the issue for him.  It’s a moral question,
+and sadly, Matt’s actions have alienated many who would otherwise support
+him.  He's turning into a “mad king” and behaving immoral in his own ways.</p>
+<p>The reality is that we humans are messy and unpredictable.  We don't quite
+know how we will behave until we have been throw into a particular
+situation.  Open Source walks a very fine line, and anyone claiming to have
+all the answers probably doesn't.  I certainly don't.</p>
+<p>Is it a wise to mix Open Source and money?  Maybe not.  Yet I also believe
+it's something that is just a reality we need to navigate.  Today there
+are some projects too small to get any funding (<a class="reference external" href="https://en.wikipedia.org/wiki/XZ_Utils_backdoor">xz</a>) and there are
+projects large enough to find some way to sustain by funneling money to it
+(Rails, WordPress).</p>
+<p>We target with the Pledge small projects in particular.  It's our
+suggestion of how to give to projects for which the barrier to attract
+funding is too high.  At the same time I recognize all the open questions
+it leaves.  There are questions about tax treatments, there are questions
+about sustainabilty and incentives, questions about distribution and
+governance.</p>
+<p>I firmly believe that the current state of Open Source and money is
+inadequate, and we should strive for a better one.  Will the Pledge help?
+I hope for some projects, but WordPress has shown that we need to drive
+forward that conversation of money and Open Source regardless of thes size
+of the project.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 14, 2024 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="http://lucumr.pocoo.org/2024/10/14/mixing-oss-and-money"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://doughellmann.com/releases/virtualenvwrapper-6-1-1/" class="hover:underline"
+              >virtualenvwrapper 6.1.1</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What&rsquo;s new in 6.1.1? Update broken MSYS link in installation documentation (contributions by LaosLos) Add additional line to mkvirtualenv help (contributions by LaosLos) Update mkvirtualenv help to document -p/&ndash;python option (contributions by LaosLos) move linkcheck out of main doc build make sure virtualenvwrapper_cd always tries to do something, even when it cannot infer the current shell (contributions by Benjamin Mundt)
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 13, 2024 05:53 PM UTC by
+            <a href="https://feeds.feedburner.com/doughellmann/python" class="link link-hover text-primary"
+              >Doug Hellmann</a
+            >
+          </div>
+          <a
+            href="https://doughellmann.com/releases/virtualenvwrapper-6-1-1/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.listendata.com/2024/10/how-to-automate-wordpress-using-python.html" class="hover:underline"
               >How to Automate WordPress using Python</a
             >
@@ -1370,8 +1669,8 @@ Next time as a bonus, I'm gonna do something tkinter cannot do: bidirectional co
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/europython-2024-security-talks?utm_campaign=rss" class="hover:underline"
-              >EuroPython 2024 talks about security</a
+            <a href="https://blog.pythonanywhere.com/216/" class="hover:underline"
+              >Serving UTF-8 static files? Headers to the rescue (an epic tutorial)!</a
             >
           </h2>
           
@@ -1380,174 +1679,11 @@ Next time as a bonus, I'm gonna do something tkinter cannot do: bidirectional co
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            EuroPython 2024 talks about security
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-
-
-
-<div class="header">
-  <div class="container">
-    <div class="row">
-      <a href="http://sethmlarson.dev/">About</a> •
-      <a href="http://sethmlarson.dev/blog">Blog</a> •
-      <a href="http://sethmlarson.dev/links">Cool URLs</a>
-    </div>
-    <div class="row">
-      
-<h1>EuroPython 2024 talks about security</h1>
-<p>Published 2024-10-04 by Seth Larson<br />
- Reading time:  minutes <a href="https://webmention.io/api/mentions.html?target=https://sethmlarson.dev/"><span id="webmentions"></span></a></p>
-
-    </div>
-  </div>
-</div>
-<div class="container">
-
-<p><a href="https://ep2024.europython.eu/">EuroPython 2024</a> which occurred back in July 2024
-has published the talk recordings <a href="https://www.youtube.com/@EuroPythonConference/videos">to YouTube earlier this week</a>.
-I've been under the weather for most of this week, but have had a chance to
-listen to a few of the security-related talks in-between resting.</p>
-
-<h2>Counting down for Cyber Resilience Act: Updates and expectations</h2>
-
-<p>This talk was delivered by Python Software Foundation Executive Director <strong>Deb Nicholson</strong> and and Board Member <strong>Cheuk Ting Ho</strong>.
-The Cyber Resilience Act (CRA) is coming, and it'll affect more software than just the software written in the EU.
-Deb and Cheuk describe the recent developments in the CRA like the creation of a new entity called the "Open Source Steward"
-and how open source foundations and maintainers are preparing for the CRA.</p>
-
-<div><center></center></div>
-
-<p>For the rest of this year and next year I am focusing on getting the Python ecosystem ready for
-software security regulations like the CRA and SSDF from the United States.</p>
-
-<p>Starting with improving the
-Software Bill-of-Materials (SBOM) story for Python, because this is required by both (and likely, future)
-regulations. Knowing <em>what</em> software you are running is an important first step towards being able to secure that same software.</p>
-
-<p>To collaborate with other open source foundations and projects on this work, I've joined the
-<a href="https://orcwg.org/">Open Regulatory Compliance Working Group</a> hosted by the Eclipse Foundation.</p>
-
-<h2>Towards licensing standardization in Python packaging</h2>
-
-<p>This talk was given by <strong>Karolina Surma</strong> and it detailed all the work that goes into researching, writing,
-and having a Python packaging standard accepted (spoiler: it's a lot!). Karolina is working on <a href="https://peps.python.org/pep-0639/">PEP 639</a> which
-is for adopting the <a href="https://spdx.org/licenses/">SPDX licensing expression and identifier standards</a> in Python as they are the current
-state of the art for modeling complex licensing situations accurately for machine (and human) consumption.</p>
-
-<div><center></center></div>
-
-<p>This work is very important for Software Bill-of-Materials, as they require accurate license information
-in this exact format. Thanks to Karolina, C.A.M. Gerlach, and many others for working for years on this PEP, it will be useful to so many uers once adopted!</p>
-
-<h2>The Update Framework (TUF) joins PyPI</h2>
-
-<p>This talk was given by <strong>Kairo de Araujo</strong> and <strong>Lukas Pühringer</strong>
-and it detailed the history and current status of The Update Framework (TUF)
-integration into the Python Package Index.</p>
-
-<p>TUF provides better integrity guarantees for software repositories like PyPI
-like making it more difficult to "compel" the index to serve the incorrect artifacts
-and to make a compromise of PyPI easier to roll-back and be certain that files hadn't been modified.
-For a full history and latest status, you can view <a href="https://peps.python.org/pep-0458/">PEP 458</a> and the <a href="https://github.com/pypi/warehouse/issues/10672">top-level GitHub issue</a> for Warehouse.</p>
-
-<div><center></center></div>
-
-<p>I was around for the original key-signing ceremony for the PyPI TUF root keys which was <a href="https://www.youtube.com/watch?v=jjAq7S49eow">live-streamed</a>
-back in October 2020. Time flies, huh.</p>
-
-<h2>Writing Python like it's Rust: more robust code with type hints</h2>
-
-<p>This talk was given by <strong>Jakub Beránek</strong> about using type hints for
-more robust Python code. Having written
-a <a href="https://sethmlarson.dev/tests-arent-enough-case-study-after-adding-types-to-urllib3">case-study on urllib3's adoption of type hints</a>
-to find defects that testing and other tooling missed I highly recommend type hints for Python code as well:</p>
-
-<div><center></center></div>
-
-<h2>Accelerating Python with Rust: The PyO3 Revolution</h2>
-
-<p>This talk was given by <strong>Roshan R Chandar</strong> about using PyO3
-and Rust in Python modules.</p>
-
-<div><center></center></div>
-
-<h2>Automatic Trusted Publishing with PyPI</h2>
-
-<p>This talk was given by <strong>Facundo Tuesca</strong> on using Trusted Publishing for authenticating with PyPI to publish packages.</p>
-
-<div><center></center></div>
-
-<h2>Zero Trust APIs with Python</h2>
-
-<p>This talk was given by <strong>Jose Haro Peralta</strong> on how to design and implement secure web APIs using Python,
-data validation with Pydantic, and testing your APIs using tooling for detecting common security defects.</p>
-
-<div><center></center></div>
-
-<h2>Best practices for securely consuming open source in Python</h2>
-
-<p>This talk was given by <strong>Cira Carey</strong> which highlights many of today's threats targetting open source consumers.
-Users should be aware of these when selecting projects to download and install.</p>
-
-<div><center></center></div>
-
-<blockquote>
-    <p>
-        <strong>Have thoughts or questions?</strong> Let's chat over email or social:
-        </p>
-    <p>
-        <a href="mailto:sethmichaellarson@gmail.com"><code>sethmichaellarson@gmail.com</code></a><br />
-        <a href="https://fosstodon.org/@sethmlarson"><code>@sethmlarson@fosstodon.org</code></a>
-    </p>
-    <p>
-        <strong>Want more articles like this one?</strong>
-        Get notified of new posts by subscribing to the <a href="http://sethmlarson.dev/feed">RSS feed</a> or the <a href="https://buttondown.email/sethmlarson">email newsletter</a>.
-        I won't share your email or send spam, only whatever <em>this</em> is!
-    <form action="https://buttondown.email/api/emails/embed-subscribe/sethmlarson" method="post" target="popupwindow">
-        <input id="bd-email" name="email" required="required" style="width: 16em; margin-bottom: 0.5em;" type="email" />
-        <input style="width: 8em;" type="submit" value="Subscribe" />
-    </form>
-    </p>
-    <p>
-        <strong>Want more content now?</strong> This <a href="http://sethmlarson.dev/blog">blog's archive</a> has  ready-to-read articles. I also curate
-        a <a href="http://sethmlarson.dev/links">list of cool URLs</a> I find on the internet.
-    </p>
-    <p>
-        <strong>Find a typo?</strong> <a href="https://github.com/sethmlarson/sethmlarson.dev">This blog is open source</a>, pull requests are appreciated.
-    </p>
-    <p>
-        <strong>Thanks for reading!</strong> ♡ This work is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/?ref=chooser-v1" rel="license noopener noreferrer" style="display: inline-block;" target="_blank">CC BY-SA 4.0</a> <a href="https://creativecommons.org/licenses/by-sa/4.0/?ref=chooser-v1" rel="license noopener noreferrer" style="display: inline-block;" target="_blank"><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" style="height: 22px!important; margin-left: 3px; vertical-align: text-bottom;" /><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" style="height: 22px!important; margin-left: 3px; vertical-align: text-bottom;" /><img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg?ref=chooser-v1" style="height: 22px!important; margin-left: 3px; vertical-align: text-bottom;" /></a>
-    </p>
-</blockquote>
-
-
-</div>
+            <p>Imagine there&rsquo;s a PythonAnywhere user, <code>homer8bc</code>, with poetic
+inclinations. He wants to serve his newest poem (he believes it&rsquo;s quite
+epic) as a static text page. He&rsquo;s old school — he doesn’t believe in HTML,
+and as for CSS? Forget it! His friend, S. Yodos, lives in Cyme, while
+<code>homer8bc</code> resides on Ios island, so in-person communication is difficult&hellip;</p>
           </p>
         </div>
 
@@ -1555,696 +1691,12 @@ Users should be aware of these when selecting projects to download and install.<
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
             Posted on October 04, 2024 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
+            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
+              >Python Anywhere</a
             >
           </div>
           <a
-            href="https://sethmlarson.dev/europython-2024-security-talks?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2024/10/switching-from-virtualenvwrapper-to-direnv-starship-and-uv/" class="hover:underline"
-              >Switching from virtualenvwrapper to direnv, Starship, and uv</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Earlier this week I considered whether I should finally switch away from <a href="https://virtualenvwrapper.readthedocs.io">virtualenvwrapper</a> to using local <code>.venv</code> managed by <a href="https://direnv.net">direnv</a>.</p>
-
-<p>I&rsquo;ve never seriously used direnv, but I&rsquo;ve been hearing <a href="https://micro.webology.dev/2024/03/13/on-environment-variables.html">Jeff</a> and <a href="https://hynek.me/til/python-project-local-venvs/">Hynek</a> talk about their use of direnv for a while.</p>
-
-<p>After a few days, I&rsquo;ve finally stumbled into a setup that works great for me.
-I&rsquo;d like to note the basics of this setup as well as some fancy additions that are specific to my own use case.</p>
-
-<h2>My old virtualenvwrapper workflow</h2>
-
-<p>First, I&rsquo;d like to note my <em>old</em> workflow that I&rsquo;m trying to roughly recreate:</p>
-
-<ol>
-<li>I type <code>mkvenv3 &lt;project_name&gt;</code> to create a new virtual environment for the current project directory and activate it</li>
-<li>I type <code>workon &lt;project_name&gt;</code> when I want to workon that project: this activates the correct virtual environment <em>and</em> changes to the project directory</li>
-</ol>
-
-
-<p>The initial setup I thought of allows me to:</p>
-
-<ol>
-<li>Run <code>echo layout python &gt; .envrc &amp;&amp; direnv allow</code> to create a virtual environment for the current project and activate it</li>
-<li>Change directories into the project directory to automatically activate the virtual environment</li>
-</ol>
-
-
-<p>The more complex setup I eventually settled on allows me to:</p>
-
-<ol>
-<li>Run <code>venv &lt;project_name&gt;</code> to create a virtual environment for the current project and activate it</li>
-<li>Run <code>workon &lt;project_name&gt;</code> to change directories into the project (which automatically activates the virtual environment)</li>
-</ol>
-
-
-<h2>The initial setup</h2>
-
-<p>First, I <a href="https://direnv.net">installed direnv</a> and added this to my <code>~/.zshrc</code> file:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nb">eval</span> <span class="s2">&quot;$(direnv hook zsh)&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then whenever I wanted to create a virtual environment for a new project I created a <code>.envrc</code> file in that directory, which looked like this:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">layout python
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Then I ran <code>direnv allow</code> to allow, as <code>direnv</code> instructed me to, to allow the new virtual environment to be automatically created and activated.</p>
-
-<p>That&rsquo;s pretty much it.</p>
-
-<p>Unfortunately, I did not like this initial setup.</p>
-
-<h2>No shell prompt?</h2>
-
-<p>The first problem was that the virtual environment&rsquo;s prompt didn&rsquo;t show up in my shell prompt.
-This is due to a <a href="https://github.com/direnv/direnv/issues/529">direnv not allowing modification of the <code>PS1</code> shell prompt</a>.
-That means I&rsquo;d need to modify my shell configuration to show the correct virtual environment name myself.</p>
-
-<p>So I added this to my <code>~/.zshrc</code> file to show the virtual environment name at the beginning of my prompt:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="c"># Add direnv-activated venv to prompt</span>
-</span><span class="line">show_virtual_env<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">  <span class="k">if</span> <span class="o">[[</span> -n <span class="s2">&quot;$VIRTUAL_ENV_PROMPT&quot;</span> <span class="o">&amp;&amp;</span> -n <span class="s2">&quot;$DIRENV_DIR&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;($(basename $VIRTUAL_ENV_PROMPT)) &quot;</span>
-</span><span class="line">  <span class="k">fi</span>
-</span><span class="line"><span class="o">}</span>
-</span><span class="line"><span class="nv">PS1</span><span class="o">=</span><span class="s1">'$(show_virtual_env)'</span><span class="nv">$PS1</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Wrong virtual environment directory</h2>
-
-<p>The next problem was that the virtual environment was placed in <code>.direnv/python3.12</code>.
-I wanted each virtual environment to be in a <code>.venv</code> directory instead.</p>
-
-<p>To do that, I made a <code>.config/direnv/direnvrc</code> file that customized the python layout:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">layout_python<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[[</span> -d <span class="s2">&quot;.venv&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nv">VIRTUAL_ENV</span><span class="o">=</span><span class="s2">&quot;$(pwd)/.venv&quot;</span>
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="k">if</span> <span class="o">[[</span> -z <span class="nv">$VIRTUAL_ENV</span> <span class="o">||</span> ! -d <span class="nv">$VIRTUAL_ENV</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        log_status <span class="s2">&quot;No virtual environment exists. Executing \`python -m venv .venv\`.&quot;</span>
-</span><span class="line">        python -m venv .venv
-</span><span class="line">        <span class="nv">VIRTUAL_ENV</span><span class="o">=</span><span class="s2">&quot;$(pwd)/.venv&quot;</span>
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Activate the virtual environment</span>
-</span><span class="line">    . <span class="nv">$VIRTUAL_ENV</span>/bin/activate
-</span><span class="line"><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Loading, unloading, loading, unloading&hellip;</h2>
-
-<p>I also didn&rsquo;t like the loading and unloading messages that showed up each time I changed directories.
-I removed those by clearing the <code>DIRENV_LOG_FORMAT</code> variable in my <code>~/.zshrc</code> configuration:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nb">export </span><span class="nv">DIRENV_LOG_FORMAT</span><span class="o">=</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>The more advanced setup</h2>
-
-<p>I don&rsquo;t like it when all my virtual environment prompts show up as <code>.venv</code>.
-I want ever prompt to be the name of the actual project&hellip; which is usually the directory name.</p>
-
-<p>I also <em>really</em> wanted to be able to type <code>venv</code> to create a new virtual environment, activate it, and create the <code>.envrc</code> file for my <em>automatically</em>.</p>
-
-<p>Additionally, I thought it would be really handy if I could type <code>workon &lt;project_name&gt;</code> to change directories to a specific project.</p>
-
-<p>I made two aliases in my <code>~/.zshrc</code> configuration for all of this:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-<span class="line-number">15</span>
-<span class="line-number">16</span>
-<span class="line-number">17</span>
-<span class="line-number">18</span>
-<span class="line-number">19</span>
-<span class="line-number">20</span>
-<span class="line-number">21</span>
-<span class="line-number">22</span>
-<span class="line-number">23</span>
-<span class="line-number">24</span>
-<span class="line-number">25</span>
-<span class="line-number">26</span>
-<span class="line-number">27</span>
-<span class="line-number">28</span>
-<span class="line-number">29</span>
-<span class="line-number">30</span>
-<span class="line-number">31</span>
-<span class="line-number">32</span>
-<span class="line-number">33</span>
-<span class="line-number">34</span>
-<span class="line-number">35</span>
-<span class="line-number">36</span>
-<span class="line-number">37</span>
-<span class="line-number">38</span>
-<span class="line-number">39</span>
-<span class="line-number">40</span>
-<span class="line-number">41</span>
-<span class="line-number">42</span>
-<span class="line-number">43</span>
-<span class="line-number">44</span>
-<span class="line-number">45</span>
-<span class="line-number">46</span>
-<span class="line-number">47</span>
-<span class="line-number">48</span>
-<span class="line-number">49</span>
-<span class="line-number">50</span>
-<span class="line-number">51</span>
-<span class="line-number">52</span>
-<span class="line-number">53</span>
-<span class="line-number">54</span>
-<span class="line-number">55</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">venv<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nb">local </span><span class="nv">venv_name</span><span class="o">=</span><span class="k">${</span><span class="nv">1</span><span class="k">:-$(</span>basename <span class="s2">&quot;$PWD&quot;</span><span class="k">)}</span>
-</span><span class="line">    <span class="nb">local </span><span class="nv">projects_file</span><span class="o">=</span><span class="s2">&quot;$HOME/.projects&quot;</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Check if .envrc already exists</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[</span> -f .envrc <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: .envrc already exists&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Create venv</span>
-</span><span class="line">    <span class="k">if</span> ! python3 -m venv --prompt <span class="s2">&quot;$venv_name&quot;</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: Failed to create venv&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Create .envrc</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;layout python&quot;</span> &gt; .envrc
-</span><span class="line">
-</span><span class="line">    <span class="c"># Append project name and directory to projects file</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;${venv_name} = ${PWD}&quot;</span> &gt;&gt; <span class="nv">$projects_file</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Allow direnv to immediately activate the virtual environment</span>
-</span><span class="line">    direnv allow
-</span><span class="line"><span class="o">}</span>
-</span><span class="line">
-</span><span class="line">workon<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nb">local </span><span class="nv">project_name</span><span class="o">=</span><span class="s2">&quot;$1&quot;</span>
-</span><span class="line">    <span class="nb">local </span><span class="nv">projects_file</span><span class="o">=</span><span class="s2">&quot;$HOME/.projects&quot;</span>
-</span><span class="line">    <span class="nb">local </span>project_dir
-</span><span class="line">
-</span><span class="line">    <span class="c"># Check for projects config file</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[[</span> ! -f <span class="s2">&quot;$projects_file&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: $projects_file not found&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Get the project directory for the given project name</span>
-</span><span class="line">    <span class="nv">project_dir</span><span class="o">=</span><span class="k">$(</span>grep -E <span class="s2">&quot;^$project_name\s*=&quot;</span> <span class="s2">&quot;$projects_file&quot;</span> <span class="p">|</span> sed <span class="s1">'s/^[^=]*=\s*//'</span><span class="k">)</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Ensure a project directory was found</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[[</span> -z <span class="s2">&quot;$project_dir&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: Project '$project_name' not found in $projects_file&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Ensure the project directory exists</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[[</span> ! -d <span class="s2">&quot;$project_dir&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: Directory $project_dir does not exist&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Change directories</span>
-</span><span class="line">    <span class="nb">cd</span> <span class="s2">&quot;$project_dir&quot;</span>
-</span><span class="line"><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Now I can type this to create a <code>.venv</code> virtual environment in my current directory, which has a prompt named after the current directory, activate it, and create a <code>.envrc</code> file which will automatically activate that virtual environment (thanks to that <code>~/.config/direnv/direnvrc</code> file) whenever I change into that directory:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nv">$ </span>venv
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>If I wanted to customized the prompt name for the virtual environment, I could do this:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nv">$ </span>venv my_project
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>When I wanted to start working on that project later, I can either change into that directory <em>or</em> if I&rsquo;m feeling lazy I can simply type:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nv">$ </span>workon my_project
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That reads from my <code>~/.projects</code> file to look up the project directory to switch to.</p>
-
-<h2>Switching to uv</h2>
-
-<p>I also decided to try using <a href="https://docs.astral.sh/uv/">uv</a> for all of this, since it&rsquo;s faster at creating virtual environments.
-One benefit of <code>uv</code> is that it tries to select the correct Python version for the project, if it sees a version noted in a <code>pyproject.toml</code> file.</p>
-
-<p>Another benefit of using <code>uv</code>, is that I should also be able to update the <code>venv</code> to use a specific version of Python with something like <code>--python 3.12</code>.</p>
-
-<p>Here are the updated shell aliases for the <code>~/.zshrc</code> for <code>uv</code>:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-<span class="line-number">15</span>
-<span class="line-number">16</span>
-<span class="line-number">17</span>
-<span class="line-number">18</span>
-<span class="line-number">19</span>
-<span class="line-number">20</span>
-<span class="line-number">21</span>
-<span class="line-number">22</span>
-<span class="line-number">23</span>
-<span class="line-number">24</span>
-<span class="line-number">25</span>
-<span class="line-number">26</span>
-<span class="line-number">27</span>
-<span class="line-number">28</span>
-<span class="line-number">29</span>
-<span class="line-number">30</span>
-<span class="line-number">31</span>
-<span class="line-number">32</span>
-<span class="line-number">33</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">venv<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nb">local </span>venv_name
-</span><span class="line">    <span class="nb">local </span><span class="nv">dir_name</span><span class="o">=</span><span class="k">$(</span>basename <span class="s2">&quot;$PWD&quot;</span><span class="k">)</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># If there are no arguments or the last argument starts with a dash, use dir_name</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[</span> <span class="nv">$# </span>-eq <span class="m">0</span> <span class="o">]</span> <span class="o">||</span> <span class="o">[[</span> <span class="s2">&quot;${!#}&quot;</span> <span class="o">==</span> -* <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nv">venv_name</span><span class="o">=</span><span class="s2">&quot;$dir_name&quot;</span>
-</span><span class="line">    <span class="k">else</span>
-</span><span class="line">        <span class="nv">venv_name</span><span class="o">=</span><span class="s2">&quot;${!#}&quot;</span>
-</span><span class="line">        <span class="nb">set</span> -- <span class="s2">&quot;${@:1:$#-1}&quot;</span>
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Check if .envrc already exists</span>
-</span><span class="line">    <span class="k">if</span> <span class="o">[</span> -f .envrc <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: .envrc already exists&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Create venv using uv with all passed arguments</span>
-</span><span class="line">    <span class="k">if</span> ! uv venv --seed --prompt <span class="s2">&quot;$@&quot;</span> <span class="s2">&quot;$venv_name&quot;</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">        <span class="nb">echo</span> <span class="s2">&quot;Error: Failed to create venv&quot;</span> &gt;<span class="p">&amp;</span>2
-</span><span class="line">        <span class="k">return</span> 1
-</span><span class="line">    <span class="k">fi</span>
-</span><span class="line">
-</span><span class="line">    <span class="c"># Create .envrc</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;layout python&quot;</span> &gt; .envrc
-</span><span class="line">
-</span><span class="line">    <span class="c"># Append to ~/.projects</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;${venv_name} = ${PWD}&quot;</span> &gt;&gt; ~/.projects
-</span><span class="line">
-</span><span class="line">    <span class="c"># Allow direnv to immediately activate the virtual environment</span>
-</span><span class="line">    direnv allow
-</span><span class="line"><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>Switching to starship</h2>
-
-<p>I also decided to try out using <a href="https://starship.rs">Starship</a> to customize my shell this week.</p>
-
-<p>I added this to my <code>~/.zshrc</code>:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nb">eval</span> <span class="s2">&quot;$(starship init zsh)&quot;</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>And removed this, which is no longer needed since Starship will be managing the shell for me:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="c"># Add direnv-activated venv to prompt</span>
-</span><span class="line">show_virtual_env<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">  <span class="k">if</span> <span class="o">[[</span> -n <span class="s2">&quot;$VIRTUAL_ENV_PROMPT&quot;</span> <span class="o">&amp;&amp;</span> -n <span class="s2">&quot;$DIRENV_DIR&quot;</span> <span class="o">]]</span><span class="p">;</span> <span class="k">then</span>
-</span><span class="line">    <span class="nb">echo</span> <span class="s2">&quot;($(basename $VIRTUAL_ENV_PROMPT)) &quot;</span>
-</span><span class="line">  <span class="k">fi</span>
-</span><span class="line"><span class="o">}</span>
-</span><span class="line"><span class="nv">PS1</span><span class="o">=</span><span class="s1">'$(show_virtual_env)'</span><span class="nv">$PS1</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I also switched my <code>python</code> layout for direnv to just set the <code>$VIRTUAL_ENV</code> variable and add the <code>$VIRTUAL_ENV/bin</code> directory to my <code>PATH</code>, since the <code>$VIRTUAL_ENV_PROMPT</code> variable isn&rsquo;t needed for Starship to pick up the prompt:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">layout_python<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nv">VIRTUAL_ENV</span><span class="o">=</span><span class="s2">&quot;$(pwd)/.venv&quot;</span>
-</span><span class="line">    PATH_add <span class="s2">&quot;$VIRTUAL_ENV/bin&quot;</span>
-</span><span class="line">    <span class="nb">export </span>VIRTUAL_ENV
-</span><span class="line"><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I also made a <em>very</em> boring Starship configuration in <code>~/.config/starship.toml</code>:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-<span class="line-number">15</span>
-<span class="line-number">16</span>
-<span class="line-number">17</span>
-<span class="line-number">18</span>
-<span class="line-number">19</span>
-<span class="line-number">20</span>
-<span class="line-number">21</span>
-<span class="line-number">22</span>
-<span class="line-number">23</span>
-<span class="line-number">24</span>
-<span class="line-number">25</span>
-<span class="line-number">26</span>
-<span class="line-number">27</span>
-<span class="line-number">28</span>
-<span class="line-number">29</span>
-<span class="line-number">30</span>
-</pre></td><td class="code"><pre><code class="toml"><span class="line"><span class="n">format</span> <span class="o">=</span> <span class="s">&quot;&quot;&quot;</span>
-</span><span class="line"><span class="s">$python\</span>
-</span><span class="line"><span class="s">$directory\</span>
-</span><span class="line"><span class="s">$git_branch\</span>
-</span><span class="line"><span class="s">$git_state\</span>
-</span><span class="line"><span class="s">$character&quot;&quot;&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="n">add_newline</span> <span class="o">=</span> <span class="kc">false</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">python</span><span class="p">]</span>
-</span><span class="line"><span class="n">format</span> <span class="o">=</span> <span class="err">'</span><span class="p">([(</span><span class="err">\</span><span class="p">(</span><span class="err">$</span><span class="n">virtualenv</span><span class="err">\</span><span class="p">)</span> <span class="p">)](</span><span class="err">$</span><span class="n">style</span><span class="p">))</span><span class="err">'</span>
-</span><span class="line"><span class="n">style</span> <span class="o">=</span> <span class="s">&quot;bright-black&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">directory</span><span class="p">]</span>
-</span><span class="line"><span class="n">style</span> <span class="o">=</span> <span class="s">&quot;bright-blue&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">character</span><span class="p">]</span>
-</span><span class="line"><span class="n">success_symbol</span> <span class="o">=</span> <span class="s">&quot;[\\$](black)&quot;</span>
-</span><span class="line"><span class="n">error_symbol</span> <span class="o">=</span> <span class="s">&quot;[\\$](bright-red)&quot;</span>
-</span><span class="line"><span class="n">vimcmd_symbol</span> <span class="o">=</span> <span class="s">&quot;[❮](green)&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">git_branch</span><span class="p">]</span>
-</span><span class="line"><span class="n">format</span> <span class="o">=</span> <span class="s">&quot;[$symbol$branch]($style) &quot;</span>
-</span><span class="line"><span class="n">style</span> <span class="o">=</span> <span class="s">&quot;bright-purple&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">git_state</span><span class="p">]</span>
-</span><span class="line"><span class="n">format</span> <span class="o">=</span> <span class="err">'\</span><span class="p">([</span><span class="err">$</span><span class="n">state</span><span class="p">(</span> <span class="err">$</span><span class="n">progress_current</span><span class="err">/$</span><span class="n">progress_total</span><span class="p">)](</span><span class="err">$</span><span class="n">style</span><span class="p">)</span><span class="err">\</span><span class="p">)</span> <span class="err">'</span>
-</span><span class="line"><span class="n">style</span> <span class="o">=</span> <span class="s">&quot;purple&quot;</span>
-</span><span class="line">
-</span><span class="line"><span class="p">[</span><span class="n">cmd_duration</span><span class="p">.</span><span class="n">disabled</span><span class="p">]</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>I setup such a boring configuration because when I&rsquo;m teaching, I don&rsquo;t want my students to be confused or distracted by a prompt that has considerably more information in it than <em>their</em> default prompt may have.</p>
-
-<p>The biggest downside of switching to Starship has been my own earworm-oriented brain.
-As I update my Starship configuration files, I&rsquo;ve repeatedly heard David Bowie singing &ldquo;I&rsquo;m a Starmaaan&rdquo;. 🎶</p>
-
-<h2>Ground control to major TOML</h2>
-
-<p>After all of that, I realized that I could additionally use different Starship configurations for different directories by putting a <code>STARSHIP_CONFIG</code> variable in specific layouts.
-After that realization, I made my configuration even <em>more</em> vanilla and made some alternative configurations in my <code>~/.config/direnv/direnvrc</code> file:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line">layout_python<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nv">VIRTUAL_ENV</span><span class="o">=</span><span class="s2">&quot;$(pwd)/.venv&quot;</span>
-</span><span class="line">
-</span><span class="line">    PATH_add <span class="s2">&quot;$VIRTUAL_ENV/bin&quot;</span>
-</span><span class="line">    <span class="nb">export </span>VIRTUAL_ENV
-</span><span class="line">
-</span><span class="line">    <span class="nb">export </span><span class="nv">STARSHIP_CONFIG</span><span class="o">=</span>/home/trey/.config/starship/python.toml
-</span><span class="line"><span class="o">}</span>
-</span><span class="line">
-</span><span class="line">layout_git<span class="o">()</span> <span class="o">{</span>
-</span><span class="line">    <span class="nb">export </span><span class="nv">STARSHIP_CONFIG</span><span class="o">=</span>/home/trey/.config/starship/git.toml
-</span><span class="line"><span class="o">}</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Those other two configuration files are fancier, as I have no concern about them distracting my students since I&rsquo;ll never be within those directories while teaching.</p>
-
-<p>You can find those files in <a href="https://github.com/treyhunner/dotfiles">my dotfiles repository</a>.</p>
-
-<h2>The necessary tools</h2>
-
-<p>So I replaced virtualenvwrapper with direnv, uv, and Starship.
-Though direnv was is doing most of the important work here.
-The use of uv and Starship were just bonuses.</p>
-
-<p>I <em>am</em> also hoping to eventually replace my pipx use with uv and once uv supports <a href="https://github.com/astral-sh/uv/issues/6265">adding python3.x commands</a> to my <code>PATH</code>, I may replace my use of pyenv with uv as well.</p>
-
-<p>Thanks to all who <a href="https://mastodon.social/@treyhunner/113232640710715449">participated in my Mastodon thread</a> as I fumbled through discovering this setup.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 03, 2024 09:00 PM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2024/10/switching-from-virtualenvwrapper-to-direnv-starship-and-uv/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://kushaldas.in/posts/thank-you-gnome-nautilus-scripts.html" class="hover:underline"
-              >Thank you Gnome Nautilus scripts</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <!--
-.. title: Thank you Gnome Nautilus scripts
-.. slug: thank-you-gnome-nautilus-scripts
-.. date: 2024-10-02T15:33:16+02:00
-.. tags: Python, Gnome, Desktop, Photography, Fedora, Debian, Bash
-.. link:
-.. description:
-.. type: text
--->
-<p>As I upload photos to various services, I generally resize them as required
-based on portrait or landscape mode. I used to do that for all the photos in a
-directory and then pick which ones to use. But, I wanted to do it selectively,
-open the photos in Gnome Nautilus  (Files) application and right click and
-resize the ones I want.</p>
-<p>This week I noticed that I can do that with scripts. Those can be in any given
-language, the selected files will be passed as command line arguments, or full
-paths will be there in an environment variable
-<code>NAUTILUS_SCRIPT_SELECTED_FILE_PATHS</code> joined via newline character.</p>
-<p>To add any script to the right click menu, you just need to place them in
-<code>~/.local/share/nautilus/scripts/</code> directory. They will show up in the right click menu for scripts.</p>
-<p><img alt="right click menu" src="https://kushaldas.in/images/file_rightclick_scripts.png" /></p>
-<p>Below is the script I am using to reduce image sizes:</p>
-<pre><code class="language-Python">#!/usr/bin/env python3
-import os
-import sys
-import subprocess
-from PIL import Image
-
-# paths = os.environ.get(&quot;NAUTILUS_SCRIPT_SELECTED_FILE_PATHS&quot;, &quot;&quot;).split(&quot;\n&quot;)
-
-paths = sys.argv[1:]
-
-for fpath in paths:
-    if fpath.endswith(&quot;.jpg&quot;) or fpath.endswith(&quot;.jpeg&quot;):
-        # Assume that is a photo
-        try:
-            img = Image.open(fpath)
-            # basename = os.path.basename(fpath)
-            basename = fpath
-            name, extension = os.path.splitext(basename)
-            new_name = f&quot;{name}_ac{extension}&quot;
-            w, h = img.size
-            # If w &gt; h then it is a landscape photo
-            if w &gt; h:
-                subprocess.check_call([&quot;/usr/bin/magick&quot;, basename, &quot;-resize&quot;, &quot;1024x686&quot;, new_name])
-            else: # It is a portrait photo
-                subprocess.check_call([&quot;/usr/bin/magick&quot;, basename, &quot;-resize&quot;, &quot;686x1024&quot;, new_name])
-        except:
-            # Don't care, continue
-            pass
-</code></pre>
-<p>You can see it in action (I selected the photos and right clicked, but the recording missed that part):</p>
-<p><img alt="right click on selected photos" src="https://kushaldas.in/images/pixelify_script.gif" /></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 02, 2024 01:33 PM UTC by
-            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
-              >Kushal Das</a
-            >
-          </div>
-          <a
-            href="https://kushaldas.in/posts/thank-you-gnome-nautilus-scripts.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2024/10/python-313-and-latest-trends-developers.html" class="hover:underline"
-              >Python 3.13 and the Latest Trends: A Developer's Guide to 2025 - Live Stream Event</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Join <a href="https://www.trallard.dev/" target="_blank">Tania Allard</a>, PSF Board Member, and <a href="https://lukasz.langa.pl/" target="_blank">Łukasz Langa</a>, CPython Developer-in-Residence, for ‘<a href="https://www.youtube.com/live/GPwYSf1t8Lw?si=USUFEcOEgRrhuCxM" target="_blank">Python 3.13 and the Latest Trends: A Developer’s Guide to 2025</a>’, a live stream event hosted by Paul Everitt from <a href="https://www.jetbrains.com/" target="_blank">JetBrains</a>. Thank to JetBrains for partnering with us on the Python Developers Survey and this event to highlight the current state of Python!<br /></p><p style="text-align: left;">The session will take place tomorrow, October 3, at 5:00 pm CEST (11:00 am EDT). Tania and Łukasz will be discussing the <a href="https://docs.python.org/3.13/whatsnew/3.13.html" target="_blank">exciting new features in Python 3.13</a>, plans for Python 3.15 and current Python trends gathered from the <a href="https://lp.jetbrains.com/python-developers-survey-2023/" target="_blank">2023 Annual Developers Survey</a>. Don't miss this chance to hear directly from the experts behind Python’s development!</p><p style="text-align: center;"></p><h2 style="text-align: center;"><a href="https://www.youtube.com/live/GPwYSf1t8Lw?si=USUFEcOEgRrhuCxM" target="_blank">Watch the live stream event on YouTube</a></h2><p>Don’t forget to enable YouTube notifications for the stream and mark your calendar. <br /></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 02, 2024 11:29 AM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2024/10/python-313-and-latest-trends-developers.html"
+            href="https://blog.pythonanywhere.com/216/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2264,8 +1716,8 @@ for fpath in paths:
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8747</a></li>
-    <li><a>Unique Feeds: 425</a></li>
+    <li><a>Total Entries: 8989</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
