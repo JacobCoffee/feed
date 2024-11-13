@@ -53,6 +53,337 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html" class="hover:underline"
+              >The crudest CRUD of them all : the smallest CRUD possible in 150 lines of python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Right now, I am on a never ending quest that requires me to think of building a full fledge MVC controller : an anti-jira tracker that would favours HARD CHECKED facts over wishful thinking.<br /><br />
+For this to begin, I am not really motivated in beginning with a full fledged MVC (Model View Controller) à la django because there is a lot of boilerplates and actions to do before a result. But, it has a lot of feature I want, including authentication, authorization and handling security.<br /><br />
+For prototypes we normally flavours lightweight framework (à la flask), and CRUD.<br /><br />
+CRUD approach is a factorisation of all framework in a single dynamic form that adapts itself to the model to generate HTML forms to input data, tabulate, REST endpoints and search them from the python class declaration and generate the database model. One language to rule them all : PYTHON. You can easily generate even the javascript to handle autocompletion on the generated view from python with enough talent.<br /><br />
+But before using a <a href="https://en.wikipedia.org/wiki/Create,_read,_update_and_delete">CRUD framework</a>, we need a cruder one, ugly, disgusting but useful for a human before building the REST APIs, writing the class in python, the HTML form, and the controlers.<br /><br />
+I call this the <b>crudest CRUD of them all.</b><br /><br />
+Think hard at what you want when prototyping ...<br /><br />
+<ul>
+  <li>to write no CONTROLLERS ; flask documentation has a very verbose approach to exposing routes and writing them, writing controller for embasing and searching databases is boring</li>
+  <li>to write the fewer HTML views possible, one and only onle would be great ;</li>
+  <li>to avoid having to fiddle the many files reflecting separation of concerns : the lesser python files and class you touch the better; </li>
+  <li>to avoid having to write SQL nor use an ORM (at least a verbose declarative one) ;</li>
+  <li>show me your code and you can mesmerize and even fool me, however show me your data structure and I'll know everthing I have to know about your application : data structure should be under your nose in a readable fashion in the code;/</li>
+  <li>to have AT LEAST one end point for inserting and searching so that curl can be used to begin automation and testing, preferably in a factorisable fashion;</li>
+  <li>only one point of failure is accepted</li>
+</ul>
+<br />Once we set these few condition we see whatever we do WE NEED a dynamic http server at the core. Python being the topic here, we are gonna do it in python.<br /><br />
+What is the simplest dynamic web server in python ?<br /><br />The reference implementation of wsgi that is the crudest wsgi server of them all : <a href="https://docs.python.org/3/library/wsgiref.html">wsgiref</a>. And you don't need to download it since it's provided in python stdlib.<br /><br />
+First thing first, we are gonna had a default view so that we can serve an HTML static page with the list of the minimal HTML we need to interact with data : sets of input and forms.<br /><br />
+Here, we stop. And we see that these forms are describing the data model.<br /><br />
+Wouldn't it be nice if we could parse the HTML form easily with a tool from the standard library : <a href="https://docs.python.org/3/library/html.parser.html">html.parser</a> and maybe deduce the database model and even more than fields coud add relationship, and well since we are dreaming : what about creating the tables on the fly from the form if they don't exists ?<br /><br />
+The encoding of the relationship do require an hijack of convention where when the parser cross a name of the field in the form whatever_id it deduces it is a foreign key to table « whatever », column « id ».<br />
+Once this is done, we can parse the html, do some magick to match HTML input types to database types (adapter) and it's almost over. We can even dream of creating the database if it does not exists in a oneliner for sqlite.<br /><br />
+We just need to throw away all the frugality of dependencies by the window and spoil our karma of « digital soberty » by adding the almighty sqlalchemy the crudest (but still heavy) ORM when it comes of the field of <a href="https://docs.sqlalchemy.org/en/20/orm/extensions/automap.html">the introspective features of an ORM to map a database object to a python object in a clear consistent way</a>.
+With this, just one function is needed in the controller to switch from embasing (POST method) and searching (GET).<br /><br />
+Well, if the DOM is passed in the request. So of course I see the critics here :
+<ul><li>we can't pass the DOM in the request because the HTML form ignores the DOM</li>
+  <li>You are not scared of error 415 (request too large) in the get method if you pass the DOM ?</li>
+</ul>
+That's where we obviously need two important tools : 1) javascript, 2) limitations.<br /><br />
+Since we are human we would also like the form to be readable when served, because, well, human don't read the source and can't see the name attributes of the input. A tad of improving the raw html would be nice. It would also give consistency. It will also diminishes the required size of the formular to send. Here, javascript again is the right anwser. Fine, we serve the static page in the top of the controller. Let's use jquery to make it terse enough. Oh, if we have Javascript, wouldn't il be able to clone the part of the invented <i>model</i> tag inside every form so now we can pass the relevant part of the DOM to the controller ?<br /><br />
+I think we have everything to write the crudest CRUD server of them all :D 
+<br /><br />
+
+Happy code reading : 
+<pre>
+import multipart
+from wsgiref.simple_server import make_server
+from json import dumps
+from sqlalchemy import *
+from html.parser import HTMLParser
+from base64 import b64encode
+from sqlalchemy.ext.automap import automap_base
+from sqlalchemy.orm import Session
+from dateutil import parser
+from sqlalchemy_utils import database_exists, create_database
+from urllib.parse import parse_qsl, urlparse
+
+engine = create_engine("sqlite:///this.db")
+if not database_exists(engine.url):
+    create_database(engine.url)
+
+tables = dict()
+
+class HTMLtoData(HTMLParser):
+    def __init__(self):
+        global engine, tables
+        self.cols = []
+        self.table = ""
+        self.tables= []
+        self.engine= engine
+        self.meta = MetaData()
+        super().__init__()
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        simple_mapping = dict(
+            email = UnicodeText, url = UnicodeText, phone = UnicodeText, text = UnicodeText,
+            date = Date, time = Time, datetime = DateTime, file = Text
+        )
+        if tag == "input":
+            if attrs.get("name") == "id":
+                self.cols += [ Column('id', Integer, primary_key = True), ]
+                return
+            try:
+                if attrs.get("name").endswith("_id"):
+                    table,_=attrs.get("name").split("_")
+                    self.cols += [ Column(attrs["name"], Integer, ForeignKey(table + ".id")) ]
+                    return
+            except Exception as e: print(e)
+
+            if attrs.get("type") in simple_mapping.keys():
+                self.cols += [ Column(attrs["name"], simple_mapping[attrs["type"]]), ]
+
+            if attrs["type"] == "number":
+                if attrs["step"] == "any":
+                    self.cols+= [ Columns(attrs["name"], Float), ]
+                else:
+                    self.cols+= [ Column(attrs["name"], Integer), ]
+        if tag== "form":
+            self.table = urlparse(attrs["action"]).path[1:]
+
+    def handle_endtag(self, tag):
+        if tag=="form":
+            self.tables += [ Table(self.table, self.meta, *self.cols), ]
+            tables[self.table] = self.tables[-1]
+            self.table = ""
+            self.cols = []
+            with engine.connect() as cnx:
+                self.meta.create_all(engine)
+                cnx.commit()
+html = """
+&lt;!doctype html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;style&gt;
+* {    font-family:&quot;Sans Serif&quot; }
+body { text-align: center; }
+fieldset {  border: 1px solid #666;  border-radius: .5em; width: 30em; margin: auto; }
+form { text-align: left; display:inline-block; }
+input { margin-bottom:1em; padding:.5em;}
+[value=create] { background:#ffffba} [value=delete] { background:#bae1ff} [value=update] { background:#ffdfda}
+[value=read] { background:#baffc9}
+[type=submit] { margin-right:1em; margin-bottom:0em; border:1px solid #333; padding:.5em; border-radius:.5em; }
+&lt;/style&gt;
+&lt;script src=&quot;https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+$(document).ready(function() {
+    $(&quot;form&quot;).each((i,el) =&gt; {
+        $(el).wrap(&quot;&lt;fieldset&gt;&lt;/fieldset&gt;&quot;  );
+        $(el).before(&quot;&lt;legend&gt;&quot; + el.action + &quot;&lt;/legend&gt;&quot;);
+        $(el).append(&quot;&lt;input name=_action type=submit value=create &gt;&lt;input name=_action type=submit value=read &gt;&quot;)
+        $(el).append(&quot;&lt;input name=_action type=submit value=update &gt;&lt;input name=_action type=submit value=delete &gt;&quot;)
+    });
+    $(&quot;input:not([type=hidden],[type=submit])&quot;).each((i,el) =&gt; {
+        $(el).before(&quot;&lt;label&gt;&quot; + el.name+ &quot;&lt;/label&gt;&lt;br/&gt;&quot;);
+        $(el).after(&quot;&lt;br&gt;&quot;);
+    });
+});
+&lt;/script&gt;
+&lt;/head&gt;
+&lt;body &gt;
+    &lt;form  action=/user method=post &gt;
+        &lt;input type=number name=id /&gt;
+        &lt;input type=text name=name /&gt;
+        &lt;input type=email name=email /&gt;
+    &lt;/form&gt;
+    &lt;form action=/event method=post &gt;
+        &lt;input type=number name=id /&gt;
+        &lt;input type=date name=from_date /&gt;
+        &lt;input type=date name=to_date /&gt;
+        &lt;input type=text name=text /&gt;
+        &lt;input type=number name=user_id /&gt;
+    &lt;/form&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+
+"""
+
+
+router = dict({"" : lambda fo: html,})
+
+def simple_app(environ, start_response):
+    fo, fi=multipart.parse_form_data(environ)
+    fo.update(**{ k: dict(
+            name=fi[k].filename,
+            content_type=fi[k].content_type,
+            content=b64encode(fi[k].file.read())
+        ) for k,v in fi.items()})
+    table = route = environ["PATH_INFO"][1:]
+    fo.update(**dict(parse_qsl(environ["QUERY_STRING"])))
+    HTMLtoData().feed(html)
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+    Base = automap_base(metadata=metadata)
+    Base.prepare()
+    attrs_to_dict = lambda attrs : {  k: (
+                    "date" in k or "time" in k ) and type(k) == str
+                        and parser.parse(v) or
+                    "file" in k and f"""data:{fo[k]["content_type"]}; base64, {fo[k]["content"].decode()}""" or v
+                    for k,v in attrs.items() if v and not k.startswith("_")
+    }
+    if route in tables.keys():
+        start_response('200 OK', [('Content-type', 'application/json; charset=utf-8')])
+        with Session(engine) as session:
+            try:
+                action = fo.get("_action", "")
+                Item = getattr(Base.classes, table)
+                if action == "delete":
+                    session.delete(session.get(Item, fo["id"]))
+                    session.commit()
+                    fo["result"] = "deleted"
+                if action == "create":
+                    new_item = Item(**attrs_to_dict(fo))
+                    session.add(new_item)
+                    session.flush()
+                    ret=session.commit()
+                    fo["result"] = new_item.id
+                if action == "update":
+                    session.delete(session.get(Item, fo["id"]))
+                    new_item = Item(**attrs_to_dict(fo))
+                    session.add(new_item)
+                    session.commit()
+                    fo["result"] = new_item.id
+                if action in { "read", "search" }:
+                    result = []
+                    for elt in session.execute(
+                        select(Item).filter_by(**attrs_to_dict(fo))).all():
+                        result += [{ k.name:getattr(elt[0], k.name) for k in tables[table].columns}]
+                    fo["result"] = result
+            except Exception as e:
+                fo["error"] = e
+                session.rollback()
+    else:
+        start_response('200 OK', [('Content-type', 'text/html; charset=utf-8')])
+
+    return [ router.get(route,lambda fo:dumps(fo.dict, indent=4, default=str))(fo).encode() ]
+
+print("Crudest CRUD of them all on port 5000...")
+make_server('', 5000, simple_app).serve_forever()
+
+</pre>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 06, 2024 08:50 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="http://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/" class="hover:underline"
+              >Deploy Your Own Web App With Kamal 2</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Kamal offers zero-downtime deploys, rolling restarts, asset bridging, remote builds, accessory service management, and everything else you need to deploy and manage your web app in production with Docker. Originally built for Rails apps, Kamal will work with any type of web app that can be containerized. We dig into Kamal, how it works, and how you could use it on your next project.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 06, 2024 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testdriven.io/blog/django-avoid-counting/" class="hover:underline"
+              >Avoid Counting in Django Pagination</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This article looks at how to avoid the count query in Django's paginator.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 05, 2024 10:28 PM UTC by
+            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
+              >TestDriven.io</a
+            >
+          </div>
+          <a
+            href="https://testdriven.io/blog/django-avoid-counting/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/654" class="hover:underline"
               >Issue #654 (Nov. 5, 2024)</a
             >
@@ -886,10 +1217,10 @@ business function within a broader business process.</p>
 modern server-side programming so Zato, both from a technical and strategic perspective, is a natural choice for
 both simple and complex, sophisticated automation, integration and interoperability solutions as a platform built in the
 language and designed for Python people from day one.</p>
-<h2 id="next-steps">Next steps:</h2>
-<p>➤  Read about <a href="https://zato.io/articles/integration-platform.html">how to use Python to build and integrate enterprise APIs</a> that your tests will cover
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
 <br />
-➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
 <br />
 ➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
 <br />
@@ -1537,126 +1868,6 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2024/11/02/today-i-learned.html" class="hover:underline"
-              >Unknown title</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Today I learned about the <a href="https://github.com/Nanonid/rison">Rison</a> data serialization format. I wrote a function to convert a Python value to Rison format. It was an elegant recursive function with partial support for the format.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 02, 2024 05:50 PM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2024/11/02/today-i-learned.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2024/11/02/ive-used-testing.html" class="hover:underline"
-              >Unknown title</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I&rsquo;ve used <a href="https://www.jamesshore.com/v2/projects/nullables/testing-without-mocks">testing without mocks</a> quite extensively now. I&rsquo;ve also used it in a work project for more than a year. My experience is that it&rsquo;s the <strong>best testing strategy</strong> that I&rsquo;ve ever used. I&rsquo;ve never felt more <strong>confident</strong> that my code works. I refactor code without fear of it breaking. It&rsquo;s so good.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 02, 2024 05:05 PM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2024/11/02/ive-used-testing.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2024/11/pycon-us-2025-kicks-off-website-cfp-and.html" class="hover:underline"
-              >PyCon US 2025 Kicks Off: Website, CfP, and Sponsorship Now Open!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Exciting news: the PyCon US 2025 conference website, Call for Proposals, and sponsorship program are open!<br /><br />To learn more about the location, deadlines, and other details, check out the links below:<br /></p><ul style="text-align: left;"><li><a href="https://pycon.blogspot.com/2024/11/pycon-us-2025-launches.html" target="_blank">PyCon US 2025 Launch Blog Post</a></li><li><a href="https://us.pycon.org/2025/" target="_blank">PyCon US 2025 Website</a></li><li><a href="https://pretalx.com/pyconus2025/" target="_blank">Submit Your PyCon US 2025 Proposal on Pretalx</a></li><li><a href="https://www.python.org/sponsors/application/" target="_blank">Sponsorship Application</a></li><li><a href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html" target="_blank">PyCon US 2025 Changes Blog Post</a></li></ul><p><br />We’re very happy to answer any questions you have about PSF sponsorship or PyCon US 2025– please feel free to reach out to us at sponsors@python.org.<br /><br />On behalf of the PSF and the PyCon US 2025 Team, we look forward to receiving your proposals and seeing you in Pittsburgh next year 🥳 🐍</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 01, 2024 07:03 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2024/11/pycon-us-2025-kicks-off-website-cfp-and.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1668,8 +1879,8 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8920</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 8934</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
