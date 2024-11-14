@@ -53,6 +53,333 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://beauty-of-imagination.blogspot.com/2024/10/hello-world-part-ii-actually-recoding.html" class="hover:underline"
+              >Hello world part II : actually recoding print</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In part I <a href="https://beauty-of-imagination.blogspot.com/2024/10/revisiting-hello-world-coding-print.html"> we explored the pre-requisite in order to code print : having a grasp on the framebuffer</a>.
+<br /><br />
+Here, we are gonna deep inside one of the most overlooked object oriented abastraction : a <b>file</b> and actually print what we can of hello world in 100 lines of code.
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhDJODHxmfj7ce0UqETYzZwVtSNR6iKOzjkipu0F0v8PRS5BV4RcBPUucBmxtsNmudFzW2dJq1E7M5WF3QuZej9Oq-iVB2CsWmYdWMsGq7KT1RlYggyMK33p4MTvhBtkbfodon9CtY_5AH2rMxp8BRMmHfhnuAj6vATK3kCAW3jyQNfkciS9XriRu1nOSo/s1600/lol.png" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhDJODHxmfj7ce0UqETYzZwVtSNR6iKOzjkipu0F0v8PRS5BV4RcBPUucBmxtsNmudFzW2dJq1E7M5WF3QuZej9Oq-iVB2CsWmYdWMsGq7KT1RlYggyMK33p4MTvhBtkbfodon9CtY_5AH2rMxp8BRMmHfhnuAj6vATK3kCAW3jyQNfkciS9XriRu1nOSo/s1600/lol.png" /></a></div>
+<br /><br />
+<h1>The file handler and the file descriptor</h1><br /><br />
+These two abstractions are the low level and high level abstractions of the same thing : a view on something more complex which access has been encapsulated in generic methods. Actually when you code a framebuffer driver you provide function pointers that are specialized to your device and you may omit those common to the class. This is done with a double lookup on the major node, minor node number. Of those « generic » methods you have : seek, write, tell, truncate, open, read, close ...<br />
+The file handler in python also handles extra bytes (pun) of facilities : like <b>character encoding</b>, stats, and buffering.<br /><br />
+Here, we work with the low level abstraction : the <a href="https://docs.python.org/3/library/io.html#io.IOBase.fileno"> file which we access with fileno through its file descriptor</a>. And thanks to this abstraction, you don't care if the underlying implementation fragments the file itself (ex: on a hard drive), you can magically always ask without caring for the gory details to read any arbitrary block or chararacters at any given position.<br /><br />
+Two of the most used methods on files here are seek and write.<br /><br />
+The file descriptor method <b>write</b> is sensitive to the positionning set by <b>seek</b>. Hence, we can write a line, and position ourselves one line below to write the next line in a character.
+<br /><br /><h1>matrices as a view of a row based array</h1>
+<br /><br />When I speak of rows and columns I evocate abstractions that are not related to the framebuffer.<br /><br />
+The coordinates are an abstraction we build for convenience to say I want to write from this line at this column.<br /> And since human beings bug after 2 dimensions we split the last dimnension in a vector of dimension 4 called a pixel. <br />
+<b>get_at</b> function illustrates our use of this trick to position the (invisible) cursor at any given position on the screen expressed for clarity in size of glyphes.
+
+<br />
+We could actually code all this exercice through a <a href="https://www.geeksforgeeks.org/calculating-the-address-of-an-element-in-an-n-dimensional-array/"> 3D view of the framebuffer</a>. I just wouldn't be able to pack the code in less than 100 lines of code and would introduce useless abstractions.<br /><br />
+But if you have doubt on the numerous seek I do and why I mutiply lines and columns value the way I do check the preceding link for an understanding of raw based array nth matricial dimensionnal views.<br /><br />
+<h1>fonts, chars glyphs...</h1><br /><br />
+Here we are gonna take matrices defining the glyphes (what you actually see on screen) by 8x8 = 64 1D array and map them on the screen with <b>put_char</b>. Put char does a little bit of magic by relying on python to do the chararcter to glyph conversion through the dict lookup that expecting strings does a de factor codepoint to glyph conversion without having to pass the codepoint conversion.<br /><br />
+The set of characters to glyphs conversion with their common property is a <b>font</b>.<br /><br />
+<h1>The hidden console</h1>
+<br /><br />
+The console is an abstraction that keeps track of the global states such as : what is the current line we print at. Thus, here, being lazy I use the global variables instead of a singleton named « console » or « term » to keep track of them. But first and foremost, these « abstractions » are just expectations we share in a common mental mode. Like we expect « print » to add a newline at the end of the string and begin the printing at the next line.<br /><br />
+<h1>The to be finished example </h1>
+<br /><br />
+I limited the code to 100 lines so that it's fairly readable. I let as an exercise the following points :
+<ul>
+  <li>encoding the missing glyphes in the font to actually be able to write "hello world!",</li>
+  <li>handling the edge case of reaching the bottom of the screen,</li>
+</ul>
+I want to point out the <i>true</i> python print function is WAY MORE COMPLEX than this terse example and also handle magic conversion from memory objects to their string counterpart (like integers that are converted to their decimal representation), it handles buffering, encoding, and so much more. This is merely a toy to dive into the complexity of the mission at hand.<br />
+
+This example is a part of a <a href="https://github.com/jul/fb/">project to write « hello world » on the framebuffer in numerous languages, bash included.</a><br /><br />
+<h1>Annexe : the code</h1><br /><br />
+<pre>
+
+#!/usr/bin/env python3
+from struct import pack
+from os import SEEK_CUR, lseek as  seek, write
+w,h =map(int, open("/sys/class/graphics/fb0/virtual_size").read().split(","))
+so_pixel = 4
+stride = w * so_pixel
+
+encode = lambda b,g,r,a : pack("4B",b,g,r,a)
+
+font = {
+    "height":8,
+    "width":8,
+    'void' : [ 
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 1, 1, 1, 1, 0, 0,
+        0, 1, 0, 0, 0, 0, 1, 0, 
+        0, 0, 1, 0, 0, 1, 1, 0,
+        0, 0, 0, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 1, 0, 0, 0, 
+       ],
+    "l":[ 
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 0, 1, 1, 1, 1, 0, 0,
+        ],
+    "o": [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 1, 1, 1, 1, 0, 0,
+        0, 1, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 0, 1, 0,
+        0, 1, 0, 0, 0, 0, 1, 0,
+        0, 0, 1, 0, 0, 1, 0, 0,
+        0, 0, 0, 1, 1, 0, 0, 0],
+    "h": [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0,
+        0, 1, 1, 1, 1, 0, 0, 0,
+        0, 1, 0, 0, 1, 0, 0, 0,
+        0, 1, 1, 0, 1, 0, 0, 0,
+        0, 1, 0, 0, 1, 0, 0, 0],
+}
+
+def go_at(fh, x, y): 
+   global stride
+   seek(fh.fileno(),x*so_pixel + y *stride, 0)
+
+def next_line(fh, reminder):
+    seek(fh.fileno(), stride - reminder, SEEK_CUR)
+
+def put_char(fh, x,y, letter):
+    go_at(fh, x, y)
+    black = encode(0,0,0,255)
+    white = encode(255,255,255,255)
+    char = font.get(letter, None) or font["void"]
+    line = ""
+    for col,pixel in enumerate(char):
+        write(fh.fileno(), white if pixel else black)
+        if (col%font["width"]==font["width"]-1):
+            next_line(fh, so_pixel * font["width"])
+COL=0
+LIN=0
+
+OUT = open("/dev/fb0", "bw")
+FD = OUT.fileno()
+
+def newline():
+    global OUT,LIN,COL
+    LIN+=1
+    go_at(OUT, 0, LIN * font["height"])
+
+def print_(line):
+    global OUT, COL, LIN
+    COL=0
+    for c in line:
+        if c == "\n":
+            newline()
+        put_char(OUT,COL * font["width"] , LIN * font['height'], c)
+        COL+=1
+    newline() 
+
+for i in range(30):
+    print_("hello lol")
+
+</pre>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2024 08:51 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="http://beauty-of-imagination.blogspot.com/2024/10/hello-world-part-ii-actually-recoding.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/406/whats-on-django-tv-tonight" class="hover:underline"
+              >#406 What's on Django TV tonight?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include Open Source Pledge, DjangoTV, PEP 735 – Dependency Groups in pyproject.toml, and livereload.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2024 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/406/whats-on-django-tv-tonight"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/hl7-fhir-security.html" class="hover:underline"
+              >HL7 FHIR Security with Basic Auth, OAuth and SSL/TLS</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/hl7-fhir-security.html">HL7 FHIR Security with Basic Auth, OAuth and SSL/TLS</a>
+</h1>
+<div class="article-meta">
+  2024-10-21, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<h2 id="hl7-fhir-security">HL7 FHIR Security</h2>
+<p><strong>Preliminary reading</strong>: <a href="https://zato.io/en/docs/3.2/dev/healthcare/hl7/fhir/index.html">HL7 FHIR Integrations in Python</a></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/fhir-security.png" /></p>
+<p>FHIR servers offer their APIs using REST, which in turn means that they are HTTP servers under the hood. As a result,
+a few common security mechanisms can be employed to secure access to the servers when you invoke them.</p>
+<ul>
+<li>Basic Auth</li>
+<li>OAuth</li>
+<li>SSL/TLS encryption</li>
+</ul>
+<p>When you integrate with a FHIR server, consult with its maintainers what of these, if any, should be used.</p>
+<p>Note that Basic Auth and OAuth, when used over HTTP, are mutually exclusive. The HTTP protocol reserves only one header,
+called Authorization, for the authorization credentials and there is no standard way in the protocol to use more than
+one authorization mechanism.</p>
+<p>On the other hand, the SSL/TLS encryption is independent of the credentials used and can be employed with Basic Auth,
+OAuth, or in scenarios when no authorization header is sent at all.</p>
+<p>This is why, when you create or update a FHIR connection, you can set Basic Auth or OAuth and SSL/TLS options independently,
+as in the screenshot below:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/fhir-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/fhir-form-2.png" /></p>
+<h2 id="basic-auth">Basic Auth</h2>
+<p>Basic Auth is a combination of username and password credentials. They are allocated in advance by the maintainers of a FHIR
+server.</p>
+<p>To use them in your integrations, create a new Basic Auth definition in the Dashboard, set its password, and assign it to an
+existing or new outgoing FHIR connection. No restarts nor reloads are required.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-basic-auth-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-basic-auth-form.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-basic-auth-password.png" /></p>
+<h2 id="oauth">OAuth</h2>
+<p>Authentication with OAuth is built around a notion of short-lived tokens, which are simple strings. Your Zato server has
+credentials, much like a username and password although they are called a client ID and secret, based on which an authentication
+server issues tokens that let Zato prove that in fact it does have the correct credentials and that it is allowed to invoke
+a particular API as it is defined through scopes.</p>
+<p>Scopes can be likened to permissions to access a subset of resources from a FHIR server. When Zato receives a token from
+an authentication server the token is inherently linked to specific scopes within which it can interact with the FHIR server.</p>
+<p>That tokens are short-lived means that they need to be refreshed periodically, e.g. at least once per hour Zato needs to
+ask the authentication server for a new token based on its credentials. This process takes place under the hood and requires
+no configuration on your part.</p>
+<p>To use OAuth in your integrations, create a new OAuth definition in the Dashboard, set its secret, and assign it to an
+existing or new outgoing FHIR connection. No restarts nor reloads are required.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-oauth-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-oauth-form.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/sec-oauth-password.png" /></p>
+<h2 id="ssltls-encryption">SSL/TLS encryption</h2>
+<p>If the FHIR server that a connection points to uses SSL/TLS then a question arises of how to validate the certificate of the
+Certificate Authority (CA) that signed the certificate that the FHIR server uses. There are several options:</p>
+<ul>
+<li>Skip validation - the certificate will not be validated at all and it will be always accepted.</li>
+<li>Default bundle - the certificate will have to belong to one of the publicly recognized CAs. The bundle contains the same
+  certificates that common web browsers do so this option is good if the FHIR server is available in the public Internet,
+  e.g. https://fhir.example.com</li>
+<li>Custom bundle - if the FHIR server's certificate was signed by an internal, non-public CA then the CA's certificate bundle,
+  in the PEM format, can be uploaded through the Dashboard to make it possible to choose it when the FHIR connection is being
+  created or updated.</li>
+</ul>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/tls-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/tls-form.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-fhir-security/tls-ca-field.png" /></p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.2/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a></p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2024 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/hl7-fhir-security.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://sethmlarson.dev/python-and-sigstore?utm_campaign=rss" class="hover:underline"
               >Python and Sigstore</a
             >
@@ -1417,152 +1744,6 @@ In this article we’ll look into the implications of using <code class="languag
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2024/10/14/newsletter-september-bash.html" class="hover:underline"
-              >Newsletter September 2024: Bash Redirects and Reading</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This month I read <a href="https://www.kathleenspracklen.com/zettelkasten-emotion">How to Use a Zettelkasten to Write Stories Packed with
-Emotion</a>. It inspired
-me to write something using that technique. The topic that came to mind was
-Bash redirects. It resulted in the blog post <a href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html">Bash Redirects
-Explained</a>.</p>
-<p>I also started reading <em>How Children Learn</em> by John Holt. He says that children
-are naturally interested in exploring the world. I started thinking about what
-environments kill exploration. I though that fear of doing something wrong will
-discourage exploration. Then I made a parallel to a common practice in software
-development: pull requests. I thought that pull requests discourage experiments
-because changes can only propagate after approval, and the idea behind pull
-requests is to only approve &ldquo;good&rdquo; changes. First of all, the learning
-opportunities of mistakes are gone. Second of all, you might loose interest in
-experimenting because you are afraid of making a mistake. You build a culture
-of discouraging making mistakes. I though that a better approach is to focus on
-making the cost of mistakes small so that we can do lots of them and learn from
-them.</p>
-<p>I also read <a href="https://www.debuggingteams.com/">Debugging Teams</a> by Ben
-Collins-Sussman and Brian Fitzpatrick. They talk about the myth of the genius
-programmer and that all great things are built by teams. I believe that is
-true, but sometimes I have a hard time to acknowledge it because I also enjoy
-working by myself.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 05:11 PM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2024/10/14/newsletter-september-bash.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://chezsoi.org/lucas/blog/fpdf2-latest-news.html" class="hover:underline"
-              >fpdf2 latest news</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div class="markdown"><p>I wrote <a href="tag/fpdf2.html">my last post on <code>fpdf2</code></a> 18 months ago.
-We released <strong>7 more versions</strong> of <code>fpdf2</code> since then!</p>
-<p>This article will present some of the major features introduced since <strong>v2.7.3</strong> to <a href="https://github.com/py-pdf/fpdf2/releases/tag/2.8.1"><strong>v2.8.1</strong></a> of <code>fpdf2</code>:
-click on the buttons below to reveal the various changes brought …</p></div>
-
-<br />&#8212; <a href="https://chezsoi.org/shaarli/shaare/RgIU4w" title="Permalink">Permalink</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 01:47 PM UTC by
-            <a href="https://chezsoi.org/shaarli/?do=atom&searchtags=python+FromPelican" class="link link-hover text-primary"
-              >Lucas Cimon</a
-            >
-          </div>
-          <a
-            href="https://chezsoi.org/lucas/blog/fpdf2-latest-news.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/405/oh-really" class="hover:underline"
-              >#405 Oh Really?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Briefer: Dashboards and notebooks in a single place, Introduction to programming with Python, setup-uv, and HTML for people.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/405/oh-really"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -1574,8 +1755,8 @@ click on the buttons below to reveal the various changes brought …</p></div>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8941</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 8962</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
