@@ -53,6 +53,697 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/482/pre-commit-hooks-for-python-devs" class="hover:underline"
+              >#482: Pre-commit Hooks for Python Devs</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Do you struggle to make sure your code is always correct before you check it in? What about your team members' code? That one person who never wants to run the linter? Tired of dealing with tons of conflicts and spurious git changes? You need git pre-commit hooks. We're lucky to have Stefanie Molin on this episode who has done a bunch of writing and teaching of git hooks.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 24, 2024 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/482/pre-commit-hooks-for-python-devs"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html" class="hover:underline"
+              >A DSL for Peephole Transformation Rules of Integer Operations in the PyPy JIT</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>As is probably apparent from the sequence of blog posts about the topic in the
+last year, I have been thinking about and working on integer optimizations in the JIT
+compiler a lot. This work was mainly motivated by <a class="reference external" href="https://docs.pydrofoil.org/en/latest/">Pydrofoil</a>, where integer
+operations matter a lot more than for your typical Python program.</p>
+<p>In this post I'll describe my most recent change, which is a new small domain
+specific language that I implemented to specify peephole optimizations on
+integer operations in the JIT.
+It uses pattern matching to specify how (sequences of) integer operations
+should be simplified and optimized. The rules are then compiled to
+RPython code that then becomes part of the JIT's optimization passes.</p>
+<p>To make it less likely to introduce incorrect optimizations into the JIT, the
+rules are automatically proven correct with Z3 as part of the build process (for
+a more hands-on intro to how that works you can look at the <a class="reference external" href="https://pypy.org/posts/2024/08/toy-knownbits.html#proving-correctness-of-the-transfer-functions-with-z3">knownbits</a> post).
+In this blog post I want to motivate why I introduced the DSL and give an
+introduction to how it works.</p>
+<section id="motivation">
+<h2>Motivation</h2>
+<p>This summer, after I wrote my <a class="reference external" href="https://www.pypy.org/posts/2024/07/mining-jit-traces-missing-optimizations-z3.html">scripts to mine JIT traces for missed optimization</a>
+opportunities, I started implementing a few of the integer peephole rewrite that
+the script identified. Unfortunately, doing so led to the problem that the way
+we express these rewrites up to now is very imperative and verbose. Here's a
+snippet of RPython code that shows some rewrites for integer multiplication
+(look at the comments to see what the different parts actually do). You don't
+need to understand the code in detail, but basically it's in very imperative
+style and there's quite a lot of boilerplate.</p>
+<div class="code"><pre class="code python"><a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-1" id="rest_code_7d5885c533384778ba70ebd63601716c-1" name="rest_code_7d5885c533384778ba70ebd63601716c-1"></a><span class="k">def</span> <span class="nf">optimize_INT_MUL</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-2" id="rest_code_7d5885c533384778ba70ebd63601716c-2" name="rest_code_7d5885c533384778ba70ebd63601716c-2"></a>    <span class="n">arg0</span> <span class="o">=</span> <span class="n">get_box_replacement</span><span class="p">(</span><span class="n">op</span><span class="o">.</span><span class="n">getarg</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-3" id="rest_code_7d5885c533384778ba70ebd63601716c-3" name="rest_code_7d5885c533384778ba70ebd63601716c-3"></a>    <span class="n">b0</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">getintbound</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-4" id="rest_code_7d5885c533384778ba70ebd63601716c-4" name="rest_code_7d5885c533384778ba70ebd63601716c-4"></a>    <span class="n">arg1</span> <span class="o">=</span> <span class="n">get_box_replacement</span><span class="p">(</span><span class="n">op</span><span class="o">.</span><span class="n">getarg</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-5" id="rest_code_7d5885c533384778ba70ebd63601716c-5" name="rest_code_7d5885c533384778ba70ebd63601716c-5"></a>    <span class="n">b1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">getintbound</span><span class="p">(</span><span class="n">arg1</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-6" id="rest_code_7d5885c533384778ba70ebd63601716c-6" name="rest_code_7d5885c533384778ba70ebd63601716c-6"></a>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-7" id="rest_code_7d5885c533384778ba70ebd63601716c-7" name="rest_code_7d5885c533384778ba70ebd63601716c-7"></a>    <span class="k">if</span> <span class="n">b0</span><span class="o">.</span><span class="n">known_eq_const</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-8" id="rest_code_7d5885c533384778ba70ebd63601716c-8" name="rest_code_7d5885c533384778ba70ebd63601716c-8"></a>        <span class="c1"># 1 * x == x</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-9" id="rest_code_7d5885c533384778ba70ebd63601716c-9" name="rest_code_7d5885c533384778ba70ebd63601716c-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">make_equal_to</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-10" id="rest_code_7d5885c533384778ba70ebd63601716c-10" name="rest_code_7d5885c533384778ba70ebd63601716c-10"></a>    <span class="k">elif</span> <span class="n">b1</span><span class="o">.</span><span class="n">known_eq_const</span><span class="p">(</span><span class="mi">1</span><span class="p">):</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-11" id="rest_code_7d5885c533384778ba70ebd63601716c-11" name="rest_code_7d5885c533384778ba70ebd63601716c-11"></a>        <span class="c1"># x * 1 == x</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-12" id="rest_code_7d5885c533384778ba70ebd63601716c-12" name="rest_code_7d5885c533384778ba70ebd63601716c-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">make_equal_to</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">arg0</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-13" id="rest_code_7d5885c533384778ba70ebd63601716c-13" name="rest_code_7d5885c533384778ba70ebd63601716c-13"></a>    <span class="k">elif</span> <span class="n">b0</span><span class="o">.</span><span class="n">known_eq_const</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="ow">or</span> <span class="n">b1</span><span class="o">.</span><span class="n">known_eq_const</span><span class="p">(</span><span class="mi">0</span><span class="p">):</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-14" id="rest_code_7d5885c533384778ba70ebd63601716c-14" name="rest_code_7d5885c533384778ba70ebd63601716c-14"></a>        <span class="c1"># 0 * x == x * 0 == 0</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-15" id="rest_code_7d5885c533384778ba70ebd63601716c-15" name="rest_code_7d5885c533384778ba70ebd63601716c-15"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">make_constant_int</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-16" id="rest_code_7d5885c533384778ba70ebd63601716c-16" name="rest_code_7d5885c533384778ba70ebd63601716c-16"></a>    <span class="k">else</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-17" id="rest_code_7d5885c533384778ba70ebd63601716c-17" name="rest_code_7d5885c533384778ba70ebd63601716c-17"></a>        <span class="k">for</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">rhs</span> <span class="ow">in</span> <span class="p">[(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">),</span> <span class="p">(</span><span class="n">arg1</span><span class="p">,</span> <span class="n">arg0</span><span class="p">)]:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-18" id="rest_code_7d5885c533384778ba70ebd63601716c-18" name="rest_code_7d5885c533384778ba70ebd63601716c-18"></a>            <span class="n">lh_info</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">getintbound</span><span class="p">(</span><span class="n">lhs</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-19" id="rest_code_7d5885c533384778ba70ebd63601716c-19" name="rest_code_7d5885c533384778ba70ebd63601716c-19"></a>            <span class="k">if</span> <span class="n">lh_info</span><span class="o">.</span><span class="n">is_constant</span><span class="p">():</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-20" id="rest_code_7d5885c533384778ba70ebd63601716c-20" name="rest_code_7d5885c533384778ba70ebd63601716c-20"></a>                <span class="n">x</span> <span class="o">=</span> <span class="n">lh_info</span><span class="o">.</span><span class="n">get_constant_int</span><span class="p">()</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-21" id="rest_code_7d5885c533384778ba70ebd63601716c-21" name="rest_code_7d5885c533384778ba70ebd63601716c-21"></a>                <span class="k">if</span> <span class="n">x</span> <span class="o">&amp;</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-22" id="rest_code_7d5885c533384778ba70ebd63601716c-22" name="rest_code_7d5885c533384778ba70ebd63601716c-22"></a>                    <span class="c1"># x * (2 ** c) == x &lt;&lt; c</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-23" id="rest_code_7d5885c533384778ba70ebd63601716c-23" name="rest_code_7d5885c533384778ba70ebd63601716c-23"></a>                    <span class="n">new_rhs</span> <span class="o">=</span> <span class="n">ConstInt</span><span class="p">(</span><span class="n">highest_bit</span><span class="p">(</span><span class="n">lh_info</span><span class="o">.</span><span class="n">get_constant_int</span><span class="p">()))</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-24" id="rest_code_7d5885c533384778ba70ebd63601716c-24" name="rest_code_7d5885c533384778ba70ebd63601716c-24"></a>                    <span class="n">op</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">replace_op_with</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">rop</span><span class="o">.</span><span class="n">INT_LSHIFT</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">rhs</span><span class="p">,</span> <span class="n">new_rhs</span><span class="p">])</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-25" id="rest_code_7d5885c533384778ba70ebd63601716c-25" name="rest_code_7d5885c533384778ba70ebd63601716c-25"></a>                    <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">send_extra_operation</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-26" id="rest_code_7d5885c533384778ba70ebd63601716c-26" name="rest_code_7d5885c533384778ba70ebd63601716c-26"></a>                    <span class="k">return</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-27" id="rest_code_7d5885c533384778ba70ebd63601716c-27" name="rest_code_7d5885c533384778ba70ebd63601716c-27"></a>                <span class="k">elif</span> <span class="n">x</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-28" id="rest_code_7d5885c533384778ba70ebd63601716c-28" name="rest_code_7d5885c533384778ba70ebd63601716c-28"></a>                    <span class="c1"># x * -1 == -x</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-29" id="rest_code_7d5885c533384778ba70ebd63601716c-29" name="rest_code_7d5885c533384778ba70ebd63601716c-29"></a>                    <span class="n">op</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">replace_op_with</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="n">rop</span><span class="o">.</span><span class="n">INT_NEG</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">rhs</span><span class="p">])</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-30" id="rest_code_7d5885c533384778ba70ebd63601716c-30" name="rest_code_7d5885c533384778ba70ebd63601716c-30"></a>                    <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">send_extra_operation</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-31" id="rest_code_7d5885c533384778ba70ebd63601716c-31" name="rest_code_7d5885c533384778ba70ebd63601716c-31"></a>                    <span class="k">return</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-32" id="rest_code_7d5885c533384778ba70ebd63601716c-32" name="rest_code_7d5885c533384778ba70ebd63601716c-32"></a>            <span class="k">else</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-33" id="rest_code_7d5885c533384778ba70ebd63601716c-33" name="rest_code_7d5885c533384778ba70ebd63601716c-33"></a>                <span class="c1"># x * (1 &lt;&lt; y) == x &lt;&lt; y</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-34" id="rest_code_7d5885c533384778ba70ebd63601716c-34" name="rest_code_7d5885c533384778ba70ebd63601716c-34"></a>                <span class="n">shiftop</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">as_operation</span><span class="p">(</span><span class="n">get_box_replacement</span><span class="p">(</span><span class="n">lhs</span><span class="p">),</span> <span class="n">rop</span><span class="o">.</span><span class="n">INT_LSHIFT</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-35" id="rest_code_7d5885c533384778ba70ebd63601716c-35" name="rest_code_7d5885c533384778ba70ebd63601716c-35"></a>                <span class="k">if</span> <span class="n">shiftop</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-36" id="rest_code_7d5885c533384778ba70ebd63601716c-36" name="rest_code_7d5885c533384778ba70ebd63601716c-36"></a>                    <span class="k">continue</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-37" id="rest_code_7d5885c533384778ba70ebd63601716c-37" name="rest_code_7d5885c533384778ba70ebd63601716c-37"></a>                <span class="k">if</span> <span class="ow">not</span> <span class="n">shiftop</span><span class="o">.</span><span class="n">getarg</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">is_constant</span><span class="p">()</span> <span class="ow">or</span> <span class="n">shiftop</span><span class="o">.</span><span class="n">getarg</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">getint</span><span class="p">()</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-38" id="rest_code_7d5885c533384778ba70ebd63601716c-38" name="rest_code_7d5885c533384778ba70ebd63601716c-38"></a>                    <span class="k">continue</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-39" id="rest_code_7d5885c533384778ba70ebd63601716c-39" name="rest_code_7d5885c533384778ba70ebd63601716c-39"></a>                <span class="n">shiftvar</span> <span class="o">=</span> <span class="n">get_box_replacement</span><span class="p">(</span><span class="n">shiftop</span><span class="o">.</span><span class="n">getarg</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-40" id="rest_code_7d5885c533384778ba70ebd63601716c-40" name="rest_code_7d5885c533384778ba70ebd63601716c-40"></a>                <span class="n">shiftbound</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">getintbound</span><span class="p">(</span><span class="n">shiftvar</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-41" id="rest_code_7d5885c533384778ba70ebd63601716c-41" name="rest_code_7d5885c533384778ba70ebd63601716c-41"></a>                <span class="k">if</span> <span class="n">shiftbound</span><span class="o">.</span><span class="n">known_nonnegative</span><span class="p">()</span> <span class="ow">and</span> <span class="n">shiftbound</span><span class="o">.</span><span class="n">known_lt_const</span><span class="p">(</span><span class="n">LONG_BIT</span><span class="p">):</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-42" id="rest_code_7d5885c533384778ba70ebd63601716c-42" name="rest_code_7d5885c533384778ba70ebd63601716c-42"></a>                    <span class="n">op</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">replace_op_with</span><span class="p">(</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-43" id="rest_code_7d5885c533384778ba70ebd63601716c-43" name="rest_code_7d5885c533384778ba70ebd63601716c-43"></a>                            <span class="n">op</span><span class="p">,</span> <span class="n">rop</span><span class="o">.</span><span class="n">INT_LSHIFT</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">rhs</span><span class="p">,</span> <span class="n">shiftvar</span><span class="p">])</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-44" id="rest_code_7d5885c533384778ba70ebd63601716c-44" name="rest_code_7d5885c533384778ba70ebd63601716c-44"></a>                    <span class="bp">self</span><span class="o">.</span><span class="n">optimizer</span><span class="o">.</span><span class="n">send_extra_operation</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-45" id="rest_code_7d5885c533384778ba70ebd63601716c-45" name="rest_code_7d5885c533384778ba70ebd63601716c-45"></a>                    <span class="k">return</span>
+<a href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html#rest_code_7d5885c533384778ba70ebd63601716c-46" id="rest_code_7d5885c533384778ba70ebd63601716c-46" name="rest_code_7d5885c533384778ba70ebd63601716c-46"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">emit</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+</pre></div>
+<p>Adding more rules to these functions is very tedious and gets super confusing
+when the functions get bigger. In addition I am always worried about making
+mistakes when writing this kind of code, and there is no feedback at all about
+which of these rules are actually applied a lot in real programs.</p>
+<p>Therefore I decided to write a small domain specific language with the goal of
+expressing these rules in a more declarative way. In the rest of the post I'll
+describe the DSL (most of that description is adapted from the <a class="reference external" href="https://rpython.readthedocs.io/en/latest/jit/ruleopt.html">documentation</a>
+about it that I wrote).</p>
+</section>
+<section id="the-peephole-rule-dsl">
+<h2>The Peephole Rule DSL</h2>
+<section id="simple-transformation-rules">
+<h3>Simple transformation rules</h3>
+<p>The rules in the DSL specify how integer operation can be transformed into
+cheaper other integer operations. A rule always consists of a name, a pattern,
+and a target. Here's a simple rule:</p>
+<pre class="literal-block">add_zero: int_add(x, 0)
+    =&gt; x</pre>
+<p>The name of the rule is <code class="docutils literal">add_zero</code>. It matches operations in the trace of the
+form <code class="docutils literal">int_add(x, 0)</code>, where <code class="docutils literal">x</code> will match anything and <code class="docutils literal">0</code> will match only the
+constant zero. After the <code class="docutils literal">=&gt;</code> arrow is the target of the rewrite, i.e. what the
+operation is rewritten to, in this case <code class="docutils literal">x</code>.</p>
+<p>The rule language has a list of which of the operations are commutative, so <code class="docutils literal">add_zero</code>
+will also optimize <code class="docutils literal">int_add(0, x)</code> to <code class="docutils literal">x</code>.</p>
+<p>Variables in the pattern can repeat:</p>
+<pre class="literal-block">sub_x_x: int_sub(x, x)
+    =&gt; 0</pre>
+<p>This rule matches against <code class="docutils literal">int_sub</code> operations where the two arguments are the
+same (either the same box, or the same constant).</p>
+<p>Here's a rule with a more complicated pattern:</p>
+<pre class="literal-block">sub_add: int_sub(int_add(x, y), y)
+    =&gt; x</pre>
+<p>This pattern matches <code class="docutils literal">int_sub</code> operations, where the first argument was
+produced by an <code class="docutils literal">int_add</code> operation. In addition, one of the arguments of the
+addition has to be the same as the second argument of the subtraction.</p>
+<p>The constants <code class="docutils literal">MININT</code>, <code class="docutils literal">MAXINT</code> and <code class="docutils literal">LONG_BIT</code> (which is either 32 or 64,
+depending on which platform the JIT is built for) can be used in rules, they
+behave like writing numbers but allow bit-width-independent formulations:</p>
+<pre class="literal-block">is_true_and_minint: int_is_true(int_and(x, MININT))
+    =&gt; int_lt(x, 0)</pre>
+<p>It is also possible to have a pattern where some arguments needs to be a
+constant, without specifying which constant. Those patterns look like this:</p>
+<pre class="literal-block">sub_add_consts: int_sub(int_add(x, C1), C2) # incomplete
+    # more goes here
+    =&gt; int_sub(x, C)</pre>
+<p>Variables in the pattern that start with a <code class="docutils literal">C</code> match against constants only.
+However, in this current form the rule is incomplete, because the variable <code class="docutils literal">C</code>
+that is being used in the target operation is not defined anywhere. We will see
+how to compute it in the next section.</p>
+</section>
+<section id="computing-constants-and-other-intermediate-results">
+<h3>Computing constants and other intermediate results</h3>
+<p>Sometimes it is necessary to compute intermediate results that are used in the
+target operation. To do that, there can be extra assignments between the rule head
+and the rule target.:</p>
+<pre class="literal-block">sub_add_consts: int_sub(int_add(x, C1), C2) # incomplete
+    C = C1 + C2
+    =&gt; int_sub(x, C)</pre>
+<p>The right hand side of such an assignment is a subset of Python syntax,
+supporting arithmetic using <code class="docutils literal">+</code>, <code class="docutils literal">-</code>, <code class="docutils literal">*</code>, and certain helper functions.
+However, the syntax allows you to be explicit about unsignedness for some
+operations. E.g. <code class="docutils literal">&gt;&gt;u</code> exists for unsigned right shifts (and I plan to add
+<code class="docutils literal">&gt;u</code>, <code class="docutils literal">&gt;=u</code>, <code class="docutils literal">&lt;u</code>, <code class="docutils literal">&lt;=u</code> for comparisons).</p>
+<p>Here's an example of a rule that uses <code class="docutils literal">&gt;&gt;u</code>:</p>
+<pre class="literal-block">urshift_lshift_x_c_c: uint_rshift(int_lshift(x, C), C)
+    mask = (-1 &lt;&lt; C) &gt;&gt;u C
+    =&gt; int_and(x, mask)</pre>
+</section>
+<section id="checks">
+<h3>Checks</h3>
+<p>Some rewrites are only true under certain conditions. For example,
+<code class="docutils literal">int_eq(x, 1)</code> can be rewritten to <code class="docutils literal">x</code>, if <code class="docutils literal">x</code> is known to store a boolean value. This can
+be expressed with <em>checks</em>:</p>
+<pre class="literal-block">eq_one: int_eq(x, 1)
+    check x.is_bool()
+    =&gt; x</pre>
+<p>A check is followed by a boolean expression. The variables from the pattern can
+be used as <code class="docutils literal">IntBound</code> instances in checks (and also in assignments) to find out
+what the abstract interpretation of the JIT knows about the value of a trace variable
+(<code class="docutils literal">IntBound</code> is the name of the abstract domain that the JIT uses for integers,
+despite the fact that it also stores <a class="reference external" href="https://www.pypy.org/posts/2024/08/toy-knownbits.html">knownbits</a> information nowadays).</p>
+<p>Here's another example:</p>
+<pre class="literal-block">mul_lshift: int_mul(x, int_lshift(1, y))
+    check y.known_ge_const(0) and y.known_le_const(LONG_BIT)
+    =&gt; int_lshift(x, y)</pre>
+<p>It expresses that <code class="docutils literal">x * (1 &lt;&lt; y)</code> can be rewritten to <code class="docutils literal">x &lt;&lt; y</code> but checks that
+<code class="docutils literal">y</code> is known to be between <code class="docutils literal">0</code> and <code class="docutils literal">LONG_BIT</code>.</p>
+<p>Checks and assignments can be repeated and combined with each other:</p>
+<pre class="literal-block">mul_pow2_const: int_mul(x, C)
+    check C &gt; 0 and C &amp; (C - 1) == 0
+    shift = highest_bit(C)
+    =&gt; int_lshift(x, shift)</pre>
+<p>In addition to calling methods on <code class="docutils literal">IntBound</code> instances, it's also possible to
+access their attributes, like in this rule:</p>
+<pre class="literal-block">and_x_c_in_range: int_and(x, C)
+    check x.lower &gt;= 0 and x.upper &lt;= C &amp; ~(C + 1)
+    =&gt; x</pre>
+</section>
+<section id="rule-ordering-and-liveness">
+<h3>Rule Ordering and Liveness</h3>
+<p>The generated optimizer code will give preference to applying rules that
+produce a constant or a variable as a rewrite result. Only if none of those
+match do rules that produce new result operations get applied. For example, the
+rules <code class="docutils literal">sub_x_x</code> and <code class="docutils literal">sub_add</code> are tried before trying <code class="docutils literal">sub_add_consts</code>,
+because the former two rules optimize to a constant and a variable
+respectively, while the latter produces a new operation as the result.</p>
+<p>The rule <code class="docutils literal">sub_add_consts</code> has a possible problem, which is that if the
+intermediate result of the <code class="docutils literal">int_add</code> operation in the rule head is used by
+some other operations, then the <code class="docutils literal">sub_add_consts</code> rule does not actually
+reduce the number of operations (and might actually make things slightly worse
+due to increased register pressure). However, currently it would be extremely
+hard to take that kind of information into account in the optimization pass of
+the JIT, so we optimistically apply the rules anyway.</p>
+</section>
+<section id="checking-rule-coverage">
+<h3>Checking rule coverage</h3>
+<p>Every rewrite rule should have at least one unit test where it triggers. To
+ensure this, the <a class="reference external" href="https://github.com/pypy/pypy/blob/d92d0bfd38318ede1cbaadadafd77da69d431fad/rpython/jit/metainterp/optimizeopt/test/test_optimizeintbound.py">unit test file that mainly checks integer optimizations</a> in the
+JIT has an assert at the end of a test run, that every rule fired at least once.</p>
+</section>
+<section id="printing-rule-statistics">
+<h3>Printing rule statistics</h3>
+<p>The JIT can print statistics about which rule fired how often in the
+<code class="docutils literal"><span class="pre">jit-intbounds-stats</span></code> logging category, using the <a class="reference external" href="https://rpython.readthedocs.io/en/latest/logging.html">PYPYLOG</a> mechanism. For
+example, to print the category to stdout at the end of program execution, run
+PyPy like this:</p>
+<pre class="literal-block">PYPYLOG=jit-intbounds-stats:- pypy ...</pre>
+<p>The output of that will look something like this:</p>
+<pre class="literal-block">int_add
+    add_reassoc_consts 2514
+    add_zero 107008
+int_sub
+    sub_zero 31519
+    sub_from_zero 523
+    sub_x_x 3153
+    sub_add_consts 159
+    sub_add 55
+    sub_sub_x_c_c 1752
+    sub_sub_c_x_c 0
+    sub_xor_x_y_y 0
+    sub_or_x_y_y 0
+int_mul
+    mul_zero 0
+    mul_one 110
+    mul_minus_one 0
+    mul_pow2_const 1456
+    mul_lshift 0
+...</pre>
+</section>
+<section id="termination-and-confluence">
+<h3>Termination and Confluence</h3>
+<p>Right now there are unfortunately no checks that the rules actually rewrite
+operations towards "simpler" forms. There is no cost model, and also nothing
+that prevents you from writing a rule like this:</p>
+<pre class="literal-block">neg_complication: int_neg(x) # leads to infinite rewrites
+    =&gt; int_mul(-1, x)</pre>
+<p>Doing this would lead to endless rewrites if there is also another rule that
+turns multiplication with -1 into negation.</p>
+<p>There is also no checking for <a class="reference external" href="https://en.wikipedia.org/wiki/Confluence_(abstract_rewriting)">confluence</a> (yet?), i.e. the property that all
+rewrites starting from the same input trace always lead to the same output
+trace, no matter in which order the rules are applied.</p>
+</section>
+<section id="proofs">
+<h3>Proofs</h3>
+<p>It is very easy to write a peephole rule that is not correct in all corner
+cases. Therefore all the rules are proven correct with Z3 before compiled into
+actual JIT code, by default. When the proof fails, a (hopefully minimal)
+counterexample is printed. The counterexample consists of values for all the
+inputs that fulfil the checks, values for the intermediate expressions, and
+then two <em>different</em> values for the source and the target operations.</p>
+<p>E.g. if we try to add the incorrect rule:</p>
+<pre class="literal-block">mul_is_add: int_mul(a, b)
+    =&gt; int_add(a, b)</pre>
+<p>We get the following counterexample as output:</p>
+<pre class="literal-block">Could not prove correctness of rule 'mul_is_add'
+in line 1
+counterexample given by Z3:
+counterexample values:
+a: 0
+b: 1
+operation int_mul(a, b) with Z3 formula a*b
+has counterexample result vale: 0
+BUT
+target expression: int_add(a, b) with Z3 formula a + b
+has counterexample value: 1</pre>
+<p>If we add conditions, they are taken into account and the counterexample will
+fulfil the conditions:</p>
+<pre class="literal-block">mul_is_add: int_mul(a, b)
+    check a.known_gt_const(1) and b.known_gt_const(2)
+    =&gt; int_add(a, b)</pre>
+<p>This leads to the following counterexample:</p>
+<pre class="literal-block">Could not prove correctness of rule 'mul_is_add'
+in line 46
+counterexample given by Z3:
+counterexample values:
+a: 2
+b: 3
+operation int_mul(a, b) with Z3 formula a*b
+has counterexample result vale: 6
+BUT
+target expression: int_add(a, b) with Z3 formula a + b
+has counterexample value: 5</pre>
+<p>Some <code class="docutils literal">IntBound</code> methods cannot be used in Z3 proofs because their <a class="reference external" href="https://www.pypy.org/posts/2024/08/toy-knownbits.html#cases-where-this-style-of-z3-proof-doesnt-work).">control
+flow is too complex</a>. If that is the case, they can have Z3-equivalent
+formulations defined (in every case this is done, it's a potential proof hole if
+the Z3 friendly reformulation and the real implementation differ from each
+other, therefore extra care is required to make very sure they are equivalent).</p>
+<p>It's possible to skip the proof of individual rules entirely by adding
+<code class="docutils literal">SORRY_Z3</code> to its body (but we should try not to do that too often):</p>
+<pre class="literal-block">eq_different_knownbits: int_eq(x, y)
+    SORRY_Z3
+    check x.known_ne(y)
+    =&gt; 0</pre>
+</section>
+<section id="checking-for-satisfiability">
+<h3>Checking for satisfiability</h3>
+<p>In addition to checking whether the rule yields a correct optimization, we also
+check whether the rule can ever apply. This ensures that there are <em>some</em>
+runtime values that would fulfil all the checks in a rule. Here's an example of
+a rule violating this:</p>
+<pre class="literal-block">never_applies: int_is_true(x)
+    check x.known_lt_const(0) and x.known_gt_const(0) # impossible condition, always False
+    =&gt; x</pre>
+<p>Right now the error messages if this goes wrong are not completely easy to
+understand. I hope to be able to improve this later:</p>
+<pre class="literal-block">Rule 'never_applies' cannot ever apply
+in line 1
+Z3 did not manage to find values for variables x such that the following condition becomes True:
+And(x &lt;= x_upper,
+    x_lower &lt;= x,
+    If(x_upper &lt; 0, x_lower &gt; 0, x_upper &lt; 0))</pre>
+</section>
+<section id="implementation-notes">
+<h3>Implementation Notes</h3>
+<p>The implementation of the DSL is done in a relatively ad-hoc manner. It is
+parsed using <a class="reference external" href="https://rply.readthedocs.io/">rply</a>, there's a small type checker that tries to find common
+problems in how the rules are written. Z3 is used via the Python API, like in
+the previous blog posts that are using it. The
+pattern matching RPython code is generated using an approach inspired by Luc
+Maranget's paper <a class="reference external" href="http://moscova.inria.fr/~maranget/papers/ml05e-maranget.pdf">Compiling Pattern Matching to Good Decision Trees</a>. See
+<a class="reference external" href="https://compiler.club/compiling-pattern-matching/">this blog post</a> for an approachable introduction.</p>
+</section>
+</section>
+<section id="conclusion">
+<h2>Conclusion</h2>
+<p>Now that I've described the DSL, here are the rules that are equivalent to the
+imperative code in the motivation section:</p>
+<pre class="literal-block">mul_zero: int_mul(x, 0)
+    =&gt; 0
+
+mul_one: int_mul(x, 1)
+    =&gt; x
+
+mul_minus_one: int_mul(x, -1)
+    =&gt; int_neg(x)
+
+mul_pow2_const: int_mul(x, C)
+    check C &gt; 0 and C &amp; (C - 1) == 0
+    shift = highest_bit(C)
+    =&gt; int_lshift(x, shift)
+
+mul_lshift: int_mul(x, int_lshift(1, y))
+    check y.known_ge_const(0) and y.known_le_const(LONG_BIT)
+    =&gt; int_lshift(x, y)</pre>
+<p>The current status of the DSL is that it got merged to PyPy's main branch. I
+rewrote a part of the integer rewrites <a class="reference external" href="https://github.com/pypy/pypy/blob/d92d0bfd38318ede1cbaadadafd77da69d431fad/rpython/jit/metainterp/ruleopt/real.rules">into the DSL</a>, but some are still in the
+old imperative style (mostly for complicated reasons, the easily ported ones are
+all done). Since I've only been porting optimizations that had existed prior to
+the existence of the DSL, performance numbers of benchmarks didn't change.</p>
+<p>There are a number of features that are still missing and some possible
+extensions that I plan to work on in the future:</p>
+<ul class="simple">
+<li><p>All the integer operations that the DSL handles so far are the variants that
+do not check for overflow (or where overflow was proven to be impossible to
+happen). In regular Python code the overflow-checking variants <cite>int_add_ovf</cite>
+etc are much more common, but the DSL doesn't support them yet. I plan to fix
+this, but don't completely understand how the correctness proofs for them
+should be done correctly.</p></li>
+<li><p>A related problem is that I don't understand what it means for a rewrite to be
+correct if some of the operations are only defined for a subset of the input
+values. E.g. division isn't defined if the divisor is zero. In theory, a
+division operation in the trace should always be preceded by a check that the
+divisor isn't zero. But sometimes other optimization move the check around and
+the connection to the division gets lost or muddled. What optimizations can we
+still safely perform on the division? There's lots of prior work on this
+question, but I still don't understand what the correct approach in our
+context would be.</p></li>
+<li><p>Ordering comparisons like <code class="docutils literal">int_lt</code>, <code class="docutils literal">int_le</code> and their unsigned variants are
+not ported to the DSL yet. Comparisons are an area where the JIT is not super
+good yet at optimizing away operations. This is a pretty big topic and I've
+started a project with Nico Rittinghaus to try to improve the situation a bit
+more generally.</p></li>
+<li><p>A more advanced direction of work would be to implement a simplified form of
+<a class="reference external" href="https://egraphs-good.github.io/">e-graphs</a> (or <a class="reference external" href="https://vimeo.com/843540328">ae-graphs</a>). The JIT has like half of an e-graph data
+structure already, and we probably can't afford a full one in terms of compile
+time costs, but maybe we can have two thirds or something?</p></li>
+</ul>
+</section>
+<section id="acknowledgements">
+<h2>Acknowledgements</h2>
+<p>Thank you to <a class="reference external" href="https://bernsteinbear.com/">Max Bernstein</a> and <a class="reference external" href="https://martinfriedrichberger.net/">Martin Berger</a> for super helpful feedback on
+drafts of the post!</p>
+</section>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 23, 2024 03:00 PM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2024/10/jit-peephole-dsl.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonshow.com/p/48-writing-about-python-with-david" class="hover:underline"
+              >48 - Writing About Python with David Mertz</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode of the Python Show Podcast, David Mertz is our guest.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 23, 2024 02:24 PM UTC by
+            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
+              >The Python Show</a
+            >
+          </div>
+          <a
+            href="https://www.pythonshow.com/p/48-writing-about-python-with-david"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/understanding-global-interpreter-lock-gil/" class="hover:underline"
+              >Understanding Python's Global Interpreter Lock (GIL)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Python's Global Interpreter Lock or GIL, in simple words, is a mutex (or a lock) that allows only one thread to hold the control of the Python interpreter at any one time. In this video course you'll learn how the GIL affects the performance of your Python programs.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2024 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/understanding-global-interpreter-lock-gil/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://beauty-of-imagination.blogspot.com/2024/10/tune-your-guitar-with-python.html" class="hover:underline"
+              >Tune your guitar with python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Today's exercice is just about turning a <a href="https://python-sounddevice.readthedocs.io/en/0.5.1/examples.html#real-time-text-mode-spectrogram">very nice example of the python soundevice module</a> into something <i>that works for me©</i> to help me tune my bass.<br /><br />
+Long story short, I suck at tuning my instrument and just lost my tuner...<br /><br />
+This will require the <a href="https://pypi.org/project/sounddevice/">python module soundevice</a> and <a href="https://matplotlib.org/">matplotlib</a>.<br /><br />
+So in order to tune my guitar I indeed need a spectrosonogram that displays the frequencies captured in real time by an audio device with an output readable enough I can actually know if I am nearing a legit frequency called a Note. <br /><br />
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjzcQykURdUDlWFfr3OioXv8EWNLVw6mmdR6kQGa2q6tY3arYmlmBrZsvU_9A0G_thz3FVOEnw1tQiwcUODR3u29TypUqRGBwR3-7pQmWY2hSBdqywLFuFiafN9vD6f3np4c-U9n69EjQ4Inl15z-C-0IJU0S4GZq3ketB3vqqNjr_sksyT6jV77x3xNSI/s1600/tune.png" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjzcQykURdUDlWFfr3OioXv8EWNLVw6mmdR6kQGa2q6tY3arYmlmBrZsvU_9A0G_thz3FVOEnw1tQiwcUODR3u29TypUqRGBwR3-7pQmWY2hSBdqywLFuFiafN9vD6f3np4c-U9n69EjQ4Inl15z-C-0IJU0S4GZq3ketB3vqqNjr_sksyT6jV77x3xNSI/s1600/tune.png" /></a></div>
+
+The frequencies for the notes are pretty arbitrary and I chose to only show the frequency for E, A , D, G, B since I have a 5 strings bass.<br />
+I chose the frequency between 100 and 2000 knowing that anyway any frequency below will trigger harmonics and above will trigger reasonance in the right frequency frame.<br /><br />
+Plotting a spectrogram is done by tweaking the eponym matplotlib grapher with values chosen to fit my need and show me a laser thin beam around the right frequency.
+<pre>
+#!/usr/bin/env python3
+"""Show a text-mode spectrogram using live microphone data."""
+import argparse
+import math
+import shutil
+import matplotlib.pyplot as plt
+from multiprocessing import Process, Queue
+import matplotlib.animation as animation
+
+import numpy as np
+import sounddevice as sd
+
+usage_line = ' press enter to quit,'
+
+def int_or_str(text):
+    """Helper function for argument parsing."""
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+try:
+    columns, _ = shutil.get_terminal_size()
+except AttributeError:
+    columns = 80
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument(
+    '-l', '--list-devices', action='store_true',
+    help='show list of audio devices and exit')
+args, remaining = parser.parse_known_args()
+if args.list_devices:
+    print(sd.query_devices())
+    parser.exit(0)
+parser = argparse.ArgumentParser(
+    description=__doc__ + '\n\nSupported keys:' + usage_line,
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    parents=[parser])
+parser.add_argument(
+    '-b', '--block-duration', type=float, metavar='DURATION', default=50,
+    help='block size (default %(default)s milliseconds)')
+parser.add_argument(
+    '-d', '--device', type=int_or_str,
+    help='input device (numeric ID or substring)')
+parser.add_argument(
+    '-g', '--gain', type=float, default=10,
+    help='initial gain factor (default %(default)s)')
+parser.add_argument(
+    '-r', '--range', type=float, nargs=2,
+    metavar=('LOW', 'HIGH'), default=[50, 4000],
+    help='frequency range (default %(default)s Hz)')
+args = parser.parse_args(remaining)
+low, high = args.range
+if high &lt;= low:
+    parser.error('HIGH must be greater than LOW')
+q = Queue()
+try:
+    samplerate = sd.query_devices(args.device, 'input')['default_samplerate']
+    def plot(q):
+        global samplerate
+        fig, ( ax,axs) = plt.subplots(nrows=2)
+        plt.ioff()
+        def animate(i,q):
+            data = q.get()
+            ax.clear()
+            axs.clear()
+            axs.plot(data)
+            ax.set_yticks([
+                41.20,	82.41,	164.8,	329.6,	659.3,  # E
+                55.00, 	110.0, 	220.0, 	440.0, 	880.0,  # A
+                73.42,	146.8,	293.7,	587.3,          # D
+                49.00, 	98.00, 	196.0, 	392.0, 	784.0,  #G 
+                61.74, 	123.5, 	246.9, 	493.9, 	987.8 ])#B 
+            ax.specgram(data[:,-1],mode="magnitude", Fs=samplerate*2, scale="linear",NFFT=9002)
+            ax.set_ylim(150,1000)
+        ani = animation.FuncAnimation(fig, animate,fargs=(q,), interval=500)
+        plt.show()
+
+    plotrt = Process(target=plot, args=(q,))
+    plotrt.start()
+
+    def callback(indata, frames, time, status):
+        if any(indata):
+            q.put(indata)
+        else:
+            print('no input')
+
+    with sd.InputStream(device=args.device, channels=1, callback=callback,
+                        blocksize=int(samplerate * args.block_duration /50 ),
+                        samplerate=samplerate) as sound:
+        while True:
+            response = input()
+            if response in ('', 'q', 'Q'):
+                break
+            for ch in response:
+                if ch == '+':
+                    args.gain *= 2
+                elif ch == '-':
+                    args.gain /= 2
+                else:
+                    print('\x1b[31;40m', usage_line.center(args.columns, '#'),
+                          '\x1b[0m', sep='')
+                    break
+except KeyboardInterrupt:
+    parser.exit('Interrupted by user')
+except Exception as e:
+    parser.exit(type(e).__name__ + ': ' + str(e))
+</pre>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2024 09:49 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="https://beauty-of-imagination.blogspot.com/2024/10/tune-your-guitar-with-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.pythonanywhere.com/217/" class="hover:underline"
               >Improving PythonAnywhere's File Storage System</a
             >
@@ -787,6 +1478,46 @@ More broadly, the semantics of a single-value enum are the same as a singleton. 
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/videos/epic-debugging-hilarious-outcome-building-saas-205/" class="hover:underline"
+              >Epic Debugging, Hilarious Outcome - Building SaaS #205</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, I dug into an issue with sign up. What I thought was going to be a minor issue to fix turned into a massively intense debugging session. We ended up going very deep with the django-allauth package to understand what was going on.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 18, 2024 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/videos/epic-debugging-hilarious-outcome-building-saas-205/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://beauty-of-imagination.blogspot.com/2024/10/3d-ploter-in-python-tk-with-matplotlib.html" class="hover:underline"
               >3D ploter in  python-tk with matplotlib.</a
             >
@@ -1257,564 +1988,6 @@ meetup</a> that introduced the widely used <a href="https://github.com/tokio-rs/
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/uv-python-production/" class="hover:underline"
-              >Should you use uv's managed Python in production?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The <a href="https://docs.astral.sh/uv/"><code class="language-plaintext highlighter-rouge">uv</code></a> Python packaging tool provides fast replacements for tools like <code class="language-plaintext highlighter-rouge">pip</code>, and a variety of developer experience improvements.
-Unlike most Python packaging tools, <code class="language-plaintext highlighter-rouge">uv</code> doesn’t require Python to be installed to use it.
-Building on that ease of installation, one of its interesting and useful features is the ability to install Python for you.</p>
-
-<p>As a developer, this is great: if you need a version of Python you don’t have installed, <code class="language-plaintext highlighter-rouge">uv</code> can install it for you (transparently, by default!).
-Imagine for some reason you need the long-defunct Python 3.7.
-You can easily install it like so:</p>
-
-<div class="language-shell-session highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="gp">$</span><span class="w"> </span>python3.7
-<span class="go">python3.7: command not found
-</span><span class="gp">$</span><span class="w"> </span>uv run <span class="nt">--python</span><span class="o">=</span>3.7 python
-<span class="go">... uv downloaded 3.7 for me ...
-Python 3.7.9 (default, Aug 23 2020, 00:57:53)
-[Clang 10.0.1 ] on linux
-Type "help", "copyright", "credits" or "license" for more information.
-</span><span class="gp">&gt;</span><span class="o">&gt;&gt;</span> 
-</code></pre></div></div>
-
-<p>The next time you use <code class="language-plaintext highlighter-rouge">uv</code> to run Python 3.7 it will use the cached download.</p>
-
-<p>The ability to install Python with <code class="language-plaintext highlighter-rouge">uv</code> adds interesting possibilities for production packaging.
-For example, you can use an Ubuntu 24.04 <a href="https://pythonspeed.com/articles/base-image-python-docker-images/">base Docker image</a>, download <code class="language-plaintext highlighter-rouge">uv</code>, and rely on <code class="language-plaintext highlighter-rouge">uv</code> to trivially install any Python version.
-Which is to say, you won’t be limited to the versions Ubuntu packages for you.</p>
-
-<p>But do you want to use this particular version of Python in production?
-In this article we’ll look into the implications of using <code class="language-plaintext highlighter-rouge">uv</code>’s Python, and in particular:</p>
-
-<ul>
-  <li>Where this version of Python comes from.</li>
-  <li>Portability and compatibility: Can you use this Python on various versions of Linux? Will it run your software correctly?</li>
-  <li>Performance: Are you losing speed by using this version?</li>
-  <li>Security: Will you get security updates if you use this approach?</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/uv-python-production/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 15, 2024 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/uv-python-production/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2024/10/14/newsletter-september-bash.html" class="hover:underline"
-              >Newsletter September 2024: Bash Redirects and Reading</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This month I read <a href="https://www.kathleenspracklen.com/zettelkasten-emotion">How to Use a Zettelkasten to Write Stories Packed with
-Emotion</a>. It inspired
-me to write something using that technique. The topic that came to mind was
-Bash redirects. It resulted in the blog post <a href="https://rickardlindberg.me/2024/09/04/bash-redirects-explained.html">Bash Redirects
-Explained</a>.</p>
-<p>I also started reading <em>How Children Learn</em> by John Holt. He says that children
-are naturally interested in exploring the world. I started thinking about what
-environments kill exploration. I though that fear of doing something wrong will
-discourage exploration. Then I made a parallel to a common practice in software
-development: pull requests. I thought that pull requests discourage experiments
-because changes can only propagate after approval, and the idea behind pull
-requests is to only approve &ldquo;good&rdquo; changes. First of all, the learning
-opportunities of mistakes are gone. Second of all, you might loose interest in
-experimenting because you are afraid of making a mistake. You build a culture
-of discouraging making mistakes. I though that a better approach is to focus on
-making the cost of mistakes small so that we can do lots of them and learn from
-them.</p>
-<p>I also read <a href="https://www.debuggingteams.com/">Debugging Teams</a> by Ben
-Collins-Sussman and Brian Fitzpatrick. They talk about the myth of the genius
-programmer and that all great things are built by teams. I believe that is
-true, but sometimes I have a hard time to acknowledge it because I also enjoy
-working by myself.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 05:11 PM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2024/10/14/newsletter-september-bash.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://chezsoi.org/lucas/blog/fpdf2-latest-news.html" class="hover:underline"
-              >fpdf2 latest news</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div class="markdown"><p>I wrote <a href="tag/fpdf2.html">my last post on <code>fpdf2</code></a> 18 months ago.
-We released <strong>7 more versions</strong> of <code>fpdf2</code> since then!</p>
-<p>This article will present some of the major features introduced since <strong>v2.7.3</strong> to <a href="https://github.com/py-pdf/fpdf2/releases/tag/2.8.1"><strong>v2.8.1</strong></a> of <code>fpdf2</code>:
-click on the buttons below to reveal the various changes brought …</p></div>
-
-<br />&#8212; <a href="https://chezsoi.org/shaarli/shaare/RgIU4w" title="Permalink">Permalink</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 01:47 PM UTC by
-            <a href="https://chezsoi.org/shaarli/?do=atom&searchtags=python+FromPelican" class="link link-hover text-primary"
-              >Lucas Cimon</a
-            >
-          </div>
-          <a
-            href="https://chezsoi.org/lucas/blog/fpdf2-latest-news.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/405/oh-really" class="hover:underline"
-              >#405 Oh Really?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Briefer: Dashboards and notebooks in a single place, Introduction to programming with Python, setup-uv, and HTML for people.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/405/oh-really"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/what-is-an-api-gateway.html" class="hover:underline"
-              >What is an API gateway?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/what-is-an-api-gateway.html">What is an API gateway?</a>
-</h1>
-<div class="article-meta">
-  2024-10-14, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p><a href="https://zato.io/en/blog/what-is-an-api-gateway.html"><img src="https://upcdn.io/kW15bqq/raw/root/en/docs/3.2/gfx/banner/banner-api-gateway-1200-01-full.webp" /></a></p>
-<p>In this article, we are going to use
-Zato
-in its capacity as a multi-protocol Python API gateway - we will integrate a few popular technologies, accepting requests sent
-over protocols commonly used in frontend systems, enriching and passing them to backend systems and returning
-responses to the API clients using their preferred data formats. But first, let's define what an API gateway is.</p>
-<h2 id="clearing-up-the-terminology">Clearing up the terminology</h2>
-<p>Although we will be focusing on complex API integrations later on today, to understand the term API
-gateway we first need to give proper consideration to the very term <strong>gateway</strong>.</p>
-<p>What comes to mind when we hear the word "gateway", and what is correct etymologically indeed, is an opening
-in an otherwise impermissible barrier. We use a gateway to access that which is in other circumstances
-inaccessible for various reasons. We use it to leave such a place too.</p>
-<p>In fact, both "gate" and the verb "to go" stem from the same basic root and
-that, again, brings to mind a notion of passing through space specifically set aside for the purpose of granting
-access to what normally would be unavailable. And once more, when we depart from such an area, we use a gateway too.</p>
-<p>From the perspective of its true intended purpose, a gateway letting everyone in and out as they are would
-amount to little more than a hole in a wall. In other words, a gateway without a gate is not the whole story.</p>
-<p>Yes, there is undoubtedly an immense aesthetic gratification to be drawn from being close to marvels of architecture
-that virtually all medieval or Renaissance gates and gateways represent, but we know that, nowadays,
-they do not function to the fullest of their capacities as originally intended.</p>
-<p>Rather, we can intuitively say that a gateway is in service as a means of entry and departure if it lets its operators achieve
-the following, though not necessarily all at the same time, depending on one's particular needs:</p>
-<ul>
-<li>Telling arrivals where they are, including projection of might and self-confidence</li>
-<li>Confirming that arrivals are who they say they are</li>
-<li>Checking if their port of origin is friendly or not</li>
-<li>Checking if they are allowed to enter that which is protected</li>
-<li>Directing them to specific areas behind the gateway</li>
-<li>Keeping a long term and short term log of arrivals</li>
-<li>Answering potential questions right by the gate, if answers are known to gatekeepers</li>
-<li>Cooperating with translators and coordinators that let arrivals make use of what is required during their stay</li>
-</ul>
-<p>We can now recognize that a gateway operates on the border of what is internal and external and in itself, it is
-a relatively narrow, though possibly deep, piece of an architecture. It is narrow because it is only through
-the gateway that entry is possible but it may be deeper or not, depending on how much it should offer to arrivals.</p>
-<p>We also keep in mind that there may very well be more than a single gateway in existence at a time, each potentially
-dedicated to different purposes, some overlapping, some not.</p>
-<p>Finally, it is crucial to remember that gateways are structural, architectural elements - what a gateway should
-do and how it should do it is a decision left to architects.</p>
-<p>With all of that in mind, it is easy to transfer our understanding of what a physical gateway is into
-what an API one should be.</p>
-<ul>
-<li>API clients should be presented with clear information that they are entering a restricted area</li>
-<li>Source IP addresses or their equivalents should be checked and requests rejected if an IP address
-  or equivalent information is not among the allowed ones</li>
-<li>Usernames, passwords, API keys and similar representations of what they are should be checked by the gateway</li>
-<li>Permissions to access backend systems should be checked seeing as not every API client should have access to everything</li>
-<li>Requests should be dispatched to relevant backend systems</li>
-<li>Requests and responses should be logged in various formats, some meant to be read by programs and applications,
-  some by human operators</li>
-<li>If applicable, responses can be served from the gateway's cache, taking the burden off the shoulders of the backend systems</li>
-<li>Requests and responses can be transformed or enriched which potentially means contacting multiple backend systems
-  before an API caller receives a response</li>
-</ul>
-<p>We can now define an API gateway as an element of a systems architecture that is certainly related to security,
-permissions and granting or rejecting access to backend systems, applications and data sources. On top of it,
-it may provide audit, data transformation and caching services. The definition will be always fluid to a degree,
-depending on an architect's vision, but this is what can be expected from it nevertheless.</p>
-<p>Having defined what an API gateway is, let's create one in Zato and Python.</p>
-<h2 id="clients-and-backend-systems">Clients and backend systems</h2>
-<p>In this article, we will integrate two frontend systems and one backend application. Frontend ones will use REST
-and WebSockets whereas the backend one will use AMQP. Zato will act as an API gateway between them all.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/arch.png" /></p>
-<p>Not granting frontend API clients direct access to backend systems is usually a good idea because the dynamics
-involved in creation of systems on either side are typically very different. But they still need to communicate
-and hence the usage of Zato as an API gateway.</p>
-<h2 id="python-code">Python code</h2>
-<p>First, let's show the Python code that is needed to integrate the systems in our architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">APIGateway</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Dispatches requests to backend systems, enriching them along the way.</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.gateway'</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>        <span class="c1"># Enrich incoming request with metadata ..</span>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_receiver'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_correlation_id'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cid</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">payload</span><span class="p">[</span><span class="s1">'_date_received'</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">utcnow</span><span class="p">()</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>        <span class="c1"># .. AMQP configuration ..</span>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>        <span class="n">outconn</span> <span class="o">=</span> <span class="s1">'My Backend'</span>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="n">exchange</span> <span class="o">=</span> <span class="s1">'/incoming'</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>        <span class="n">routing_key</span> <span class="o">=</span> <span class="s1">'api'</span>
-<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>
-<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a>        <span class="c1"># .. publish the message to an AMQP broker ..</span>
-<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">amqp</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">outconn</span><span class="p">,</span> <span class="n">exchange</span><span class="p">,</span> <span class="n">routing_key</span><span class="p">)</span>
-<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>
-<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>        <span class="c1"># .. and return a response to our API client.</span>
-<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'result'</span><span class="p">:</span> <span class="s1">'OK, data accepted'</span><span class="p">}</span>
-</code></pre></div>
-<p>There are a couple of points of interest:</p>
-<ul>
-<li>
-<p>The gateway service enriches incoming requests with metadata but it could very well enrich it with
-  business data too, e.g. it could communicate with yet another system to obtain required information
-  and only then pass the request to the final backend system(s)</p>
-</li>
-<li>
-<p>In its current form we send all the information to AMQP brokers only but we could just as well
-  send it to other systems, possibly modifying the requests along the way</p>
-</li>
-<li>
-<p>The code is very abstract and all of its current configuration could be moved
-  to a config file, Redis or another data source to make it even more high-level</p>
-</li>
-<li>
-<p>Security configuration and other details are not declared directly in the body of the gateway
-  service but they need to exist somewhere - we will describe it in the next section</p>
-</li>
-</ul>
-<h2 id="configuration">Configuration</h2>
-<p>In Zato, API clients access the platform's services using channels - let's create a channel
-for REST and WebSockets then.</p>
-<p>First REST:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-rest-menu.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-rest-form.png" /></p>
-<p>Now WebSockets:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/channel-wsx-form.png" /></p>
-<p>We create a new outgoing AMQP connection in the same way:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-gateway/outconn-amqp-form.png" /></p>
-<h2 id="using-the-api-gateway">Using the API gateway</h2>
-<p>At this point, the gateway is ready - you can invoke it from REST or WebSockets and any JSON
-data it receives will be processed by the gateway service, the AMQP broker will receive it,
-and API clients will have replies from the gateway as JSON responses.</p>
-<p>Let's use curl to invoke the REST channel with JSON payload on input:</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>  $ curl http://api:&lt;password-here&gt;@localhost:11223/api/v1/user ; echo
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>  curl --data-binary @request.json http://localhost:11223/api/v1/user ; echo
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>  {&quot;result&quot;: &quot;OK, data accepted&quot;}
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a>  $
-</code></pre></div>
-<p>Taken together, the channels and the service allowed us to achieve this:</p>
-<ul>
-<li>Multiple API clients can access the backend AMQP systems, each client using its own preferred technology</li>
-<li>Client credentials are checked on input, before the service starts to process requests (authentication)</li>
-<li>It is possible to assign RBAC roles to clients, in this way ensuring they have access
-  only to selected parts of the backend API (authorization)</li>
-<li>Message logs keep track of data incoming and outgoing</li>
-<li>Responses from channels can be cached which lessens the burden put on the shoulders of backend systems</li>
-<li>Services accepting requests are free to modify, enrich and transform the data in any way required by
-  business logic. E.g., in the code above we only add metadata but we could as well reach out
-  to other applications before requests are sent to the intended recipients.</li>
-</ul>
-<p>We can take it further. For instance, the gateway service is currently completely oblivious to the
-actual content of the requests.</p>
-<p>But, since we just have a regular Python dict in self.request.payload,
-we can with no effort modify the service to dispatch requests to different backend systems, depending
-on what the request contains or possibly what other backend systems decide the destination should be.</p>
-<p>Such additional logic is specific to each environment or project which is why it is not shown here,
-and this is also why we end the article at this point, but the central part of it all is already done,
-the rest is only a matter of customization and plugging in more channels for API clients or
-outgoing connections for backend systems.</p>
-<p>Finally, it is perfectly fine to split access to systems among multiple gateways - each may handle
-requests from selected technologies on the one hand but on the other hand, each may use different
-caching or rate-limiting policies. If there is more than one, it may be easier to configure
-such details on a per-gateway basis.</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.2/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a></p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/what-is-an-api-gateway.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/" class="hover:underline"
-              >Django and the Python 3.13 REPL</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Your new Django project uses Python 3.13.</p>
-
-<p>You&rsquo;re really looking forward to using the new REPL&hellip; but <code>python manage.py shell</code> just shows the same old Python REPL.
-What gives?</p>
-
-<p>Well, Django&rsquo;s management shell uses Python&rsquo;s <a href="https://docs.python.org/3/library/code.html">code</a> module to launch a custom REPL, but the <code>code</code> module doesn&rsquo;t (<a href="https://github.com/python/cpython/issues/119512">yet</a>) use the new Python REPL.</p>
-
-<p>So you&rsquo;re out of luck&hellip; or are you?</p>
-
-<h2>How stable do you need your <code>shell</code> command to be?</h2>
-
-<p>The new Python REPL&rsquo;s code lives in a <a href="https://github.com/python/cpython/tree/v3.13.0/Lib/_pyrepl">_pyrepl</a> package.
-Surely there must be some way to launch the new REPL using that <code>_pyrepl</code> package!</p>
-
-<p>First, note the <code>_</code> before that package name.
-It&rsquo;s <code>_pyrepl</code>, not <code>pyrepl</code>.</p>
-
-<p>Any solution that relies on this module may break in future Python releases.</p>
-
-<p>So&hellip; should we give up on looking for a solution, if we can&rsquo;t get a &ldquo;stable&rdquo; one?</p>
-
-<p>I don&rsquo;t think so.</p>
-
-<p>My <code>shell</code> command doesn&rsquo;t usually <em>need</em> to be stable in more than one version of Python at a time.
-So I&rsquo;m fine with a solution that <em>attempts</em> to use the new REPL and then falls back to the old REPL if it fails.</p>
-
-<h2>A working solution</h2>
-
-<p>So, let&rsquo;s look at a working solution.</p>
-
-<p>Stick <a href="https://pym.dev/p/2zqeq/">this code</a> in a <code>management/commands/shell.py</code> file within one of your Django apps:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-</pre></td><td class="code"><pre><code class="python"><span class="line"><span class="sd">&quot;&quot;&quot;Python 3.13 REPL support using the unsupported _pyrepl module.&quot;&quot;&quot;</span>
-</span><span class="line"><span class="kn">from</span> <span class="nn">django.core.management.commands.shell</span> <span class="kn">import</span> <span class="n">Command</span> <span class="k">as</span> <span class="n">BaseShellCommand</span>
-</span><span class="line">
-</span><span class="line">
-</span><span class="line"><span class="k">class</span> <span class="nc">Command</span><span class="p">(</span><span class="n">BaseShellCommand</span><span class="p">):</span>
-</span><span class="line">    <span class="n">shells</span> <span class="o">=</span> <span class="p">[</span><span class="s">&quot;ipython&quot;</span><span class="p">,</span> <span class="s">&quot;bpython&quot;</span><span class="p">,</span> <span class="s">&quot;pyrepl&quot;</span><span class="p">,</span> <span class="s">&quot;python&quot;</span><span class="p">]</span>
-</span><span class="line">
-</span><span class="line">    <span class="k">def</span> <span class="nf">pyrepl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">):</span>
-</span><span class="line">        <span class="kn">from</span> <span class="nn">_pyrepl.main</span> <span class="kn">import</span> <span class="n">interactive_console</span>
-</span><span class="line">        <span class="n">interactive_console</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>How it works</h2>
-
-<p>Django&rsquo;s <code>shell</code> command has made it very simple to add support for your favorite REPL of choice.</p>
-
-<p><a href="https://github.com/django/django/blob/5.1.2/django/core/management/commands/shell.py">The code for the <code>shell</code> command</a> loops through the <code>shells</code> list and attempts to run a method with that name on its own class.
-If an <code>ImportError</code> is raised then it attempts the next command, stopping once no exception occurs.</p>
-
-<p>Our new command will try to use IPython and bpython if they&rsquo;re installed and then it will try the new Python 3.13 REPL followed by the old Python REPL.</p>
-
-<p>If Python 3.14 breaks our import by moving the <code>interactive_console</code> function, then an <code>ImportError</code> will be raised, causing us to fall back to the old REPL after we upgrade to Python 3.14 one day.
-If instead, the <code>interactive_console</code> function&rsquo;s usage changes (maybe it will require arguments) then our <code>shell</code> command will completely break and we&rsquo;ll need to manually fix it when we upgrade to Python 3.14.</p>
-
-<h2>What&rsquo;s so great about the new REPL?</h2>
-
-<p>If you&rsquo;re already using IPython or BPython as your REPL and you&rsquo;re enjoying them, I would stick with them.</p>
-
-<p>Third-party libraries move faster than Python itself and they&rsquo;re often more feature-rich.
-IPython has about 20 years worth of feature development and it has features that the built-in Python REPL will likely never have.</p>
-
-<p>If you&rsquo;re using the default Python REPL though, this new REPL is a <em>huge</em> upgrade.
-I&rsquo;ve been using it as my default REPL since May and I <em>love</em> it.
-See <a href="https://pym.dev/python-313-whats-new/">my screencast on Python 3.13</a> for my favorite features in the new REPL.</p>
-
-<p><strong>P.S. for Python Morsels users</strong>: if you want to try using that <code>code</code> module, check out the (fairly advanced) <a href="https://www.pythonmorsels.com/exercises/3efdd9e172a346d08679ec39419ed822/?level=advanced">replr</a> or (even more advanced) <a href="https://www.pythonmorsels.com/exercises/5800cdcbbc5b4936b3e253dc15050480/?level=advanced">replsync</a> exercises.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 04:03 AM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1826,12 +1999,12 @@ See <a href="https://pym.dev/python-313-whats-new/">my screencast on Python 3.13
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8718</a></li>
-    <li><a>Unique Feeds: 426</a></li>
+    <li><a>Total Entries: 9064</a></li>
+    <li><a>Unique Feeds: 430</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (486)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (412)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (222)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (210)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (486)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (412)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (317)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (222)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
