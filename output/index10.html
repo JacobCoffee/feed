@@ -53,6 +53,180 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://beauty-of-imagination.blogspot.com/2024/10/simpler-than-pysimplegui-and-python.html" class="hover:underline"
+              >Simpler than PySimpleGUI and python tkinter: talking  directly to tcl/tk</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Well, the PySimpleGUI <a href="https://discuss.python.org/t/pysimplegui-now-requires-a-paid-license-opinions/48790/7">rug pulling of its licence</a> reminded me how much dependencies are not a good thing.<br /><br />
+
+Even though <a href="https://pypi.org/project/FreeSimpleGUI">FreeSimpleGUI</a> is a good approach to simpler tk/tcl binding in python : <b>we can do better</b>, especially if your linux distro split the python package and you don't have access to tkinter. I am watching you debian, splitting ALL packages and breaking them including ... tcl from tk (what a crime).
+
+<br /><br />
+Under debian this stunt requires you to install tk : <pre>apt install tk8.6</pre><br /><br />
+How hard is it when tcl/tk is installed to do GUI programming in tk <b>without</b> tkinter?
+<br /><br />
+Well, it's fairly easy, first and foremost coders are coders, they code in whatever language. If you do code in one language you can't do docker, simple sysadmin tasks (shell), compile C extensions (make syntax) or web applications (HTML + javascript). Hence, learning more than one language is part of doing python applications.<br /><br />
+
+How hard is coding in <a href="https://tkdocs.com/tutorial/">tcl/tk</a> natively?<br /><br />
+Fairly easy: its difficulty is a little above lua, and way below perl thanks to the absence of references.<br /><br />
+What value tcl have ?<br /><br />
+It's still used in domain specific field such as VLSI (Very Large Scale Integration of electronic component).<br /><br />
+
+So here is the plan : we are gonna do an application that do the math in python which is perfect for expressing complex math in more readable way than tcl and push all the GUI to the tk interpreter (albeit <b>wish</b>).<br /><br />
+
+We are gonna make a simple wall clock ... and all tcl commands are injected to tcl through the <b>puts</b> function.<br />
+
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgQ9dU9XFaxP_v23ASwPlwKDCLjzSe2svH3r1p3PstPtHXMJhQJ_01v5hYeV7NoLjbAdHoZ3-Th9ovsyeaDZadTEe2KsCpawPzA01OOCUBHToztk0AhPvcn0P_84ZNKnmRY0wXhPmC-zM0fJkAtL_LTuSx17D7RXpq_I2uauIO4SLn1YB0UWifhXuYwlfc/s1600/clock.png" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgQ9dU9XFaxP_v23ASwPlwKDCLjzSe2svH3r1p3PstPtHXMJhQJ_01v5hYeV7NoLjbAdHoZ3-Th9ovsyeaDZadTEe2KsCpawPzA01OOCUBHToztk0AhPvcn0P_84ZNKnmRY0wXhPmC-zM0fJkAtL_LTuSx17D7RXpq_I2uauIO4SLn1YB0UWifhXuYwlfc/s1600/clock.png" /></a></div>
+
+<pre>
+#!/usr/bin/env python
+from subprocess import Popen, PIPE
+from time import sleep, time, localtime
+
+# let's talk to tk/tcl directly through p.stdin
+p = Popen(['wish'], stdin=PIPE)
+
+def puts(s):
+    for l in s.split("\n"):
+        p.stdin.write((l + "\n").encode())
+        p.stdin.flush()
+
+WIDTH=HEIGHT=400
+
+puts(f"""
+canvas .c -width {WIDTH} -height {HEIGHT} -bg white
+pack .c
+. configure -background "white"
+""")
+
+# Constant are CAPitalized in python by convention
+from cmath import  pi as PI, e as E
+ORIG=complex(WIDTH/2, HEIGHT/2)
+
+# correcting python notations j => I  
+I = complex("j")
+rad_per_sec = 2.0 * PI /60.0
+rad_per_min = rad_per_sec / 60
+rad_per_hour = rad_per_min / 12
+
+origin_vector_hand = WIDTH/2 *  I
+
+size_of_sec_hand = .9
+size_of_min_hand = .8
+size_of_hour_hand = .65
+
+rot_sec = lambda sec : -E ** (I * sec * rad_per_sec )
+rot_min = lambda min : -E ** (I *  min * rad_per_min )
+rot_hour = lambda hour : -E ** (I * hour * rad_per_hour )
+
+to_real = lambda c1,c2 : "%f %f %f %f" % (c1.real,c1.imag,c2.real, c2.imag)
+for n in range(60):
+    direction= origin_vector_hand * rot_sec(n)
+    start=.9 if n%5 else .85
+    puts(f".c create line {to_real(ORIG+start*direction,ORIG+.95*direction)}")
+    sleep(.1)
+
+diff_offset_in_sec = (time() % (24*3600)) - \
+    localtime()[3]*3600 -localtime()[4] * 60.0 \
+    - localtime()[5] 
+
+while True:
+    t = time()
+    s= t%60
+    m = m_in_sec = t%(60 * 60)
+    h = h_in_sec = (t- diff_offset_in_sec)%(24*60*60)
+    puts(".c delete second")
+    puts(".c delete minute")
+    puts(".c delete hour")
+    c0=ORIG+ -.1 * origin_vector_hand * rot_sec(s)
+    c1=ORIG+ size_of_sec_hand * origin_vector_hand * rot_sec(s)
+    puts( f".c create line {to_real(c0,c1)} -tag second -fill blue -smooth true")
+    c1=ORIG+size_of_min_hand * origin_vector_hand * rot_min(m)
+    puts(f".c create line {to_real(ORIG, c1)} -tag minute -fill green -smooth true")
+    c1=ORIG+size_of_hour_hand * origin_vector_hand * rot_hour(h)
+    puts(f".c create line {to_real(ORIG,c1)} -tag hour -fill red -smooth true")
+    sleep(.1)
+
+</pre>
+
+
+Next time as a bonus, I'm gonna do something tkinter cannot do: bidirectional communications (REP/REQ pattern).
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 05, 2024 07:48 AM UTC by
+            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Julien Tayon</a
+            >
+          </div>
+          <a
+            href="https://beauty-of-imagination.blogspot.com/2024/10/simpler-than-pysimplegui-and-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-october-2024-release/" class="hover:underline"
+              >Python in Visual Studio Code – October 2024 Release</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The October 2024 release of the Python and Jupyter extensions for Visual Studio Code are now available. This month's updates include Python test coverage support and a default Python problem matcher. Keep reading to learn more!</p>
+<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-october-2024-release/">Python in Visual Studio Code &#8211; October 2024 Release</a> appeared first on <a href="https://devblogs.microsoft.com/python">Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 04, 2024 02:21 PM UTC by
+            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
+              >Python Engineering at Microsoft</a
+            >
+          </div>
+          <a
+            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-october-2024-release/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.pythonanywhere.com/216/" class="hover:underline"
               >Serving UTF-8 static files? Headers to the rescue (an epic tutorial)!</a
             >
@@ -1989,86 +2163,6 @@ We’ll both get faster results, compounded by any multi-core processing, and re
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://labs.quansight.org/blog/bokeh-a11y-testing-internship" class="hover:underline"
-              >Testing Bokeh's Accessibility: A Web Developer's Experience with a Python Data Library</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Lessons learned during my three-month internship in 2024 at Quansight on adding accessibility testing to Bokeh.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 30, 2024 12:00 AM UTC by
-            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
-              >Quansight Labs Blog</a
-            >
-          </div>
-          <a
-            href="https://labs.quansight.org/blog/bokeh-a11y-testing-internship"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://labs.quansight.org/blog/numpy-quaddtype-blog" class="hover:underline"
-              >Numpy QuadDType: Quadruple Precision for Everyone</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Introducing the new data-type for Numpy providing cross-platform support of quadruple precision.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 30, 2024 12:00 AM UTC by
-            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
-              >Quansight Labs Blog</a
-            >
-          </div>
-          <a
-            href="https://labs.quansight.org/blog/numpy-quaddtype-blog"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -2080,12 +2174,12 @@ We’ll both get faster results, compounded by any multi-core processing, and re
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8877</a></li>
-    <li><a>Unique Feeds: 428</a></li>
+    <li><a>Total Entries: 9048</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (486)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (412)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (317)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Anywhere (210)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (486)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (412)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (317)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (222)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
