@@ -53,6 +53,139 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/imap-oauth2-microsoft365.html" class="hover:underline"
+              >IMAP and OAuth2 Integrations with Microsoft 365</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/imap-oauth2-microsoft365.html">IMAP and OAuth2 Integrations with Microsoft 365</a>
+</h1>
+<div class="article-meta">
+  2024-11-19, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365.jpg" /></p>
+<h3 id="overview">Overview</h3>
+<p>This is the first in a series of articles about automation of and integrations with Microsoft 365 cloud products
+using Python and Zato.</p>
+<p>We start off with IMAP automation by showing how to
+create a scheduled Python service that periodically pulls latest emails from Outlook using OAuth2-based connections.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365-menu.png" />
+<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365-form.png" /></p>
+<h2 id="imap-and-oauth2">IMAP and OAuth2</h2>
+<p>Microsoft 365 requires for all IMAP connections to use OAuth2. This can be challenging to configure
+in server-side automation and orchestration processes so Zato offers an easy way that lets you read and send emails
+without a need for getting into low-level OAuth2 details.</p>
+<p>Consider a common orchestration scenario - a business partner sends automated emails with attachments that
+need to be parsed, some information needs to be extracted and processed accordingly.</p>
+<p>Before OAuth2, an automation process would receive from Azure administrators a dedicated IMAP account with a username
+and password.</p>
+<p>Now, however, in addition to creating an IMAP account, administrators will need to create and configure a few more
+resources that the orchestration service will use. Note that the password to the IMAP account will never be used.</p>
+<p>Administrators need to:</p>
+<ul>
+<li>Register an Azure client app representing your service that uses IMAP</li>
+<li>Grant this app a couple of Microsoft Graph application permissions:</li>
+<li>Mail.ReadWrite</li>
+<li>Mail.Send</li>
+</ul>
+<p>Next, administrators need to give you a few pieces of information about the app:</p>
+<ul>
+<li>Application (client) ID</li>
+<li>Tenant (directory) ID</li>
+<li>Client secret</li>
+</ul>
+<p>Additionally, you still need to receive the IMAP username (an e-mail address). It is just that you do not need its
+corresponding password.</p>
+<h2 id="in-dashboard">In Dashboard</h2>
+<p>The first step is to create a new connection in your Zato Dashboard - this will establish an OAuth2-using connection
+that Zato will manage and your Python code will not have to do anything else,
+all the underlying OAuth2 tokens will keep refreshing as needed, the platform will take care of everything.</p>
+<p>Having received the configuration details from Azure administrators, you can open your Zato Dashboard and navigate
+to IMAP connections:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365-imap-menu.png" /></p>
+<p>Fill out the form as below, choosing "Microsoft 365" as the server type. The other type, "Generic IMAP" is used for
+the classical case of IMAP with a username and password:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365-imap-create-form.png" /></p>
+<p>Change the secret and click Ping to confirm that the connection is configured correctly:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/ms365-imap-secret-ping.png" /></p>
+<h2 id="in-python">In Python</h2>
+<p>Use the code below to receive emails. Note that it merely needs to refer to a connection definition by its
+name and there is no need for any usage of OAuth2 here:</p>
+<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
+<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
+<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
+<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
+<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
+<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">MyService</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
+<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a>
+<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>
+<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>        <span class="c1"># Connect to a Microsoft 365 IMAP connection by its name ..</span>
+<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">imap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'My Automation'</span><span class="p">)</span><span class="o">.</span><span class="n">conn</span>
+<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>
+<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>        <span class="c1"># .. get all messages matching filter criteria (&quot;unread&quot; by default)..</span>
+<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="k">for</span> <span class="n">msg_id</span><span class="p">,</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>
+<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>            <span class="c1"># .. and access each of them.</span>
+<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+</code></pre></div>
+<p>This is everything that is needed for integrations with IMAP using Microsoft 365 although we can still go further.
+For instance, to create a scheduled job to periodically invoke the service, go to the Scheduler job
+in Dashboard:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/imap-scheduler-menu.png" /></p>
+<p>In this case, we decide to have a job that runs once per hour:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-imap/imap-scheduler-form.png" /></p>
+<p>As expected, clicking OK will suffice for the job to start in background. It is as simple as that.</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/docs/3.2/tutorial/01.html">API integration tutorial</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.2/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
+<br />
+➤ Visit the <a href="https://support.zato.io/en/">support center</a> for more articles and FAQ</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 19, 2024 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/imap-oauth2-microsoft365.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonmorsels.com/pathlib-module/" class="hover:underline"
               >Python's pathlib module</a
             >
@@ -2591,107 +2724,6 @@ Use GitLab (deploy) environments as an additional security&nbsp;measure.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.egenix.com/company/news/eGenix-PyRun-2.6.0-GA.html" class="hover:underline"
-              >eGenix PyRun - One file Python Runtime 2.6.0 GA</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2>Introduction</h2>
-<p><strong>eGenix PyRun</strong><a class="egenix-tm" href="/company/legal/trademarks.html">™</a>
- is our open source, one file, no installation version of Python, making
- the distribution of a Python interpreter to run Python based scripts 
-and applications to Unix based systems simple and efficient.</p>
-
-
-<p>eGenix PyRun's executable <b>only needs 4-6MB </b><b>on disk</b>, but still supports most Python applications and scripts.
-</p>
-
-<p>Compared to a regular Python installation of typically 100MB on disk,
- eGenix PyRun is ideal for applications and scripts that need to be 
-distributed to containers, VMs, clusters, client installations, customers or end-users.</p>
-
-
-<p style="font-weight: bold;">It makes "installing" Python on a Unix based system as simple as copying a single file.</p>
-
-<p>eGenix has been using eGenix PyRun as run-time for the Linux version of <a href="/products/python/mxODBCConnect/">mxODBC Connect Server</a> 
-product since 2008 with great success and decided to make it available as a 
-stand-alone open-source product.
-</p>
-
-
-
-We provide the source archive to build your own <a href="https://github.com/eGenix/egenix-pyrun"><b>eGenix PyRun on Github</b></a>,
- as well as a few binary distributions to get you started on Linux 
-x86_64. In the future, we will set up automated builds for several other
- platforms.<p>Please see the product page for more details:
-
-
-</p>
-<p>&nbsp;&nbsp;&nbsp; <a href="/products/python/PyRun/" style="font-weight: bold;">&gt;&gt;&gt; eGenix PyRun - One file Python Runtime</a></p>
-
-
-
-<h2>News</h2>
-<p>This major release of <a href="/products/python/PyRun">eGenix PyRun</a> comes with the following enhancements:</p>
-<h3>Enhancements / Changes
-
-</h3>
-
-<ul>
-<li>Added support for <b>Python 3.12</b></li>
-<li style="margin-top: 0.25em;">Added support for LTO release builds</li>
-<li style="margin-top: 0.25em;">Added dev build targets for development; these don't use PGO and thus build faster</li>
-</ul>
-For a complete list of changes, please see the <b><a href="/products/python/PyRun/changelog.html">eGenix PyRun Changelog</a></b>.
-
-
-
-<h2>Downloads</h2>
-<p>Please visit the <a href="/products/python/PyRun">eGenix PyRun</a> product page for  downloads, instructions on installation and documentation of the product. <br />
-</p>
-<h2>Support</h2>
-
-<p>Commercial support for this product is available directly from eGenix.com. <br />
-  <br />
- Please see the <a href="/services/support/">support section of our website</a> for details.</p>
-<h2>More Information</h2>
-<p>For more information on eGenix PyRun, licensing and download instructions, please write to <a href="mailto:sales@egenix.com">sales@egenix.com</a>.</p>
-<p>Enjoy !</p>
-<p><em> Marc-Andre Lemburg, eGenix.com</em></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 13, 2024 09:00 AM UTC by
-            <a href="http://www.egenix.com/company/news/rss2" class="link link-hover text-primary"
-              >eGenix.com</a
-            >
-          </div>
-          <a
-            href="https://www.egenix.com/company/news/eGenix-PyRun-2.6.0-GA.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2703,8 +2735,8 @@ For a complete list of changes, please see the <b><a href="/products/python/PyRu
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9036</a></li>
-    <li><a>Unique Feeds: 426</a></li>
+    <li><a>Total Entries: 8963</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
