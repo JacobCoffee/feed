@@ -53,124 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/" class="hover:underline"
-              >Django and the Python 3.13 REPL</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Your new Django project uses Python 3.13.</p>
-
-<p>You&rsquo;re really looking forward to using the new REPL&hellip; but <code>python manage.py shell</code> just shows the same old Python REPL.
-What gives?</p>
-
-<p>Well, Django&rsquo;s management shell uses Python&rsquo;s <a href="https://docs.python.org/3/library/code.html">code</a> module to launch a custom REPL, but the <code>code</code> module doesn&rsquo;t (<a href="https://github.com/python/cpython/issues/119512">yet</a>) use the new Python REPL.</p>
-
-<p>So you&rsquo;re out of luck&hellip; or are you?</p>
-
-<h2>How stable do you need your <code>shell</code> command to be?</h2>
-
-<p>The new Python REPL&rsquo;s code lives in a <a href="https://github.com/python/cpython/tree/v3.13.0/Lib/_pyrepl">_pyrepl</a> package.
-Surely there must be some way to launch the new REPL using that <code>_pyrepl</code> package!</p>
-
-<p>First, note the <code>_</code> before that package name.
-It&rsquo;s <code>_pyrepl</code>, not <code>pyrepl</code>.</p>
-
-<p>Any solution that relies on this module may break in future Python releases.</p>
-
-<p>So&hellip; should we give up on looking for a solution, if we can&rsquo;t get a &ldquo;stable&rdquo; one?</p>
-
-<p>I don&rsquo;t think so.</p>
-
-<p>My <code>shell</code> command doesn&rsquo;t usually <em>need</em> to be stable in more than one version of Python at a time.
-So I&rsquo;m fine with a solution that <em>attempts</em> to use the new REPL and then falls back to the old REPL if it fails.</p>
-
-<h2>A working solution</h2>
-
-<p>So, let&rsquo;s look at a working solution.</p>
-
-<p>Stick <a href="https://pym.dev/p/2zqeq/">this code</a> in a <code>management/commands/shell.py</code> file within one of your Django apps:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-</pre></td><td class="code"><pre><code class="python"><span class="line"><span class="sd">&quot;&quot;&quot;Python 3.13 REPL support using the unsupported _pyrepl module.&quot;&quot;&quot;</span>
-</span><span class="line"><span class="kn">from</span> <span class="nn">django.core.management.commands.shell</span> <span class="kn">import</span> <span class="n">Command</span> <span class="k">as</span> <span class="n">BaseShellCommand</span>
-</span><span class="line">
-</span><span class="line">
-</span><span class="line"><span class="k">class</span> <span class="nc">Command</span><span class="p">(</span><span class="n">BaseShellCommand</span><span class="p">):</span>
-</span><span class="line">    <span class="n">shells</span> <span class="o">=</span> <span class="p">[</span><span class="s">&quot;ipython&quot;</span><span class="p">,</span> <span class="s">&quot;bpython&quot;</span><span class="p">,</span> <span class="s">&quot;pyrepl&quot;</span><span class="p">,</span> <span class="s">&quot;python&quot;</span><span class="p">]</span>
-</span><span class="line">
-</span><span class="line">    <span class="k">def</span> <span class="nf">pyrepl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">):</span>
-</span><span class="line">        <span class="kn">from</span> <span class="nn">_pyrepl.main</span> <span class="kn">import</span> <span class="n">interactive_console</span>
-</span><span class="line">        <span class="n">interactive_console</span><span class="p">()</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<h2>How it works</h2>
-
-<p>Django&rsquo;s <code>shell</code> command has made it very simple to add support for your favorite REPL of choice.</p>
-
-<p><a href="https://github.com/django/django/blob/5.1.2/django/core/management/commands/shell.py">The code for the <code>shell</code> command</a> loops through the <code>shells</code> list and attempts to run a method with that name on its own class.
-If an <code>ImportError</code> is raised then it attempts the next command, stopping once no exception occurs.</p>
-
-<p>Our new command will try to use IPython and bpython if they&rsquo;re installed and then it will try the new Python 3.13 REPL followed by the old Python REPL.</p>
-
-<p>If Python 3.14 breaks our import by moving the <code>interactive_console</code> function, then an <code>ImportError</code> will be raised, causing us to fall back to the old REPL after we upgrade to Python 3.14 one day.
-If instead, the <code>interactive_console</code> function&rsquo;s usage changes (maybe it will require arguments) then our <code>shell</code> command will completely break and we&rsquo;ll need to manually fix it when we upgrade to Python 3.14.</p>
-
-<h2>What&rsquo;s so great about the new REPL?</h2>
-
-<p>If you&rsquo;re already using IPython or BPython as your REPL and you&rsquo;re enjoying them, I would stick with them.</p>
-
-<p>Third-party libraries move faster than Python itself and they&rsquo;re often more feature-rich.
-IPython has about 20 years worth of feature development and it has features that the built-in Python REPL will likely never have.</p>
-
-<p>If you&rsquo;re using the default Python REPL though, this new REPL is a <em>huge</em> upgrade.
-I&rsquo;ve been using it as my default REPL since May and I <em>love</em> it.
-See <a href="https://pym.dev/python-313-whats-new/">my screencast on Python 3.13</a> for my favorite features in the new REPL.</p>
-
-<p><strong>P.S. for Python Morsels users</strong>: if you want to try using that <code>code</code> module, check out the (fairly advanced) <a href="https://www.pythonmorsels.com/exercises/3efdd9e172a346d08679ec39419ed822/?level=advanced">replr</a> or (even more advanced) <a href="https://www.pythonmorsels.com/exercises/5800cdcbbc5b4936b3e253dc15050480/?level=advanced">replsync</a> exercises.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 14, 2024 04:03 AM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2024/10/django-and-the-new-python-3-dot-13-repl/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="http://lucumr.pocoo.org/2024/10/14/mixing-oss-and-money" class="hover:underline"
               >The Inevitability of Mixing Open Source and Money</a
             >
@@ -2249,6 +2131,72 @@ for fpath in paths:
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/security-release-for-issue-93/7889" class="hover:underline"
+              >Security Release for issue #93</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://foss.heptapod.net/ced">Cédric Krier</a> has found that <a href="https://code.tryton.org/python-sql">python-sql</a> <a href="https://bugs.tryton.org/python-sql/93">does not escape non-Expression for unary operators</a> (like <code>And</code> and <code>Or</code>) which makes any system exposing those vulnerable to an SQL injection attack.</p>
+<h2><a class="anchor" href="https://discuss.tryton.org#p-34449-impact-1" name="p-34449-impact-1"></a>Impact</h2>
+<p><a href="https://www.first.org/cvss/calculator/3.0#CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:L/A:L/E:F/RL:O/RC:C/MAV:N/MAC:L/MPR:N/MUI:N/MS:U/MC:N/MI:N/MA:N">CVSS v3.0 Base Score: 9.1</a></p>
+<ul>
+<li>Attack Vector: Network</li>
+<li>Attack Complexity: Low</li>
+<li>Privileges Required: Low</li>
+<li>User Interaction: None</li>
+<li>Scope: Changed</li>
+<li>Confidentiality: High</li>
+<li>Integrity: Low</li>
+<li>Availability: Low</li>
+</ul>
+<h2><a class="anchor" href="https://discuss.tryton.org#p-34449-workaround-2" name="p-34449-workaround-2"></a>Workaround</h2>
+<p>There is no known workaround.</p>
+<h2><a class="anchor" href="https://discuss.tryton.org#p-34449-resolution-3" name="p-34449-resolution-3"></a>Resolution</h2>
+<p>All affected users should upgrade <code>python-sql</code> to the latest version.</p>
+<p>Affected versions: &lt;= 1.5.1<br />
+Non affected versions: &gt;= 1.5.2</p>
+<h2><a class="anchor" href="https://discuss.tryton.org#p-34449-reference-4" name="p-34449-reference-4"></a>Reference</h2>
+<ul>
+<li><a class="inline-onebox" href="https://bugs.tryton.org/python-sql/93">Unary operators does not escape non-Expression (#93) · Issues · Tryton / python-sql · GitLab</a></li>
+</ul>
+<h2><a class="anchor" href="https://discuss.tryton.org#p-34449-concerns-5" name="p-34449-concerns-5"></a>Concerns?</h2>
+<p>Any security concerns should be reported on the bug-tracker at <a href="https://bugs.tryton.org/python-sql">https://bugs.tryton.org/python-sql</a> with the confidential checkbox checked.</p>
+            <p><small>3 posts - 3 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/security-release-for-issue-93/7889">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 02, 2024 06:00 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/security-release-for-issue-93/7889"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -2260,8 +2208,8 @@ for fpath in paths:
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9046</a></li>
-    <li><a>Unique Feeds: 425</a></li>
+    <li><a>Total Entries: 8991</a></li>
+    <li><a>Unique Feeds: 423</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
