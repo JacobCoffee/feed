@@ -53,6 +53,125 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2024/nov/18/djangover/" class="hover:underline"
+              >Introducing DjangoVer</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Version numbering is hard, and there are lots of popular schemes out there for how to do it. Today I want to talk about a system I’ve settled on for my own Django-related packages, and which I’m calling “DjangoVer”, because it ties the version number of a Django-related package to the latest Django version that package&nbsp;supports.</p>
+<p>But one quick note to start with: this is not really “introducing” the idea of DjangoVer, because I know I’ve used the name a few times already in other places. I’m also not the person who invented this, and I don’t know for certain who <em>did</em> — I’ve seen several packages which appear to follow some form of DjangoVer and took inspiration from them in defining my own take on&nbsp;it.</p>
+<h3>Django’s version scheme: an&nbsp;overview</h3>
+<p>The basic idea of DjangoVer is that the version number of a Django-related package should tell you which version of Django you can use it with.  Which probably doesn’t help much if you don’t know how Django releases are numbered, so let’s start there. In&nbsp;brief:</p>
+<ul>
+<li>Django issues a “feature release” — one which introduces new features — roughly once every eight months. The current feature release series of Django is&nbsp;5.1.</li>
+<li>Django issues “bugfix releases” — which fix bugs in one or more feature releases — roughly once each month. As I write this, the latest bugfix release for the 5.1 feature release series is 5.1.3 (along with Django 5.0.9 for the 5.0 feature release series, and Django 4.2.16 for the 4.2 feature release&nbsp;series).</li>
+<li>The version number scheme is <code>MAJOR.FEATURE.BUGFIX</code>, where <code>MAJOR</code>, <code>FEATURE</code>, and <code>BUGFIX</code> are&nbsp;integers.</li>
+<li>The <code>FEATURE</code> component starts at <code>0</code>, then increments to <code>1</code>, then to <code>2</code>, then <code>MAJOR</code> is incremented and <code>FEATURE</code> goes back to <code>0</code>. <code>BUGFIX</code> starts at <code>0</code> with each new feature release, and increments for the bugfix releases for that feature&nbsp;release.</li>
+<li>Every feature release whose <code>FEATURE</code> component is <code>2</code> is a long-term support (“<span class="caps">LTS</span>”)&nbsp;release.</li>
+</ul>
+<p>This has been in effect since Django 2.0 was released, and the feature releases have been: 2.0, 2.1, 2.2 (<span class="caps">LTS</span>); 3.0, 3.1, 3.2 (<span class="caps">LTS</span>); 4.0, 4.1, 4.2 (<span class="caps">LTS</span>); 5.0, 5.1. Django 5.2 (<span class="caps">LTS</span>) is expected in April 2025, and then eight months later (if nothing is changed) will come Django&nbsp;6.0.</p>
+<p>I’ll talk more about SemVer in a bit, but it’s worth being crystal clear that Django does <em>not</em> follow Semantic Versioning, and the <code>MAJOR</code> number is <em>not</em> a signal about <span class="caps">API</span> compatibility. Instead, <span class="caps">API</span> compatibility runs <span class="caps">LTS</span>-to-<span class="caps">LTS</span>, with a simple principle: if your code runs on a Django <span class="caps">LTS</span> release and <a href="https://www.b-list.org/weblog/2023/dec/19/show-python-deprecation-warnings/">raises no deprecation warnings</a>, it will run unmodified on the next <span class="caps">LTS</span> release. So, for example, if you have an application that runs without deprecation warnings on Django 4.2 <span class="caps">LTS</span>, it will run unmodified on Django 5.2 <span class="caps">LTS</span> (though at that point it might begin raising new deprecation warnings, and you’d need to clear them before it would be safe to upgrade any&nbsp;further).</p>
+<h3>DjangoVer,&nbsp;defined</h3>
+<p>In DjangoVer, a Django-related package has a version number of the form <code>DJANGO_MAJOR.DJANGO_FEATURE.PACKAGE_VERSION</code>, where <code>DJANGO_MAJOR</code> and <code>DJANGO_FEATURE</code> indicate the most recent feature release series of Django supported by the package, and <code>PACKAGE_VERSION</code> begins at zero and increments by one with each release of the package supporting that feature release of&nbsp;Django.</p>
+<p>Since the version number only indicates the newest Django feature release supported, a package using DjangoVer should also use Python package classifiers to indicate the full range of its Django support (such as <code>Framework :: Django :: 5.1</code> to indicate support for Django 5.1 — <a href="https://pypi.org/search/?q=&amp;o=&amp;c=Framework+%3A%3A+Django&amp;c=Framework+%3A%3A+Django+%3A%3A+5.1">see examples on PyPI</a>).</p>
+<p>But while Django takes care to maintain compatibility from one <span class="caps">LTS</span> to the next, I do <em>not</em> think DjangoVer packages need to do that; they can use the simpler approach of issuing deprecation warnings for two releases, and then making the breaking change. One of the stated reasons for Django’s <span class="caps">LTS</span>-to-<span class="caps">LTS</span> compatibility policy is to help third-party packages have an easier time supporting Django releases that people are actually likely to use; otherwise, Django itself generally just follows the “deprecate for two releases, then remove it” pattern. No matter what compatibility policy is chosen, however, it should be documented clearly, since DjangoVer explicitly does not attempt to provide any information about <span class="caps">API</span> stability/compatibility in the version&nbsp;number.</p>
+<p>That’s a bit wordy, so let’s try an&nbsp;example:</p>
+<ul>
+<li>If you started a new Django-related package today, you’d (hopefully) support the most recent Django feature release, which is 5.1. So the DjangoVer version of your package should be <code>5.1.0</code>.</li>
+<li>As long as Django 5.1 is the newest Django feature release you support, you’d increment the third digit of the version number. As you add features or fix bugs you’d release <code>5.1.1</code>, <code>5.1.2</code>,&nbsp;etc.</li>
+<li>When Django 5.2 comes out next year, you’d (hopefully) add support for it. When you do, you’d set your package’s version number to <code>5.2.0</code>. This would be followed by <code>5.2.1</code>, <code>5.2.2</code>, etc., and then eight months later by <code>6.0.0</code> to support Django&nbsp;6.0.</li>
+<li>If version <code>5.1.0</code> of your package supports Django 5.1, 5.0, and 4.2 (the feature releases receiving upstream support from Django at the time of the 5.1 release), it should indicate that by including the <code>Framework :: Django</code>, <code>Framework :: Django :: 4.2</code>, <code>Framework :: Django :: 5.0</code>, and <code>Framework :: Django :: 5.1</code> classifiers in its package&nbsp;metadata.</li>
+</ul>
+<h3>Why another version&nbsp;system?</h3>
+<p>Some of you probably didn’t even read this far before rushing to instantly post the <span class="caps">XKCD</span> “Standards” comic as a reply. Thank you in advance for letting the rest of us know we don’t need to bother listening to or engaging with you. For everyone else: here’s why I think in this case adding yet another “standard” is actually a good&nbsp;idea.</p>
+<p>The elephant in the room here is <a href="https://semver.org">Semantic Versioning</a> (“SemVer”). <a href="https://hynek.me/articles/semver-will-not-save-you/">Others</a> have <a href="https://sedimental.org/designing_a_version.html#semantic-versioning">written</a> about some of the problems with SemVer, but I’ll add my own two cents here: “compatibility” is far too complex and nebulous a concept to be usefully encoded in a simple value like a version number. And if you want my really cynical take, the actual point of SemVer in practice is to protect developers of software from users, by providing endless loopholes and ways to say “sure, this change broke your code, but that doesn’t count as a breaking change”. It’ll turn out that the developer had a different interpretation of the documentation than you did, or that the <span class="caps">API</span> contract was “underspecified” and now has been “clarified”, or they’ll just throw their hands up, yell “Hyrum’s Law” and say they can’t possibly be expected to preserve <em>that</em>&nbsp;behavior.</p>
+<p>A lot of this is rooted in the belief that changes, and especially breaking changes, are inherently bad and shameful, and that if you introduce them you’re a bad developer who should be ashamed. Which is, frankly, bullshit. Useful software almost always evolves and changes over time, and it’s unrealistic to expect it not to. I wrote about this a few years back <a href="https://www.b-list.org/weblog/2020/may/05/python/">in the context of the Python 2/3 transition</a>:</p>
+<blockquote>
+<p>Though there is one thing I think gets overlooked a lot: usually, the anti-Python-3 argument is presented as the desire of a particular company, or project, or person, to stand still and buck the trend of the world to be&nbsp;ever-changing.</p>
+<p>But really they’re asking for the inverse of that. Rather than being a fixed point in a constantly-changing world, what they really seem to want is to be the only ones still moving in a world that has become static around them. If only the Python team would stop fiddling with the language! If only the maintainers of popular frameworks would stop evolving their APIs! Then we could finally stop worrying about our dependencies and get on with our real work! Of course, it’s logically impossible for each one of those entities to be the sole mover in a static world, but pointing that out doesn’t always go&nbsp;well.</p>
+</blockquote>
+<p>But that’s a rant for another day and another full post all its own. For now it’s enough to just say I don’t believe SemVer can ever deliver on what it promises. So where does that leave&nbsp;us?</p>
+<p>Well, if the version number can’t tell you whether it’s safe to upgrade from one version to another, perhaps it can still tell you something useful. And for me, when I’m evaluating a piece of third-party software for possible use, one of the most important things I want to know is: <em>is someone actually maintaining this?</em> There are lots of potential signals to look for, but some version schemes — like <a href="https://calver.org">CalVer</a> — can encode this into the version number. Want to know if the software’s maintained? With CalVer you can guess a package’s maintenance status, with pretty good accuracy, from a glance at the version&nbsp;number.</p>
+<p>Over the course of this year I’ve been transitioning all my personal non-Django packages to CalVer for precisely this reason. Compatibility, again, is something I think can’t possibly be encoded into a version number, but “someone’s keeping an eye on this” <em>can</em> be. Even if I’m not adding features to something, Python itself does a new version every year and I’ll push a new release to explicitly mark compatibility (as I did recently for the release of Python 3.13). That’ll bump the version number and let anyone who takes a quick glance at it know I’m still there and paying attention to the&nbsp;package.</p>
+<p>For packages meant to be used with Django, though, the version number can usefully encode another piece of information: not just “is someone maintaining this”, but “can I use this with my Django installation”. And that is what DjangoVer is about: telling you at a glance the maintenance and Django compatibility status of a&nbsp;package.</p>
+<h3>DjangoVer in&nbsp;practice</h3>
+<p>All of my own personal <a href="https://www.b-list.org/projects/">Django-related packages</a> are now using DjangoVer, and say so in their documentation. If I start any new Django-related projects they’ll do the same&nbsp;thing.</p>
+<p>A quick scroll through PyPI turns up other packages doing something that looks similar; <a href="https://pypi.org/project/django-cockroachdb/">django-cockroachdb</a> and <a href="https://pypi.org/project/django-snowflake/">django-snowflake</a>, for example, versioned their Django 5.1 packages as “5.1”, and explicitly say in their READMEs to install a package version corresponding to the Django version you use (they also have a maintainer in common, who I suspect of having been an early inventor of what I&#8217;m now calling&nbsp;&#8220;DjangoVer&#8221;).</p>
+<p>If you maintain a Django-related package, I’d encourage you to at least think about adopting some form of DjangoVer, too. I won’t say it’s the best, period, because something better could always come along, but in terms of information that can be usefully encoded into the version number, I think DjangoVer is the best option I’ve seen for Django-related&nbsp;packages.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 18, 2024 08:04 AM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2024/nov/18/djangover/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/410/entering-the-django-core" class="hover:underline"
+              >#410 Entering the Django core</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include Thoughts on Django’s Core, futurepool, Don't return named tuples in new APIs, and Ziglang: Migrating from AWS to Self-Hosting.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 18, 2024 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/410/entering-the-django-core"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="http://lucumr.pocoo.org/2024/11/18/threads-beat-async-await" class="hover:underline"
               >Playground Wisdom: Threads Beat Async/Await</a
             >
@@ -833,47 +952,6 @@ page faults than you expected and the system crawls to a halt.</td></tr>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://testandcode.com/episodes/223-writing-stuff-down" class="hover:underline"
-              >223: Writing Stuff Down is a Super Power</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Taking notes well can help to listen better, remember things, show respect, be more accountable, free up mind space to solve problems.</p><p>This episode discusses</p><ul><li>the benefits of writing things down</li><li>preparing for a meeting</li><li>taking notes in meetings</li><li>reviewing notes for action items, todo items, things to follow up on, etc.</li><li>taking notes to allow for better focus</li><li>writing well structured emails</li><li>writing blog posts and books</li></ul>
-<br /><p><strong> Learn pytest</strong></p><ul><li>pytest is the number one test framework for Python.</li><li>Learn the basics super fast with <a href="https://courses.pythontest.com/hello-pytest">Hello, pytest!</a></li><li>Then later you can become a pytest expert with <a href="https://courses.pythontest.com/the-complete-pytest-course">The Complete pytest Course</a></li><li>Both courses are at <a href="https://courses.pythontest.com/">courses.pythontest.com</a></li></ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 17, 2024 01:55 AM UTC by
-            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
-              >Test and Code</a
-            >
-          </div>
-          <a
-            href="https://testandcode.com/episodes/223-writing-stuff-down"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://rickardlindberg.me/2024/11/16/i-was-researching.html" class="hover:underline"
               >Unknown title</a
             >
@@ -1165,69 +1243,6 @@ We want to know what this object is all about.</p>
           </div>
           <a
             href="https://www.pythonmorsels.com/inspecting-python-objects/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2024/nov/14/technical-governance-challenges-and-opportunities/" class="hover:underline"
-              >Django’s technical governance challenges, and opportunities</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>As of October 29th, two of four members of the <a href="https://www.djangoproject.com/foundation/teams/#steering-council-team">Django Software Foundation Steering Council</a> have resigned from their role, with their intentions being to trigger an election of the Steering Council earlier than otherwise scheduled, per our established governance processes.</p>
-<p>To our departing members, Simon and Adam, thank you for your contributions to Django and its governance ❤️. The framework and our community owes a lot to your dedication, and we’re confident our community will join us in celebrating your past contributions – and look forward to learning about your future endeavors in the Django ecosystem. And thanks to the remaining members, James and Andrew, for their service over the years.</p>
-<h3 id="s-our-governance-challenges">Our governance challenges</h3>
-<p>Governance in open source is hard, and community-driven open source even more so. We’re proud that Django’s original two Benevolent Dictators For Life (BDFLs) both retired from the role and turned things over to community governance ten years ago now. The BDFL model can provide  excellent technical governance, but also has its flaws. So the  mantle of technical governance then went on to the Core Developers and the Technical Board (renamed to Steering Council) was introduced.</p>
-<p>However, time has revealed flaws in the Steering Council’s governance model and operations. The Steering Council was able to provide decision-making – tiebreaking when the developer community couldn’t lead to consensus – but didn’t provide more forward-looking leadership or vision. Disagreements over how – or if – the Steering Council should approach this part of leadership led us to the current situation, with no functioning technical governance as of a few weeks ago. Even before those recent events, those flaws were also a common source of frustration for our contributors, and a source of concern for Django users who (rightly or not) might have expectations of Django’s direction – such as the publication of a “roadmap” for Django development.</p>
-<p>The Django Software Foundation Board of Directors is and was aware of those issues, and recently made attempts to have the Steering Council rectify them, in coordination with other established community members. The DSF Board has tried to be hands-off when it comes to technical leadership, but in retrospect we should have been getting involved sooner, or more decisively. The lack of technical leadership is an existential threat to Django – a slow moving one, but a threat nonetheless. It’s our responsibility to address this threat.</p>
-<h3 id="s-where-were-heading">Where we’re heading</h3>
-<p>We now need new Steering Council members. But we also need governance reform. There’s a lot about the Steering Council that is good and might only need minimal changes. However, the overall question of the Steering Council’s remit, and how it approaches technical leadership for the Django community, needs to be resolved.</p>
-<p>We’re going to hold early elections of the Steering Council, as soon as we’ve completed the ongoing <a href="https://www.djangoproject.com/weblog/2024/oct/28/2025-dsf-board-candidates/">2025 DSF Board elections</a>. Those elections will follow existing processes, and we will want a Steering Council who strives  to meet the group’s intended goals:</p>
-<ol>
-<li>To safeguard big decisions that affect Django projects at a fundamental level.</li>
-<li>To help shepherd the project’s future direction.</li>
-</ol>
-<p>We expect the new Steering Council will take on those known challenges, resolve those questions of technical leadership, and update Django’s technical governance. They will have the full support of the Board of Directors to address this threat to Django’s future. And the Board will also be more decisive in intervening, should similar issues keep arising.</p>
-<h3 id="s-how-you-can-help">How you can help</h3>
-<p>We need contributors willing to take on those challenges and help our community come out ahead. It’s a big role, impactful but demanding. And there are strict, often annoying eligibility rules for the Steering Council.</p>
-<p>To help you help us, we’ve set up a form: <a href="https://docs.google.com/forms/d/e/1FAIpQLSc4kDHSRr-ayuXensVogJLwx14jeRClAmHXfFhmw04vAUYnPQ/viewform?usp=sf_link">Django 6.x Steering Council elections - Expression of interest</a>.</p>
-<p>If you’re interested in stepping up to shepherd Django’s technical direction, fill in our expression of interest form. We’ll let you know whether or not you meet those eligibility rules, take the guesswork out of the way. You get to focus on your motivation for taking on this kind of high-purpose, high-reward governance role.</p>
-<p>And once the elections start and we get to candidate registrations, we’ll be able to reuse details submitted here (if you want to) so the process is smoother for everyone.</p>
-<p><a class="cta" href="https://docs.google.com/forms/d/e/1FAIpQLSc4kDHSRr-ayuXensVogJLwx14jeRClAmHXfFhmw04vAUYnPQ/viewform?usp=sf_link">Django 6.x Steering Council elections - Expression of interest</a></p>
-<h3 id="s-how-everyone-can-help">How everyone can help</h3>
-<p>Those elections will be crucial for the future of Django, and will be decided thanks to the vote of our <a href="/foundation/individual-members/">Django Software Foundation Individual Members</a>. If you know people who contribute to ​​the DSF’s mission but aren’t Individual Members already -- use our form to nominate them as Individual Members, so they’re eligible to vote. If you’re that person, do nominate yourself. We consider all contributions towards our mission: advancing and promoting Django, protecting the framework’s long-term viability, and advancing the state of the art in web development.</p>
-<hr />
-<p>Any questions? Comment on our forum thread, <a href="https://forum.djangoproject.com/t/preparing-for-the-6-x-series-steering-council-election/34039/27">Discussion thread for “Django’s technical governance challenges, and opportunities” blog post</a>, or reach out via email to <a href="mailto:foundation@djangoproject.com">foundation@djangoproject.com</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 14, 2024 05:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2024/nov/14/technical-governance-challenges-and-opportunities/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2709,12 +2724,12 @@ In this article we’ll:</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9034</a></li>
+    <li><a>Total Entries: 8836</a></li>
     <li><a>Unique Feeds: 425</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (487)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (414)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (319)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (222)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (487)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (414)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (319)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (210)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
