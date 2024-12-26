@@ -53,6 +53,85 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2024/nov/18/djangover/" class="hover:underline"
+              >Introducing DjangoVer</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Version numbering is hard, and there are lots of popular schemes out there for how to do it. Today I want to talk about a system I’ve settled on for my own Django-related packages, and which I’m calling “DjangoVer”, because it ties the version number of a Django-related package to the latest Django version that package&nbsp;supports.</p>
+<p>But one quick note to start with: this is not really “introducing” the idea of DjangoVer, because I know I’ve used the name a few times already in other places. I’m also not the person who invented this, and I don’t know for certain who <em>did</em> — I’ve seen several packages which appear to follow some form of DjangoVer and took inspiration from them in defining my own take on&nbsp;it.</p>
+<h3>Django’s version scheme: an&nbsp;overview</h3>
+<p>The basic idea of DjangoVer is that the version number of a Django-related package should tell you which version of Django you can use it with.  Which probably doesn’t help much if you don’t know how Django releases are numbered, so let’s start there. In&nbsp;brief:</p>
+<ul>
+<li>Django issues a “feature release” — one which introduces new features — roughly once every eight months. The current feature release series of Django is&nbsp;5.1.</li>
+<li>Django issues “bugfix releases” — which fix bugs in one or more feature releases — roughly once each month. As I write this, the latest bugfix release for the 5.1 feature release series is 5.1.3 (along with Django 5.0.9 for the 5.0 feature release series, and Django 4.2.16 for the 4.2 feature release&nbsp;series).</li>
+<li>The version number scheme is <code>MAJOR.FEATURE.BUGFIX</code>, where <code>MAJOR</code>, <code>FEATURE</code>, and <code>BUGFIX</code> are&nbsp;integers.</li>
+<li>The <code>FEATURE</code> component starts at <code>0</code>, then increments to <code>1</code>, then to <code>2</code>, then <code>MAJOR</code> is incremented and <code>FEATURE</code> goes back to <code>0</code>. <code>BUGFIX</code> starts at <code>0</code> with each new feature release, and increments for the bugfix releases for that feature&nbsp;release.</li>
+<li>Every feature release whose <code>FEATURE</code> component is <code>2</code> is a long-term support (“<span class="caps">LTS</span>”)&nbsp;release.</li>
+</ul>
+<p>This has been in effect since Django 2.0 was released, and the feature releases have been: 2.0, 2.1, 2.2 (<span class="caps">LTS</span>); 3.0, 3.1, 3.2 (<span class="caps">LTS</span>); 4.0, 4.1, 4.2 (<span class="caps">LTS</span>); 5.0, 5.1. Django 5.2 (<span class="caps">LTS</span>) is expected in April 2025, and then eight months later (if nothing is changed) will come Django&nbsp;6.0.</p>
+<p>I’ll talk more about SemVer in a bit, but it’s worth being crystal clear that Django does <em>not</em> follow Semantic Versioning, and the <code>MAJOR</code> number is <em>not</em> a signal about <span class="caps">API</span> compatibility. Instead, <span class="caps">API</span> compatibility runs <span class="caps">LTS</span>-to-<span class="caps">LTS</span>, with a simple principle: if your code runs on a Django <span class="caps">LTS</span> release and <a href="https://www.b-list.org/weblog/2023/dec/19/show-python-deprecation-warnings/">raises no deprecation warnings</a>, it will run unmodified on the next <span class="caps">LTS</span> release. So, for example, if you have an application that runs without deprecation warnings on Django 4.2 <span class="caps">LTS</span>, it will run unmodified on Django 5.2 <span class="caps">LTS</span> (though at that point it might begin raising new deprecation warnings, and you’d need to clear them before it would be safe to upgrade any&nbsp;further).</p>
+<h3>DjangoVer,&nbsp;defined</h3>
+<p>In DjangoVer, a Django-related package has a version number of the form <code>DJANGO_MAJOR.DJANGO_FEATURE.PACKAGE_VERSION</code>, where <code>DJANGO_MAJOR</code> and <code>DJANGO_FEATURE</code> indicate the most recent feature release series of Django supported by the package, and <code>PACKAGE_VERSION</code> begins at zero and increments by one with each release of the package supporting that feature release of&nbsp;Django.</p>
+<p>Since the version number only indicates the newest Django feature release supported, a package using DjangoVer should also use Python package classifiers to indicate the full range of its Django support (such as <code>Framework :: Django :: 5.1</code> to indicate support for Django 5.1 — <a href="https://pypi.org/search/?q=&amp;o=&amp;c=Framework+%3A%3A+Django&amp;c=Framework+%3A%3A+Django+%3A%3A+5.1">see examples on PyPI</a>).</p>
+<p>But while Django takes care to maintain compatibility from one <span class="caps">LTS</span> to the next, I do <em>not</em> think DjangoVer packages need to do that; they can use the simpler approach of issuing deprecation warnings for two releases, and then making the breaking change. One of the stated reasons for Django’s <span class="caps">LTS</span>-to-<span class="caps">LTS</span> compatibility policy is to help third-party packages have an easier time supporting Django releases that people are actually likely to use; otherwise, Django itself generally just follows the “deprecate for two releases, then remove it” pattern. No matter what compatibility policy is chosen, however, it should be documented clearly, since DjangoVer explicitly does not attempt to provide any information about <span class="caps">API</span> stability/compatibility in the version&nbsp;number.</p>
+<p>That’s a bit wordy, so let’s try an&nbsp;example:</p>
+<ul>
+<li>If you started a new Django-related package today, you’d (hopefully) support the most recent Django feature release, which is 5.1. So the DjangoVer version of your package should be <code>5.1.0</code>.</li>
+<li>As long as Django 5.1 is the newest Django feature release you support, you’d increment the third digit of the version number. As you add features or fix bugs you’d release <code>5.1.1</code>, <code>5.1.2</code>,&nbsp;etc.</li>
+<li>When Django 5.2 comes out next year, you’d (hopefully) add support for it. When you do, you’d set your package’s version number to <code>5.2.0</code>. This would be followed by <code>5.2.1</code>, <code>5.2.2</code>, etc., and then eight months later by <code>6.0.0</code> to support Django&nbsp;6.0.</li>
+<li>If version <code>5.1.0</code> of your package supports Django 5.1, 5.0, and 4.2 (the feature releases receiving upstream support from Django at the time of the 5.1 release), it should indicate that by including the <code>Framework :: Django</code>, <code>Framework :: Django :: 4.2</code>, <code>Framework :: Django :: 5.0</code>, and <code>Framework :: Django :: 5.1</code> classifiers in its package&nbsp;metadata.</li>
+</ul>
+<h3>Why another version&nbsp;system?</h3>
+<p>Some of you probably didn’t even read this far before rushing to instantly post the <span class="caps">XKCD</span> “Standards” comic as a reply. Thank you in advance for letting the rest of us know we don’t need to bother listening to or engaging with you. For everyone else: here’s why I think in this case adding yet another “standard” is actually a good&nbsp;idea.</p>
+<p>The elephant in the room here is <a href="https://semver.org">Semantic Versioning</a> (“SemVer”). <a href="https://hynek.me/articles/semver-will-not-save-you/">Others</a> have <a href="https://sedimental.org/designing_a_version.html#semantic-versioning">written</a> about some of the problems with SemVer, but I’ll add my own two cents here: “compatibility” is far too complex and nebulous a concept to be usefully encoded in a simple value like a version number. And if you want my really cynical take, the actual point of SemVer in practice is to protect developers of software from users, by providing endless loopholes and ways to say “sure, this change broke your code, but that doesn’t count as a breaking change”. It’ll turn out that the developer had a different interpretation of the documentation than you did, or that the <span class="caps">API</span> contract was “underspecified” and now has been “clarified”, or they’ll just throw their hands up, yell “Hyrum’s Law” and say they can’t possibly be expected to preserve <em>that</em>&nbsp;behavior.</p>
+<p>A lot of this is rooted in the belief that changes, and especially breaking changes, are inherently bad and shameful, and that if you introduce them you’re a bad developer who should be ashamed. Which is, frankly, bullshit. Useful software almost always evolves and changes over time, and it’s unrealistic to expect it not to. I wrote about this a few years back <a href="https://www.b-list.org/weblog/2020/may/05/python/">in the context of the Python 2/3 transition</a>:</p>
+<blockquote>
+<p>Though there is one thing I think gets overlooked a lot: usually, the anti-Python-3 argument is presented as the desire of a particular company, or project, or person, to stand still and buck the trend of the world to be&nbsp;ever-changing.</p>
+<p>But really they’re asking for the inverse of that. Rather than being a fixed point in a constantly-changing world, what they really seem to want is to be the only ones still moving in a world that has become static around them. If only the Python team would stop fiddling with the language! If only the maintainers of popular frameworks would stop evolving their APIs! Then we could finally stop worrying about our dependencies and get on with our real work! Of course, it’s logically impossible for each one of those entities to be the sole mover in a static world, but pointing that out doesn’t always go&nbsp;well.</p>
+</blockquote>
+<p>But that’s a rant for another day and another full post all its own. For now it’s enough to just say I don’t believe SemVer can ever deliver on what it promises. So where does that leave&nbsp;us?</p>
+<p>Well, if the version number can’t tell you whether it’s safe to upgrade from one version to another, perhaps it can still tell you something useful. And for me, when I’m evaluating a piece of third-party software for possible use, one of the most important things I want to know is: <em>is someone actually maintaining this?</em> There are lots of potential signals to look for, but some version schemes — like <a href="https://calver.org">CalVer</a> — can encode this into the version number. Want to know if the software’s maintained? With CalVer you can guess a package’s maintenance status, with pretty good accuracy, from a glance at the version&nbsp;number.</p>
+<p>Over the course of this year I’ve been transitioning all my personal non-Django packages to CalVer for precisely this reason. Compatibility, again, is something I think can’t possibly be encoded into a version number, but “someone’s keeping an eye on this” <em>can</em> be. Even if I’m not adding features to something, Python itself does a new version every year and I’ll push a new release to explicitly mark compatibility (as I did recently for the release of Python 3.13). That’ll bump the version number and let anyone who takes a quick glance at it know I’m still there and paying attention to the&nbsp;package.</p>
+<p>For packages meant to be used with Django, though, the version number can usefully encode another piece of information: not just “is someone maintaining this”, but “can I use this with my Django installation”. And that is what DjangoVer is about: telling you at a glance the maintenance and Django compatibility status of a&nbsp;package.</p>
+<h3>DjangoVer in&nbsp;practice</h3>
+<p>All of my own personal <a href="https://www.b-list.org/projects/">Django-related packages</a> are now using DjangoVer, and say so in their documentation. If I start any new Django-related projects they’ll do the same&nbsp;thing.</p>
+<p>A quick scroll through PyPI turns up other packages doing something that looks similar; <a href="https://pypi.org/project/django-cockroachdb/">django-cockroachdb</a> and <a href="https://pypi.org/project/django-snowflake/">django-snowflake</a>, for example, versioned their Django 5.1 packages as “5.1”, and explicitly say in their READMEs to install a package version corresponding to the Django version you use (they also have a maintainer in common, who I suspect of having been an early inventor of what I&#8217;m now calling&nbsp;&#8220;DjangoVer&#8221;).</p>
+<p>If you maintain a Django-related package, I’d encourage you to at least think about adopting some form of DjangoVer, too. I won’t say it’s the best, period, because something better could always come along, but in terms of information that can be usefully encoded into the version number, I think DjangoVer is the best option I’ve seen for Django-related&nbsp;packages.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 18, 2024 08:04 AM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2024/nov/18/djangover/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/410/entering-the-django-core" class="hover:underline"
               >#410 Entering the Django core</a
             >
@@ -794,6 +873,47 @@ page faults than you expected and the system crawls to a halt.</td></tr>
           </div>
           <a
             href="https://www.paulox.net/2024/11/18/thoughts-on-my-election-as-a-dsf-board-member/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testandcode.com/episodes/223-writing-stuff-down" class="hover:underline"
+              >223: Writing Stuff Down is a Super Power</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Taking notes well can help to listen better, remember things, show respect, be more accountable, free up mind space to solve problems.</p><p>This episode discusses</p><ul><li>the benefits of writing things down</li><li>preparing for a meeting</li><li>taking notes in meetings</li><li>reviewing notes for action items, todo items, things to follow up on, etc.</li><li>taking notes to allow for better focus</li><li>writing well structured emails</li><li>writing blog posts and books</li></ul>
+<br /><p><strong> Learn pytest</strong></p><ul><li>pytest is the number one test framework for Python.</li><li>Learn the basics super fast with <a href="https://courses.pythontest.com/hello-pytest">Hello, pytest!</a></li><li>Then later you can become a pytest expert with <a href="https://courses.pythontest.com/the-complete-pytest-course">The Complete pytest Course</a></li><li>Both courses are at <a href="https://courses.pythontest.com/">courses.pythontest.com</a></li></ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2024 01:55 AM UTC by
+            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
+              >Test and Code</a
+            >
+          </div>
+          <a
+            href="https://testandcode.com/episodes/223-writing-stuff-down"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1949,46 +2069,6 @@ Use GitLab (deploy) environments as an additional security&nbsp;measure.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-dictionary-comprehension/" class="hover:underline"
-              >Quiz: Python Dictionary Comprehensions: How and When to Use Them</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this quiz, you'll test your understanding of Python dictionary comprehensions. Dictionary comprehensions are a concise and quick way to create, transform, and filter dictionaries in Python, and can significantly enhance your code's conciseness and readability.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 13, 2024 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/python-dictionary-comprehension/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/quizzes/python-input-output/" class="hover:underline"
               >Quiz: Basic Input and Output in Python</a
             >
@@ -2013,6 +2093,46 @@ Use GitLab (deploy) environments as an additional security&nbsp;measure.</p>
           </div>
           <a
             href="https://realpython.com/quizzes/python-input-output/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/python-dictionary-comprehension/" class="hover:underline"
+              >Quiz: Python Dictionary Comprehensions: How and When to Use Them</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this quiz, you'll test your understanding of Python dictionary comprehensions. Dictionary comprehensions are a concise and quick way to create, transform, and filter dictionaries in Python, and can significantly enhance your code's conciseness and readability.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 13, 2024 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/python-dictionary-comprehension/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2571,251 +2691,6 @@ In this article we’ll:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://eli.thegreenplace.net/2024/ml-in-go-with-a-python-sidecar/" class="hover:underline"
-              >ML in Go with a Python sidecar</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Machine learning models are rapidly becoming more capable; how can we make
-use of these powerful new tools in our Go applications?</p>
-<p>For top-of-the-line commercial LLMs like ChatGPT, Gemini or Claude, the models
-are exposed as language agnostic REST APIs. We can hand-craft
-HTTP requests or use client libraries (SDKs …</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2024 02:13 PM UTC by
-            <a href="http://eli.thegreenplace.net/feeds/python.atom.xml" class="link link-hover text-primary"
-              >Eli Bendersky</a
-            >
-          </div>
-          <a
-            href="https://eli.thegreenplace.net/2024/ml-in-go-with-a-python-sidecar/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://death.andgravity.com/reader-3-15" class="hover:underline"
-              >reader 3.15 released – Retry-After</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Hi there!</p>
-<p>I'm happy to announce version 3.15 of <strong><a class="external" href="https://github.com/lemon24/reader">reader</a></strong>, a Python feed reader library.</p>
-<h2 id="what-s-new">What's new?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#what-s-new" title="permalink">#</a></span></h2>
-<p>Here are the highlights since <a class="internal" href="https://death.andgravity.com/reader-3-13">reader 3.13</a>.</p>
-<h3 id="retry-after">Retry-After<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#retry-after" title="permalink">#</a></span></h3>
-<p>Now that it supports <a class="internal" href="https://death.andgravity.com/reader-3-13#scheduled-updates">scheduled updates</a>,
-<em>reader</em> can honor the <a class="external" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After">Retry-After</a> HTTP header sent with
-429 Too Many Requests or 503 Service Unavailable responses.</p>
-<p>Adding this required an extensive rework of the <a class="external" href="https://reader.readthedocs.io/en/latest/internal.html#parser">parser internal API</a>,
-but I'd say it was worth it, since we're getting quite close to it
-<a class="internal" href="https://death.andgravity.com/reader-3-4#parser-internal-api">becoming stable</a>.</p>
-<p>Next up in HTTP compliance is to do more on behalf of the user:
-bump the update interval <a class="external" href="https://github.com/lemon24/reader/issues/307">on repeated throttling</a>,
-and handle <a class="external" href="https://github.com/lemon24/reader/issues/246">gone and redirected feeds</a> accordingly.</p>
-<h3 id="faster-tag-filters-feed-slugs">Faster tag filters, feed slugs<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#faster-tag-filters-feed-slugs" title="permalink">#</a></span></h3>
-<p>OR-only tag filters like <code>get_feeds(tags=[['one', 'two']])</code> now use an index.</p>
-<p>This is useful for maintaining a reverse mapping to feeds/entries,
-like the <a class="external" href="https://reader.readthedocs.io/en/3.x/plugins.html#feed-slugs">feed slugs recipe</a> does to add support for user-defined short URLs:</p>
-<div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">url</span> <span class="o">=</span> <span class="s1">'https://death.andgravity.com/_feed/index.xml'</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">reader</span><span class="o">.</span><span class="n">set_feed_slug</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="s1">'andgravity'</span><span class="p">)</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">reader</span><span class="o">.</span><span class="n">get_feed_by_slug</span><span class="p">(</span><span class="s1">'andgravity'</span><span class="p">)</span>
-<span class="go">Feed(url='https://death.andgravity.com/_feed/index.xml', ...)</span>
-</code></pre></div>
-<p>(Interested in adopting this recipe as a real plugin? <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html#prs">Submit a pull request!</a>)</p>
-<h3 id="enclosure-tags-improvements">enclosure_tags improvements<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#enclosure-tags-improvements" title="permalink">#</a></span></h3>
-<p>The <a class="external" href="https://reader.readthedocs.io/en/3.x/plugins.html#module-reader._plugins.enclosure_tags">enclosure_tags</a> plugin fixes <a class="external" href="https://en.wikipedia.org/wiki/ID3">ID3 tags</a> for MP3 enclosures like podcasts.</p>
-<p>I've changed the implementation to rewrite tags on the fly,
-instead of downloading the entire file, rewriting tags,
-and then sending it to the user;
-this should allow browsers to display accurate download progress.</p>
-<p>Some other, smaller improvements:</p>
-<ul>
-<li>Set genre to <em>Podcast</em> if the feed has any tag containing &quot;podcast&quot;.</li>
-<li>Prefer feed user title to feed title if available.</li>
-<li>Use feed title as artist, instead of author.</li>
-</ul>
-<h3 id="using-the-installed-feedparser">Using the installed feedparser<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#using-the-installed-feedparser" title="permalink">#</a></span></h3>
-<p>Because <a class="external" href="https://feedparser.readthedocs.io/en/latest/">feedparser</a> makes PyPI releases at a lower cadence,
-<em>reader</em> has been using a vendored version of feedparser's <a class="external" href="https://github.com/kurtmckee/feedparser">develop</a> branch
-<a class="internal" href="https://death.andgravity.com/reader-2-11#memory-usage-improvements">for some time</a>.
-It is now possible to <a class="external" href="https://reader.readthedocs.io/en/3.x/install.html#no-vendored-feedparser">opt out of this behavior</a>
-and make <em>reader</em> use the installed <code>feedparser</code> package.</p>
-<h3 id="python-versions">Python versions<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#python-versions" title="permalink">#</a></span></h3>
-<p><em>reader</em> 3.14 (released back in July) adds support for Python 3.13.</p>
-<h2 id="upcoming-changes">Upcoming changes<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#upcoming-changes" title="permalink">#</a></span></h2>
-<h3 id="replacing-requests-with-httpx">Replacing Requests with HTTPX<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#replacing-requests-with-httpx" title="permalink">#</a></span></h3>
-<p><em>reader</em> relies on <a class="external" href="https://requests.readthedocs.io/">Requests</a> to retrieve feeds from the internet;
-among others, it replaces feedparser's use of <code>urllib</code>
-to make it easier to <a class="external" href="https://reader.readthedocs.io/en/3.x/internal.html#reader._parser.Parser.session_factory">write plugins</a>.</p>
-<p>However, Requests has a few issues that may never get fixed
-because it is in a feature-freeze –
-mainly the lack of default timeouts,
-underpowered response hooks, and no request hooks,
-all of which I had to work around in <em>reader</em> code.</p>
-<p>So, <a class="external" href="https://github.com/lemon24/reader/issues/360">I've been looking</a> into using <a class="external" href="https://www.python-httpx.org/">HTTPX</a> instead.</p>
-<p>Some reasons to use HTTPX:</p>
-<ul>
-<li>largely Requests-compatible API and feature set</li>
-<li>while the ecosystem is probably not comparable,
-it is actively maintained, popular enough,
-and the basics (mocking, auth) are there</li>
-<li>strict timeouts by default (and more kinds than Requests)</li>
-<li>request/response hooks</li>
-<li>URL normalization (needed by the parser)</li>
-</ul>
-<p>Bad reasons to move away from Requests:</p>
-<ul>
-<li>lack of async support –
-I have no plan to use async in <em>reader</em> at this point</li>
-<li>lack of HTTP/2 support –
-coming soon in urllib3 (and by extension, Requests?);
-also, <em>reader</em> makes rare requests to many different hosts,
-I'm not sure it would benefit all that much from HTTP/2</li>
-<li>lack of Brotli/Zstandard compresson support –
-urllib3 already supports them</li>
-</ul>
-<p>Reasons to not move to HTTPX:</p>
-<ul>
-<li>not 1.0 yet (but coming soon)</li>
-<li>not as battle-tested as Requests (but can use urllib3 as transport)</li>
-</ul>
-<p>So, when is this happening?
-Nothing's actually burning, so soon™, but not <em>that</em> soon;
-watch <a class="external" href="https://github.com/lemon24/reader/issues/360">#360</a> if you're interested in this.</p>
-<hr />
-<p>That's it for now.
-For more details, see the full <a class="external" href="https://reader.readthedocs.io/en/stable/changelog.html#version-3-15">changelog</a>.</p>
-<p><strong>Want to contribute?</strong>
-Check out the <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html">docs</a> and the <a class="external" href="https://reader.readthedocs.io/en/latest/dev.html#roadmap">roadmap</a>.</p>
-<p><strong>Learned something new today?</strong> Share this with others, it really helps! <span class="text-large">
-<span class="share-icons">
-<a class="share-icon pycoders color" href="https://pycoders.com/submissions" target="_blank">PyCoder's Weekly</a>
-<a class="share-icon hacker-news color" href="https://news.ycombinator.%63%6f%6d/submitlink?u=https%3A//death.andgravity.com/reader-3-15&amp;t=reader%203.15%20released%20%E2%80%93%20Retry-After">HN</a>
-<a class="share-icon reddit color" href="https://www.reddit.%63%6f%6d/%73%75%62%6d%69%74?url=https%3A//death.andgravity.com/reader-3-15&amp;title=reader%203.15%20released%20%E2%80%93%20Retry-After">Reddit</a>
-<a class="share-icon linkedin color" href="https://www.linkedin.%63%6f%6d/sharing/share-offsite/?url=https%3A//death.andgravity.com/reader-3-15">linkedin</a>
-<a class="share-icon twitter color" href="https://twitter.%63%6f%6d/%73%68%61%72%65?text=reader%203.15%20released%20%E2%80%93%20Retry-After&amp;url=https%3A//death.andgravity.com/reader-3-15&amp;via=_andgravity">Twitter</a>
-</span>
-</span></p>
-
-<h2 id="what-is-reader">What is <em>reader</em>?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#what-is-reader" title="permalink">#</a></span></h2>
-<p><strong>reader</strong> takes care
-of the core functionality required by a feed reader,
-so you can focus on what makes <strong>yours</strong> different.</p>
-<p><img alt="reader in action" class="img-responsive" src="https://death.andgravity.com/_file/reader-2-0/reader.png" />
-<em>reader</em> allows you to:</p>
-<ul>
-<li>retrieve, store, and manage <strong>Atom</strong>, <strong>RSS</strong>, and <strong>JSON</strong> feeds</li>
-<li>mark articles as read or important</li>
-<li>add arbitrary tags/metadata to feeds and articles</li>
-<li>filter feeds and articles</li>
-<li>full-text search articles</li>
-<li>get statistics on feed and user activity</li>
-<li>write plugins to extend its functionality</li>
-</ul>
-<p>...all these with:</p>
-<ul>
-<li>a stable, clearly documented API</li>
-<li>excellent test coverage</li>
-<li>fully typed Python</li>
-</ul>
-<p>To find out more, check out the <a class="external" href="https://github.com/lemon24/reader">GitHub repo</a> and the <a class="external" href="https://reader.readthedocs.io/en/stable/">docs</a>,
-or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tutorial.html">tutorial</a> a try.</p>
-<h2 id="why-use-a-feed-reader-library">Why use a feed reader library?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#why-use-a-feed-reader-library" title="permalink">#</a></span></h2>
-<p>Have you been unhappy with existing feed readers and wanted to make your own, but:</p>
-<ul>
-<li>never knew where to start?</li>
-<li>it seemed like too much work?</li>
-<li>you don't like writing backend code?</li>
-</ul>
-<p>Are you already working with <a class="external" href="https://feedparser.readthedocs.io/en/latest/">feedparser</a>, but:</p>
-<ul>
-<li>want an easier way to store, filter, sort and search feeds and entries?</li>
-<li>want to get back type-annotated objects instead of dicts?</li>
-<li>want to restrict or deny file-system access?</li>
-<li>want to change the way feeds are retrieved by using <a class="external" href="https://requests.readthedocs.io/">Requests</a>?</li>
-<li>want to also support <a class="external" href="https://jsonfeed.org/">JSON Feed</a>?</li>
-<li>want to support custom information sources?</li>
-</ul>
-<p>... while still supporting all the feed types feedparser does?</p>
-<p>If you answered yes to any of the above, <em>reader</em> can help.</p>
-<h2 id="the-reader-philosophy">The <em>reader</em> philosophy<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#the-reader-philosophy" title="permalink">#</a></span></h2>
-<ul>
-<li><em>reader</em> is a library</li>
-<li><em>reader</em> is for the long term</li>
-<li><em>reader</em> is extensible</li>
-<li><em>reader</em> is stable (within reason)</li>
-<li><em>reader</em> is simple to use; API matters</li>
-<li><em>reader</em> features work well together</li>
-<li><em>reader</em> is tested</li>
-<li><em>reader</em> is documented</li>
-<li><em>reader</em> has minimal dependencies</li>
-</ul>
-<h2 id="why-make-your-own-feed-reader">Why make your own feed reader?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-15#why-make-your-own-feed-reader" title="permalink">#</a></span></h2>
-<p>So you can:</p>
-<ul>
-<li>have full control over your data</li>
-<li>control what features it has or doesn't have</li>
-<li>decide how much you pay for it</li>
-<li>make sure it doesn't get closed while you're still using it</li>
-<li>really, it's <a class="external" href="https://rachelbythebay.com/w/2011/10/26/fred/">easier than you think</a></li>
-</ul>
-<p>Obviously, this may not be your cup of tea, but if it is, <em>reader</em> can help.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2024 11:11 AM UTC by
-            <a href="https://death.andgravity.com/_feed/index/_tags/python.xml" class="link link-hover text-primary"
-              >death and gravity</a
-            >
-          </div>
-          <a
-            href="https://death.andgravity.com/reader-3-15"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index6.html" class="btn">«</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</button><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index8.html" class="btn">»</a></div></div>
 </div>
@@ -2827,12 +2702,12 @@ or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tu
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8817</a></li>
+    <li><a>Total Entries: 8966</a></li>
     <li><a>Unique Feeds: 422</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (489)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (415)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (322)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Anywhere (210)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (489)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (415)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (322)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (222)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
