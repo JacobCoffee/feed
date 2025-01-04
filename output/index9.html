@@ -53,647 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html" class="hover:underline"
-              >The crudest CRUD of them all : the smallest CRUD possible in 150 lines of python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Right now, I am on a never ending quest that requires me to think of building a full fledge MVC controller : an anti-jira tracker that would favours HARD CHECKED facts over wishful thinking.<br /><br />
-For this to begin, I am not really motivated in beginning with a full fledged MVC (Model View Controller) à la django because there is a lot of boilerplates and actions to do before a result. But, it has a lot of feature I want, including authentication, authorization and handling security.<br /><br />
-For prototypes we normally flavours lightweight framework (à la flask), and CRUD.<br /><br />
-CRUD approach is a factorisation of all framework in a single dynamic form that adapts itself to the model to generate HTML forms to input data, tabulate, REST endpoints and search them from the python class declaration and generate the database model. One language to rule them all : PYTHON. You can easily generate even the javascript to handle autocompletion on the generated view from python with enough talent.<br /><br />
-But before using a <a href="https://en.wikipedia.org/wiki/Create,_read,_update_and_delete">CRUD framework</a>, we need a cruder one, ugly, disgusting but useful for a human before building the REST APIs, writing the class in python, the HTML form, and the controlers.<br /><br />
-I call this the <b>crudest CRUD of them all.</b><br /><br />
-Think hard at what you want when prototyping ...<br /><br />
-<ul>
-  <li>to write no CONTROLLERS ; flask documentation has a very verbose approach to exposing routes and writing them, writing controller for embasing and searching databases is boring</li>
-  <li>to write the fewer HTML views possible, one and only onle would be great ;</li>
-  <li>to avoid having to fiddle the many files reflecting separation of concerns : the lesser python files and class you touch the better; </li>
-  <li>to avoid having to write SQL nor use an ORM (at least a verbose declarative one) ;</li>
-  <li>show me your code and you can mesmerize and even fool me, however show me your data structure and I'll know everthing I have to know about your application : data structure should be under your nose in a readable fashion in the code;/</li>
-  <li>to have AT LEAST one end point for inserting and searching so that curl can be used to begin automation and testing, preferably in a factorisable fashion;</li>
-  <li>only one point of failure is accepted</li>
-</ul>
-<br />Once we set these few condition we see whatever we do WE NEED a dynamic http server at the core. Python being the topic here, we are gonna do it in python.<br /><br />
-What is the simplest dynamic web server in python ?<br /><br />The reference implementation of wsgi that is the crudest wsgi server of them all : <a href="https://docs.python.org/3/library/wsgiref.html">wsgiref</a>. And you don't need to download it since it's provided in python stdlib.<br /><br />
-First thing first, we are gonna had a default view so that we can serve an HTML static page with the list of the minimal HTML we need to interact with data : sets of input and forms.<br /><br />
-Here, we stop. And we see that these forms are describing the data model.<br /><br />
-Wouldn't it be nice if we could parse the HTML form easily with a tool from the standard library : <a href="https://docs.python.org/3/library/html.parser.html">html.parser</a> and maybe deduce the database model and even more than fields coud add relationship, and well since we are dreaming : what about creating the tables on the fly from the form if they don't exists ?<br /><br />
-The encoding of the relationship do require an hijack of convention where when the parser cross a name of the field in the form whatever_id it deduces it is a foreign key to table « whatever », column « id ».<br />
-Once this is done, we can parse the html, do some magick to match HTML input types to database types (adapter) and it's almost over. We can even dream of creating the database if it does not exists in a oneliner for sqlite.<br /><br />
-We just need to throw away all the frugality of dependencies by the window and spoil our karma of « digital soberty » by adding the almighty sqlalchemy the crudest (but still heavy) ORM when it comes of the field of <a href="https://docs.sqlalchemy.org/en/20/orm/extensions/automap.html">the introspective features of an ORM to map a database object to a python object in a clear consistent way</a>.
-With this, just one function is needed in the controller to switch from embasing (POST method) and searching (GET).<br /><br />
-Well, if the DOM is passed in the request. So of course I see the critics here :
-<ul><li>we can't pass the DOM in the request because the HTML form ignores the DOM</li>
-  <li>You are not scared of error 415 (request too large) in the get method if you pass the DOM ?</li>
-</ul>
-That's where we obviously need two important tools : 1) javascript, 2) limitations.<br /><br />
-Since we are human we would also like the form to be readable when served, because, well, human don't read the source and can't see the name attributes of the input. A tad of improving the raw html would be nice. It would also give consistency. It will also diminishes the required size of the formular to send. Here, javascript again is the right anwser. Fine, we serve the static page in the top of the controller. Let's use jquery to make it terse enough. Oh, if we have Javascript, wouldn't il be able to clone the part of the invented <i>model</i> tag inside every form so now we can pass the relevant part of the DOM to the controller ?<br /><br />
-I think we have everything to write the crudest CRUD server of them all :D 
-<br /><br />
-
-Happy code reading : 
-<pre>
-import multipart
-from wsgiref.simple_server import make_server
-from json import dumps
-from sqlalchemy import *
-from html.parser import HTMLParser
-from base64 import b64encode
-from sqlalchemy.ext.automap import automap_base
-from sqlalchemy.orm import Session
-from dateutil import parser
-from sqlalchemy_utils import database_exists, create_database
-from urllib.parse import parse_qsl, urlparse
-
-engine = create_engine("sqlite:///this.db")
-if not database_exists(engine.url):
-    create_database(engine.url)
-
-tables = dict()
-
-class HTMLtoData(HTMLParser):
-    def __init__(self):
-        global engine, tables
-        self.cols = []
-        self.table = ""
-        self.tables= []
-        self.engine= engine
-        self.meta = MetaData()
-        super().__init__()
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        simple_mapping = dict(
-            email = UnicodeText, url = UnicodeText, phone = UnicodeText, text = UnicodeText,
-            date = Date, time = Time, datetime = DateTime, file = Text
-        )
-        if tag == "input":
-            if attrs.get("name") == "id":
-                self.cols += [ Column('id', Integer, primary_key = True), ]
-                return
-            try:
-                if attrs.get("name").endswith("_id"):
-                    table,_=attrs.get("name").split("_")
-                    self.cols += [ Column(attrs["name"], Integer, ForeignKey(table + ".id")) ]
-                    return
-            except Exception as e: print(e)
-
-            if attrs.get("type") in simple_mapping.keys():
-                self.cols += [ Column(attrs["name"], simple_mapping[attrs["type"]]), ]
-
-            if attrs["type"] == "number":
-                if attrs["step"] == "any":
-                    self.cols+= [ Columns(attrs["name"], Float), ]
-                else:
-                    self.cols+= [ Column(attrs["name"], Integer), ]
-        if tag== "form":
-            self.table = urlparse(attrs["action"]).path[1:]
-
-    def handle_endtag(self, tag):
-        if tag=="form":
-            self.tables += [ Table(self.table, self.meta, *self.cols), ]
-            tables[self.table] = self.tables[-1]
-            self.table = ""
-            self.cols = []
-            with engine.connect() as cnx:
-                self.meta.create_all(engine)
-                cnx.commit()
-html = """
-&lt;!doctype html&gt;
-&lt;html&gt;
-&lt;head&gt;
-&lt;style&gt;
-* {    font-family:&quot;Sans Serif&quot; }
-body { text-align: center; }
-fieldset {  border: 1px solid #666;  border-radius: .5em; width: 30em; margin: auto; }
-form { text-align: left; display:inline-block; }
-input { margin-bottom:1em; padding:.5em;}
-[value=create] { background:#ffffba} [value=delete] { background:#bae1ff} [value=update] { background:#ffdfda}
-[value=read] { background:#baffc9}
-[type=submit] { margin-right:1em; margin-bottom:0em; border:1px solid #333; padding:.5em; border-radius:.5em; }
-&lt;/style&gt;
-&lt;script src=&quot;https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js&quot;&gt;&lt;/script&gt;
-&lt;script&gt;
-$(document).ready(function() {
-    $(&quot;form&quot;).each((i,el) =&gt; {
-        $(el).wrap(&quot;&lt;fieldset&gt;&lt;/fieldset&gt;&quot;  );
-        $(el).before(&quot;&lt;legend&gt;&quot; + el.action + &quot;&lt;/legend&gt;&quot;);
-        $(el).append(&quot;&lt;input name=_action type=submit value=create &gt;&lt;input name=_action type=submit value=read &gt;&quot;)
-        $(el).append(&quot;&lt;input name=_action type=submit value=update &gt;&lt;input name=_action type=submit value=delete &gt;&quot;)
-    });
-    $(&quot;input:not([type=hidden],[type=submit])&quot;).each((i,el) =&gt; {
-        $(el).before(&quot;&lt;label&gt;&quot; + el.name+ &quot;&lt;/label&gt;&lt;br/&gt;&quot;);
-        $(el).after(&quot;&lt;br&gt;&quot;);
-    });
-});
-&lt;/script&gt;
-&lt;/head&gt;
-&lt;body &gt;
-    &lt;form  action=/user method=post &gt;
-        &lt;input type=number name=id /&gt;
-        &lt;input type=text name=name /&gt;
-        &lt;input type=email name=email /&gt;
-    &lt;/form&gt;
-    &lt;form action=/event method=post &gt;
-        &lt;input type=number name=id /&gt;
-        &lt;input type=date name=from_date /&gt;
-        &lt;input type=date name=to_date /&gt;
-        &lt;input type=text name=text /&gt;
-        &lt;input type=number name=user_id /&gt;
-    &lt;/form&gt;
-&lt;/body&gt;
-&lt;/html&gt;
-
-"""
-
-
-router = dict({"" : lambda fo: html,})
-
-def simple_app(environ, start_response):
-    fo, fi=multipart.parse_form_data(environ)
-    fo.update(**{ k: dict(
-            name=fi[k].filename,
-            content_type=fi[k].content_type,
-            content=b64encode(fi[k].file.read())
-        ) for k,v in fi.items()})
-    table = route = environ["PATH_INFO"][1:]
-    fo.update(**dict(parse_qsl(environ["QUERY_STRING"])))
-    HTMLtoData().feed(html)
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
-    Base = automap_base(metadata=metadata)
-    Base.prepare()
-    attrs_to_dict = lambda attrs : {  k: (
-                    "date" in k or "time" in k ) and type(k) == str
-                        and parser.parse(v) or
-                    "file" in k and f"""data:{fo[k]["content_type"]}; base64, {fo[k]["content"].decode()}""" or v
-                    for k,v in attrs.items() if v and not k.startswith("_")
-    }
-    if route in tables.keys():
-        start_response('200 OK', [('Content-type', 'application/json; charset=utf-8')])
-        with Session(engine) as session:
-            try:
-                action = fo.get("_action", "")
-                Item = getattr(Base.classes, table)
-                if action == "delete":
-                    session.delete(session.get(Item, fo["id"]))
-                    session.commit()
-                    fo["result"] = "deleted"
-                if action == "create":
-                    new_item = Item(**attrs_to_dict(fo))
-                    session.add(new_item)
-                    session.flush()
-                    ret=session.commit()
-                    fo["result"] = new_item.id
-                if action == "update":
-                    session.delete(session.get(Item, fo["id"]))
-                    new_item = Item(**attrs_to_dict(fo))
-                    session.add(new_item)
-                    session.commit()
-                    fo["result"] = new_item.id
-                if action in { "read", "search" }:
-                    result = []
-                    for elt in session.execute(
-                        select(Item).filter_by(**attrs_to_dict(fo))).all():
-                        result += [{ k.name:getattr(elt[0], k.name) for k in tables[table].columns}]
-                    fo["result"] = result
-            except Exception as e:
-                fo["error"] = e
-                session.rollback()
-    else:
-        start_response('200 OK', [('Content-type', 'text/html; charset=utf-8')])
-
-    return [ router.get(route,lambda fo:dumps(fo.dict, indent=4, default=str))(fo).encode() ]
-
-print("Crudest CRUD of them all on port 5000...")
-make_server('', 5000, simple_app).serve_forever()
-
-</pre>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 06, 2024 08:50 AM UTC by
-            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
-              >Julien Tayon</a
-            >
-          </div>
-          <a
-            href="https://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/" class="hover:underline"
-              >Deploy Your Own Web App With Kamal 2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Kamal offers zero-downtime deploys, rolling restarts, asset bridging, remote builds, accessory service management, and everything else you need to deploy and manage your web app in production with Docker. Originally built for Rails apps, Kamal will work with any type of web app that can be containerized. We dig into Kamal, how it works, and how you could use it on your next project.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 06, 2024 12:00 AM UTC by
-            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
-              >Matt Layman</a
-            >
-          </div>
-          <a
-            href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://testdriven.io/blog/django-avoid-counting/" class="hover:underline"
-              >Avoid Counting in Django Pagination</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This article looks at how to avoid the count query in Django's paginator.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 05, 2024 10:28 PM UTC by
-            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
-              >TestDriven.io</a
-            >
-          </div>
-          <a
-            href="https://testdriven.io/blog/django-avoid-counting/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/introduction-to-web-scraping-with-python/" class="hover:underline"
-              >Introduction to Web Scraping With Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this video course, you'll learn all about web scraping in Python. You'll see how to parse data from websites and interact with HTML forms using tools such as Beautiful Soup and MechanicalSoup.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 05, 2024 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/introduction-to-web-scraping-with-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-variables/" class="hover:underline"
-              >Quiz: Variables in Python: Usage and Best Practices</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this quiz, you'll test your understanding of variables in Python. Variables are symbolic names that refer to objects or values stored in your computer's memory, and they're essential building blocks for any Python program.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 05, 2024 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/python-variables/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/484/from-react-to-a-django-htmx-based-stack" class="hover:underline"
-              >#484: From React to a Django+HTMX based stack</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Have you heard about HTMX? We've discussed it a time or two on this show. We're back with another episode on HTMX, this time with a real-world success story and lessons learned. We have Sheena O'Connell on to tell us how she moved from a React-Django app to pure Django with HTMX.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 05, 2024 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/484/from-react-to-a-django-htmx-based-stack"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-release-7-4/7989" class="hover:underline"
-              >Tryton Release 7.4</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div> </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/c/c4a2e91adf9a536cd6d6d8677e0fee52ad13350e.jpeg" title="Credit: Pexels by Jakub Zerdzicki"><img alt="Pumpkin by Laptop and Smartphone" height="472" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/c/c4a2e91adf9a536cd6d6d8677e0fee52ad13350e_2_689x472.jpeg" title="Credit: Pexels by Jakub Zerdzicki" width="689" /></a></div><p></p>
-<p>We are proud to announce the 7.4 release of <a href="https://www.tryton.org/">Tryton </a>.<br />
-This release provides many bug fixes, performance improvements and some fine tuning.<br />
-You can give it a <a href="https://www.tryton.org/demo">try on the demo server</a>, <a href="https://hub.docker.com/r/tryton/tryton/">use the docker image</a> or <a href="https://www.tryton.org/download">download it here</a>.<br />
-As usual <a href="https://docs.tryton.org/7.4/server/topics/setup_database.html#update-a-database">upgrading from previous series</a> is fully supported.</p>
-<p>Here is a list of the most noticeable changes:</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--user-clients">Clients</h3>
-<p>The <code>Many2Many</code> widget now has a restore button to revert the removal of records before saving.</p>
-<p>The <code>CSV</code> export window stays open after the export is done so you can refine your export without having the redo all of the configuration.<br />
-It also supports exporting and importing translatable fields with a language per column.<br />
-The error messages displayed when there is a problem with the <code>CSV</code> import have been improved to include the row and column number of the value that caused the error.</p>
-<p>The management window for the favourites has been removed and replaced by a simple “last favorite first” order.</p>
-<p>The focus goes back to the search entry after performing a search/refresh.</p>
-<p>You can now close a tab by middle clicking on it (as is common in other software).</p>
-<h4 id="heading--user-web-client">Web Client</h4>
-<p>The left menu and the attachment preview can now be resized so the user can make them the optimal size for their screen.</p>
-<h3 id="heading--user-accounting">Accounting</h3>
-<p>The minimal chart of accounts has been replaced by the a <a href="https://www.ifrs-gaap.com/universal-chart-accounts">universal chart of accounts</a> which is a good base for <a href="https://en.wikipedia.org/wiki/International_Financial_Reporting_Standards">IFRS</a> and <a href="https://en.wikipedia.org/wiki/Generally_Accepted_Accounting_Principles_(United_States)">US GAAP</a>.</p>
-<p>It is now possible to copy an accounting move from a closed period. The closed period will be replaced by the current period after accepting the warning.</p>
-<p>The payments are now numbered to make it easier to identify them inside the application.<br />
-An option has been added to the parties to allow direct debits to be created based on the balance instead of the accounting lines.<br />
-We’ve added a button on the Stripe payments and Stripe and Braintree customers to allow an updated to be forced. This helps when fixing missed webhooks.</p>
-<p>When a stock move is cancelled, the corresponding stock account move is now cancelled automatically.<br />
-But it now no longer possible to cancel a done stock move which has been included in a calculation used for anglo-saxon accounting.</p>
-<h3 id="heading--user-commission">Commission</h3>
-<p>It is now possible to deactivate an agent so that they are no longer used for future orders.</p>
-<h3 id="heading--user-company">Company</h3>
-<p>It is now possible to add a company logo. This is then displayed in the header of generated documents.</p>
-<h3 id="heading--user-incoterm">Incoterm</h3>
-<p>A warning is now raised when the incoterm of a shipment is different from the original document (such as the sale or purchase).</p>
-<h3 id="heading--user-party">Party</h3>
-<p>We’ve added more identifiers for parties like the <em>United Kingdom Unique Taxpayer Reference</em>,  <em>Taiwanese Tax Number</em>,  <em>Turkish tax identification number</em>, <em>El Salvador Tax Number</em>, <em>Singapore’s Unique Entity Number</em>, <em>Montenegro Tax Number</em> and <em>Kenya Tax Number</em>.</p>
-<h3 id="heading--user-product">Product</h3>
-<p>We’ve added a wizard to manage the replacement of products. Once there is no more stock of the replaced product in any of the warehouses, all the stock on all pending orders are replaced automatically.</p>
-<p>A description can now be set for each product image.</p>
-<p>There is now a button on the price list form to open the list of lines. This is helpful when the price list has a lot of lines.</p>
-<h3 id="heading--user--production">Production</h3>
-<p>It is now possible to cancel a done production. All its stock moves are then cancelled.</p>
-<p>The Bill of Materials now have an auto-generated internal code.</p>
-<h3 id="heading--user-purchase">Purchase</h3>
-<p>The wizard to handle exceptions has been improved to clearly display the list of lines to recreate and the list of lines to ignore.</p>
-<p>The menu entry <em>Parties associated to Purchases</em> has been removed in favour of the per party reporting.</p>
-<p>The purchase amendment now supports amending the quantity of a purchase line using the secondary unit.</p>
-<h3 id="heading--user-quality">Quality</h3>
-<p>It is now no longer possible to delete non-pending inspections.</p>
-<h3 id="heading--user-sale">Sale</h3>
-<p>The wizards to handle exceptions have been improved to clearly display the list of lines to recreate and the list of lines to ignore.</p>
-<p>The menu entry <em>Parties associated to Sales</em> has been removed in favor of the per party reporting.</p>
-<p>A warning is now raised when the user tries to submit a complaint for the same origin as an existing complaint.</p>
-<p>The reporting can be grouped per promotion.</p>
-<p>From a promotion, it is now possible to list of the sales related to it.<br />
-The coupon number of promotion can now be reused once the previous promotion has expired.</p>
-<p>The sale amendment now supports amending the quantity of a sale line using the secondary unit.</p>
-<h3 id="heading--user-stock">Stock</h3>
-<p>It is now possible to cancel a done shipment. When this happens the stock moves of the shipment are cancelled.</p>
-<p>The task to reschedule late shipments now includes any shipment that is not yet done.</p>
-<p>The supplier shipments no longer have a default planned date.</p>
-<p>The customer shipments now have an extra state, <em>Shipped</em>, before the <em>Done</em> state.</p>
-<p>The lot trace now shows the inventory as a document.</p>
-<p>The package weight and the warehouse are now criteria that can be used when selecting a shipping method.</p>
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<p>The clients automatically retry 5 times on a <code>503 Service Unavailable</code> response. They respect the <code>Retry-After</code> value if it is set in the response header. This is useful when performing short maintenance on the server without causing an interruption for the users.</p>
-<p>The scheduled tasks now show when they are running and prevent the user from editing them (as they are locked anyway).<br />
-We also store their last duration for a month by default. So the administrator can analyze and find slow tasks.</p>
-<p>It is now possible to configure a <a href="https://docs.tryton.org/7.4/server/topics/configuration.html#license-key">license key</a> for the TinyMCE editor.<br />
-Also TinyMCE has been updated to version 7.</p>
-<p>It is now possible to configure the command to use to convert a report to a different format. This allows the use of an external service like <a href="https://code.tryton.org/contrib/document-converter"><code>document-converter</code></a>.</p>
-<h3 id="heading--sysadmin-accounting">Accounting</h3>
-<p>The <em>Accounting Party</em> group has been merged into the *Accounting" group.</p>
-<p>We now raise a warning when the user is changing one of the configured credentials used on external services. This is to prevent accidental modification.</p>
-<h3 id="heading--sysadmin-document-incoming">Document Incoming</h3>
-<p>It is now possible to set a maximum size for the content of the document incoming requests.</p>
-<h3 id="heading--sysadmin-inbound-email">Inbound Email</h3>
-<p>It is now possible to set a maximum size for the inbound email requests.</p>
-<h3 id="heading--sysadmin-web-shop">Web Shop</h3>
-<p>There is now a scheduled task that updates the cache that contains the product data feeds.</p>
-<h2 id="heading--developer">Changes for the Developer</h2>
-<h3 id="heading--developer-server">Server</h3>
-<p>The <a href="https://en.wikipedia.org/wiki/Object%E2%80%93relational_mapping">ORM</a> supports <a href="https://www.postgresql.org/docs/current/rangetypes.html">SQL Range</a> functions and operators to build <a href="https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-EXCLUSION">exclusion constraints</a>. This allows, for example, the use of non-overlapping constraints using an index.<br />
-On PostgreSQL the <a href="https://www.postgresql.org/docs/current/btree-gist.html"><code>btree_gist</code> extension</a> may be needed otherwise the ORM will fallback to locking querying the table.<br />
-The SQLite backend adds simple SQL constraints to the table schema.</p>
-<p>The relational fields with a filter are no longer copied by default. This was a frequent source of bugs as the same relational field without the filter was already copied so it generated duplicates.</p>
-<p>We’ve added a <a href="https://docs.tryton.org/7.4/server/ref/tools/chart.html#trytond.tools.chart.sparkline">sparkline tool</a> to generate textual <a href="https://en.wikipedia.org/wiki/Sparkline">sparklines</a>. This allows the removal of the <a href="https://www.pygal.org/">pygal</a> dependency.</p>
-<p>The <code>activate_modules</code> from testing now accepts a list of setup methods that are run before taking the backup. This speeds up any other tests which restore the backup as they then do not need to run those setup methods.</p>
-<p>The backend now has a <a href="https://docs.tryton.org/latest/server/ref/backend.html#trytond.backend.Database.estimated_count">method to estimate the number of rows</a> in a table. This is faster than counting when we only need an estimate, for example when choosing between a join and a sub-query.</p>
-<p>We’ve added a <a href="https://docs.tryton.org/latest/server/ref/models.html#trytond.model.ModelSQL.__setup_indexes__"><code>ModelSQL.__setup_indexes__</code> method</a> that prepares the indexes once the <a href="https://docs.tryton.org/latest/server/ref/pool.html#pool"><code>Pool</code></a> has been loaded.</p>
-<p>It is now possible to generate many sequential numbers in a single call. This allows, for example, to number a group of invoices with a single call.</p>
-<p>The backend now uses <code>JSONB</code> by default for <code>MultiSelection</code> fields. It was already supported, but the database needed to be altered to activate the feature.</p>
-<p>You can now define the cardinality (<code>low</code>, <code>normal</code> or <code>high</code>) for the index usage. This allows the backend to choose an optimal type of index to create.</p>
-<p>We now have tools that <a href="https://docs.tryton.org/7.4/server/ref/tools/misc.html#trytond.tools.sqlite_apply_types">apply the typing</a> to columns of an SQLite query. This is needed because SQLite doesn’t do a good job of supporting <code>CAST</code>.</p>
-<p>The RPC responses are now compressed if their size if large enough and the client accepts it.</p>
-<p>The <code>ModelView._changed_values</code> and <code>ModelStorage._save_values</code> are now methods instead of properties. This makes it is easier to debug errors because <code>AttributeError</code> exceptions are no longer hidden.</p>
-<p>The scheduled task runner now uses a pool of processes for better parallelism and management. Only the running task is now locked.</p>
-<p>We’ve added an environment variable <code>TEST_NETWORK</code> so we can avoid running tests that require network access.</p>
-<p>There is now a command line option for exporting translations and storing them as a <code>po</code> file in the corresponding module.<br />
-Tryton sets the <code>python-format</code> flag in the <code>po</code> file for the translations containing python formats. This allows Weblate (our <a href="https://translate.tryton.org">translation service</a>) to check if the translations keep the right placeholders.</p>
-<h3 id="heading--developer-accounting">Accounting</h3>
-<p>The payment amounts are now cached on the account move line to improve the performance when searching for lines to pay.<br />
-The payment amounts now have to be greater or equal to zero.</p>
-<h3 id="heading--developer-purchase">Purchase</h3>
-<p>Only purchase lines of type <em>line</em> can be used as an origin for a stock move.</p>
-<h3 id="heading--developer-sale">Sale</h3>
-<p>Only sales lines of type <em>line</em> can be used as an origin for a stock move.</p>
-<p>The fields from the <em>Sale Shipment Cost Module</em> are now all prefixed with <code>sale_</code>.</p>
-<h3 id="heading--developer-stock">Stock</h3>
-<p>Cancelled moves are no longer included in the shipment and package measurements.</p>
-            <p><small>3 posts - 2 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-release-7-4/7989">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 05, 2024 07:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-release-7-4/7989"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://devblogs.microsoft.com/python/announcing-github-copilot-in-data-wrangler/" class="hover:underline"
-              >Announcing GitHub Copilot in Data Wrangler</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>AI did not write this blog post, but it will make your exploratory data analysis with Data Wrangler better! Today, we’re excited to introduce our first step of integrating the power of Copilot into Data Wrangler. With this first integration of Copilot with Data Wrangler, you’ll be able to: Use natural language to clean and [&#8230;]</p>
-<p>The post <a href="https://devblogs.microsoft.com/python/announcing-github-copilot-in-data-wrangler/">Announcing GitHub Copilot in Data Wrangler</a> appeared first on <a href="https://devblogs.microsoft.com/python">Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 04, 2024 07:02 PM UTC by
-            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
-              >Python Engineering at Microsoft</a
-            >
-          </div>
-          <a
-            href="https://devblogs.microsoft.com/python/announcing-github-copilot-in-data-wrangler/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.rtwilson.com/join-the-geotam-hackathon-to-work-out-business-turnovers/" class="hover:underline"
               >Join the GeoTAM hackathon to work out business turnovers!</a
             >
@@ -1756,6 +1115,450 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/" class="hover:underline"
+              >Python in Visual Studio Code – November 2024 Release</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The November 2024 release of the Python and Jupyter extensions for Visual Studio Code are now available. This month's updates include docstring template generation with Pylance, Fold/Unfold All Docstrings commands, a variable view with the Native REPL and more!</p>
+<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/">Python in Visual Studio Code &#8211; November 2024 Release</a> appeared first on <a href="https://devblogs.microsoft.com/python">Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 05:02 PM UTC by
+            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
+              >Python Engineering at Microsoft</a
+            >
+          </div>
+          <a
+            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html" class="hover:underline"
+              >Important Changes Ahead: A Commitment to Financial Transparency</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US is the largest and longest-running annual gathering for the community using and developing the open-source Python programming language. It is produced and underwritten by the <a href="https://www.python.org/psf-landing/">Python Software Foundation</a> (PSF), the 501(c)(3) nonprofit organization dedicated to advancing and promoting Python and its community.</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">The PSF is a grant-giving non-profit and the revenue generated by PyCon US is essential to our continued community support and operations. Check out our <a href="https://www.python.org/psf/mission/">Mission</a> and our <a href="https://www.python.org/psf/annual-report/2023/">latest Annual Impact Report</a> to get an idea of the scope of work our foundation is responsible for. Many misunderstand or are unaware of this relationship, but the PSF relies on maintaining a strict budget for the operation of PyCon US in order to continue its grants programs and other financial responsibilities.</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">With this in mind, PyCon US has taken on many expenses in the years following the pandemic, including the losses associated with canceling PyCon US 2020 and the move to PyCon US 2021 online. Additionally, inflation in event costs and lower projected sponsorships have combined to create a significant loss for PyCon US and the PSF in 2024.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">Because the PSF is a nonprofit, we keep PyCon US registration costs much lower than comparable technology conferences. Our goal is for PyCon US to remain accessible to the widest group possible. For us to continue to do so and ensure the sustainability of the event, we’ve had to make some changes to the structure of PyCon US. We know that an important piece of making changes to PyCon US is notice and awareness to our wonderful community– and we want to be transparent about the reasons behind them.&nbsp;</span></span></p><h3 style="text-align: left;">Ticket Prices</h3><p style="text-align: left;"><span style="font-family: inherit;">To continue providing the content, program, and opportunities of PyCon US this year and in the future and to offset these rising costs, we’ve decided to raise ticket prices this year by $50 USD for the Individual and Corporate rates and $25 USD for the Student rate.&nbsp;</span></p><p><span><span style="font-family: inherit;">New PyCon US 2025 registration prices:&nbsp;</span></span></p><p></p><ul style="text-align: left;"><li><span><span style="font-family: inherit;">Corporate: $800 USD</span></span></li><li><span style="font-family: inherit;">Individual: $450 USD</span></li><li><span style="font-family: inherit;">Student: $125 USD</span></li></ul><p></p><p><span><span style="font-family: inherit;">By adjusting ticket prices, we hope to continue delivering a valuable and enriching conference experience while still being financially accessible to our community.&nbsp;</span></span></p><h3 style="text-align: left;">PyCon US Online</h3><p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US moved to online for the first year in 2021 during the pandemic and we’ve been proud to offer the Online attendance option for the past three years since. While we recognize the value that PyCon US Online provides in terms of accessibility, the challenges of delivering a seamless and engaging experience for both in-person and virtual attendees have been significant. From a cost perspective alone, cutting the online event will free up resources that can be put back into the in person and after-conference experience.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US will record all Talk tracks, Keynotes and Lightning Talks on the main days of the conference (Friday - Sunday) and we plan to publish these recordings very quickly after the sessions take place so those who can’t join us in person can access them while the topics are still current.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">We appreciate the enthusiasm and participation of everyone who was part of the PyCon US Online experience and encourage everyone who can to join us in person in Pittsburgh this year. If you are unable to join, we welcome you to subscribe to our <a href="https://www.youtube.com/c/pyconus">PyCon US YouTube channel</a> to receive notifications of new content.</span></span></p><h3 style="text-align: left;">Tutorial Recordings</h3><p><span><span style="font-family: inherit;">The pre-conference tutorials are a valuable part of the PyCon US conference and provide an opportunity for Pythonistas around the world to learn and grow their skills in hands-on sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Tutorial ticket sales are a large source of revenue for PyCon US, but in the past few years, the margin on the tutorials has declined due to rising costs associated with recording these sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Because tutorials are longer than talks and are in an interactive classroom-like setting, they require many resources such as power, better internet connectivity, and catering. Additionally, tutorial instructors are compensated due to the amount of work involved in preparing and providing these sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Since tutorial registration is at an additional cost, we want to prioritize the experience for those attending in person and to do so, we will be removing tutorial recordings this year. The value of the face-to-face learning, discussions, and hands-on engagement that occurs during the tutorials outweighs the benefits of capturing the sessions for later viewing and can’t be replicated in a recorded format. We hope this change will encourage more attendees to participate in the tutorials onsite and engage with the content the instructors work very hard to provide.&nbsp;</span></span></p><h3 style="text-align: left;">Speaker Travel Grant Limit</h3><p><span><span style="font-family: inherit;">The support of our community has allowed us to offer generous Travel Grants based on individual needs including travel, accommodation, and conference tickets. The Travel Grant program helps us shape a conference that is diverse on a number of axes from technical to geographic.</span></span></p><p><span><span style="font-family: inherit;">However, <a href="https://pycon.blogspot.com/2024/03/TravelGrantsReport2024.html">with decreased Travel Grant funds</a>, PyCon US wants to ensure that we can still spread out our funding to support as many people as possible. Currently, a large part of the Travel Grant budget goes to speakers, and all speakers who are included on the proposal for an accepted talk are automatically eligible for a travel grant. For 2025, there will be a limit of two Travel Grant-funded speakers per accepted proposal across all tracks. We believe this will allow us to spread our funding capacity across our community and welcome as many Pythonistas to PyCon US as we can, while not impacting the quality and diversity of our programming.</span></span></p><h3 style="text-align: left;">Thank you!</h3><p><span><span style="font-family: inherit;">PyCon US has been around for over 20 years, and we want to ensure it sticks around for many more! We recognize that these changes will impact many folks in a variety of ways, and we hope that our transparency about why these decisions were made will help bring understanding.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">By making these changes and being willing to adapt, PyCon US can continue to be a welcoming, community conference, where everyone can meet new people and learn new things, connect with old friends and tell people about their projects. We appreciate our community’s support and understanding regarding these changes. If you have any feedback or questions, please feel free to <a href="mailto:pycon-reg@python.org">reach out to the organizing team</a>.&nbsp;&nbsp;</span></span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 02:00 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/226/" class="hover:underline"
+              >The Real Python Podcast – Episode #226: PySheets: Spreadsheets in the Browser Using PyScript</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What goes into building a spreadsheet application in Python that runs in the browser? How do you make it launch quickly, and where do you store the cells of data? This week on the show, we speak with Chris Laffra about his project, PySheets, and his book "Communication for Engineers."
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/226/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zerotomastery.io/blog/python-monthly-newsletter-october-2024/?utm_source=python-rss-feed" class="hover:underline"
+              >Python Monthly Newsletter 💻🐍</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            59th issue of Andrei Neagoie's must-read monthly Python Newsletter: Python 3.13, Django Project Ideas, GPU Bubble is Bursting, and much more. Read the full newsletter to get up-to-date with everything you need to know from last month.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 10:00 AM UTC by
+            <a href="https://zerotomastery.io/rss/python-rss.xml" class="link link-hover text-primary"
+              >Zero to Mastery</a
+            >
+          </div>
+          <a
+            href="https://zerotomastery.io/blog/python-monthly-newsletter-october-2024/?utm_source=python-rss-feed"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.curiousefficiency.org/posts/2024/11/the-origin-of-venvstacks/" class="hover:underline"
+              >The origin of venvstacks</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>There has been a longstanding gap in the Python packaging ecosystem that has
+somewhat annoyed me,
+but not enough to do anything about it:
+we haven't really had a good way to compose <em>multiple</em> layers of Python
+virtual environments together,
+allowing large dependencies (like AI and machine learning libraries)
+to be shared across multiple different application environments without having
+to install them directly into the base runtime environment.</p>
+<p>Utilities for collecting up an entire Python runtime, an application, and all its
+dependencies into a single deployable artifact have existed since before the turn
+of the century.</p>
+<p>We've had standardised <a href="https://docs.python.org/3/library/venv.html">virtual environments</a>
+(allowing multiple applications to share a base Python runtime and its directly
+installed third party packages) for almost as long.</p>
+<p>We've had <a href="https://docs.python.org/3/library/zipapp.html">zip applications</a>
+for a long time as well (and other utilities which build on that feature).</p>
+<p>We've had tools like <a href="https://github.com/cloudify-cosmo/wagon"><code>wagon</code></a>
+which allow us to ship a bundle of prebuilt Python wheel archives and
+install them on a destination system without needing to download
+anything else from the internet at installation time.</p>
+<p>We've had tools like <a href="https://docs.conda.io/"><code>conda</code></a>
+(and more recently <a href="https://docs.astral.sh/uv/"><code>uv</code></a>),
+which make intelligent use of hard links on local systems to avoid
+making duplicate copies of completely identical versions of packages.</p>
+<p>We've technically had platform specific mechanisms like Linux container images,
+where the contents of an environment can be built up across multiple
+container image layers, with the lower layers being shared across multiple
+image definitions, but have lacked a convenient way to handle the dependency
+management complications involved in using these tools to share large Python
+libraries.</p>
+<p>But we've never had something which specifically took full advantage of the way
+Python's import system works to enable robust structural decomposition of Python
+applications into independently updatable subcomponents (with a granularity
+larger than single packages).</p>
+<p>All of this history meant that I was thoroughly intrigued when a mutual
+acquaintance introduced me to the creators of the <a href="https://lmstudio.ai/">LM Studio</a>
+personal AI desktop application to discuss a Python packaging problem they
+had looming on their technical road map: it was clear from user demand and the
+rate of evolution in the Python AI/ML ecosystem that they needed a way to ship
+Python AI/ML components directly to their users <em>without</em> having to wait for
+those capabilities to be made available through native interfaces in other
+languages (such as Swift, C++, or JavaScript), but it didn't seem obvious to them
+<em>how</em> they could readily integrate that capability into LM Studio without
+making the application installation process substantially more complicated
+for their users.</p>
+<p>What started as a consulting contract for a technical proof of concept,
+and has since turned into a permanent position with the organisation,
+proved fruitful,
+and the result is the <a href="https://lmstudio.ai/blog/venvstacks">recently published</a>
+open source <a href="https://pypi.org/project/venvstacks/"><code>venvstacks</code></a> utility,
+which is specifically designed to enable the kind of portable deterministic
+artifact publishing setup that LM Studio needed, including:</p>
+<ul>
+<li>Base runtime layers
+  (based on <a href="https://github.com/indygreg/python-build-standalone"><code>python-build-standalone</code></a>)</li>
+<li>Framework layers (for shipping large dependencies, such as Apple MLX or PyTorch)</li>
+<li>Application layers (including additional unpackaged "launch modules" for app execution)</li>
+</ul>
+<p>There are certainly still some technical limitations to be addressed (the
+<a href="https://github.com/lmstudio-ai/venvstacks/issues/38">dynamic linking problem</a>
+with layering virtual environments like this is notorious amongst Python packaging
+experts for a reason), but even in its current form, <code>venvstacks</code> is already capable
+enough to power the recent inclusion of
+<a href="https://lmstudio.ai/blog/lmstudio-v0.3.4#mlx-in-lm-studio-using-python">Apple MLX support</a>
+in LM Studio.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 04:21 AM UTC by
+            <a href="http://www.curiousefficiency.org/categories/python.xml" class="link link-hover text-primary"
+              >Nick Coghlan</a
+            >
+          </div>
+          <a
+            href="https://www.curiousefficiency.org/posts/2024/11/the-origin-of-venvstacks/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.johndcook.com/blog/2024/10/31/how-hard-is-constraint-programming/" class="hover:underline"
+              >How hard is constraint programming?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I&#8217;ve been writing code for the Z3 SMT solver for several months now. Here are my findings. Python is used here as the base language. Python/Z3 feels like a two-layer programming model&#8212;declarative code for Z3, imperative code for Python. In this it seems reminiscent of C++/CUDA programming for NVIDIA GPUs&#8212;in that case, mixed CPU and [&#8230;]</p>
+The post <a href="https://www.johndcook.com/blog/2024/10/31/how-hard-is-constraint-programming/">How hard is constraint programming?</a> first appeared on <a href="https://www.johndcook.com/blog">John D. Cook</a>.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 31, 2024 11:52 AM UTC by
+            <a href="http://www.johndcook.com/blog/category/python/feed/" class="link link-hover text-primary"
+              >John Cook</a
+            >
+          </div>
+          <a
+            href="https://www.johndcook.com/blog/2024/10/31/how-hard-is-constraint-programming/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.egenix.com/company/news/PyDDF-Herbst-Sprint-2024" class="hover:underline"
+              >PyDDF Python Herbst Sprint 2024</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span style="font-style: italic;">The following text is in German, since we're announcing a Python sprint in Düsseldorf, Germany.</span><br />
+</p>
+<h2>Ankündigung</h2>
+<p style="text-align: center; font-size: 1.5em;"><a href="https://www.meetup.com/python-meeting-dusseldorf/events/303528848/">Python Meeting Herbst Sprint 2024</a> in<br />
+<a href="http://www.duesseldorf.de/">Düsseldorf</a><br />
+</p>
+
+<p style="text-align: center; font-weight: bold;">Samstag, 09.11.2024, 10:00-18:00 Uhr<br />
+Sonntag, 10.11.2024. 10:00-18:00 Uhr</p>
+<p align="left" style="text-align: center; font-weight: bold;">
+<em><a class="link" href="https://atos.net/de/deutschland" rel="nofollow ugc" target="_blank">Eviden / Atos Information Technology GmbH</a></em>, Am Seestern 1, 40547 Düsseldorf</p>
+
+
+<h2>Informationen</h2>
+Das <a href="http://pyddf.de/">Python Meeting Düsseldorf (PyDDF)</a> veranstaltet mit freundlicher Unterstützung von <a href="https://eviden.com/de-de/">Eviden Deutschland </a>ein Python Sprint Wochenende.<br />
+<br />
+Der Sprint findet am Wochenende 09./10.11.2024 in der Eviden / Atos Niederlassung, Am Seestern 1, in Düsseldorf statt.<ul>
+  <li><a href="https://goo.gl/maps/urWcf3HxXuXxQskf7">Sprint Ort in Google Maps</a><br />
+</li>
+</ul>Folgende Themengebiete sind als Anregung bereits angedacht:<br />
+<ul>
+  </ul>
+<ul>
+  
+<li><b>AI/ML: Bilderkennung</b> mit Azure Computervision</li>
+<li><b>AI/ML: Texte und Meta Daten aus Presseseiten extrahieren</b>, mit Hilfe eines lokalen LLMs</li>
+<li><b>AI/ML: Transkription</b> von Videos/Audiodateien mit Whisper</li>
+<li><b>Kodi Add-Ons</b> für ARD, ZDF und ARTE<br />
+  <strong></strong></li>
+</ul>Natürlich können die Teilnehmenden weitere Themen vorschlagen und umsetzen.<ul>
+</ul>
+<h2>Anmeldung, Kosten und weitere Infos<br />
+</h2>
+<p>Alles weitere und die Anmeldung findet Ihr auf der Meetup Sprint Seite:</p>
+<p>
+</p>
+<ul>
+  <li><a href="https://www.meetup.com/python-meeting-dusseldorf/events/303528848/"><b>Python Spring Sprint &amp; Hackathon in Düsseldorf</b></a><br />
+</li>
+</ul><b>WICHTIG</b>: Ohne Anmeldung können wir den Gebäudezugang nicht vorbereiten. Eine spontane Anmeldung am Sprint 
+Tag wird daher vermutlich nicht funktionieren.<br />
+<br />
+Teilnehmer sollten sich zudem in der PyDDF Telegram Gruppe registrieren, da wir uns dort koordinieren:<br />
+<ul>
+  <li><b><a href="https://t.me/pyddf">PyDDF Telegram Gruppe</a></b></li></ul>
+<ul>
+
+</ul>
+
+<h2>Über das Python Meeting Düsseldorf</h2>
+
+
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> ist eine regelmäßige Veranstaltung in Düsseldorf, die sich an Python-Begeisterte aus der Region wendet.</p>Einen guten Überblick über die Vorträge bietet unser <a href="http://www.youtube.com/pyddf/" style="font-weight: bold;">PyDDF YouTube-Kanal</a>, auf dem wir Videos der Vorträge nach den Meetings veröffentlichen.<br />
+
+
+
+<p>Veranstaltet wird das Meeting von der <a href="/">eGenix.com GmbH</a>, Langenfeld, in Zusammenarbeit mit <a href="http://www.clark-consulting.eu/">Clark Consulting &amp; Research</a>, Düsseldorf.<br />
+</p>Viel Spaß !
+<p>Marc-André Lemburg, eGenix.com
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 31, 2024 09:00 AM UTC by
+            <a href="http://www.egenix.com/company/news/rss2" class="link link-hover text-primary"
+              >eGenix.com</a
+            >
+          </div>
+          <a
+            href="https://www.egenix.com/company/news/PyDDF-Herbst-Sprint-2024"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonshow.com/p/49-edgedb-and-python-with-yury-selivanov" class="hover:underline"
+              >49 - EdgeDB and Python with Yury Selivanov</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode of The Python Show Podcast, we welcome Yury Selivanov as our guest.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 30, 2024 05:31 PM UTC by
+            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
+              >The Python Show</a
+            >
+          </div>
+          <a
+            href="https://www.pythonshow.com/p/49-edgedb-and-python-with-yury-selivanov"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -1767,12 +1570,12 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8828</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 8480</a></li>
+    <li><a>Unique Feeds: 421</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (490)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (415)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (323)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (210)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (490)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (415)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (210)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (195)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
