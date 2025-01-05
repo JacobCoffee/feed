@@ -53,6 +53,120 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/" class="hover:underline"
+              >We have been writing Ansible tasks wrong</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Look at the following Ansible task:</p>
+<div class="code"><pre class="code literal-block"><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prometheus Exporters</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Extend caps for ping - File</span>
+<span class="w">    </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">src</span><span class="p">:</span><span class="w">   </span><span class="s">"roles/server/files{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">dest</span><span class="p">:</span><span class="w">  </span><span class="s">"{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<span class="w">      </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">0600</span>
+<span class="w">    </span><span class="nt">loop</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf</span>
+<span class="w">    </span><span class="nt">when</span><span class="p">:</span><span class="w"> </span><span class="s">"'blackbox'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">exporters"</span>
+<span class="w">    </span><span class="nt">register</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">foo</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config, monitoring</span>
+<span class="w">    </span><span class="nt">notify</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># - Reload systemd</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Reload Blackbox Exporter</span>
+</pre></div>
+
+<p>For a while I have been wishing to be able to write this like this:</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span> <span class="nc">PrometheusExporters</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">extend_caps_for_ping_File</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s1">'blackbox'</span> <span class="ow">in</span> <span class="n">exporters</span><span class="p">:</span>
+            <span class="n">foo</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">exporter</span> <span class="ow">in</span> <span class="n">exporters</span><span class="p">:</span>
+                <span class="c1"># tags: config, monitoring</span>
+                <span class="n">foo</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">template</span><span class="p">(</span><span class="sa">f</span><span class="s2">"roles/server/files</span><span class="si">{</span><span class="n">exporter</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">exporter</span><span class="p">,</span> <span class="s1">'prometheus'</span><span class="p">,</span> <span class="s1">'root'</span><span class="p">,</span> <span class="mo">0o600</span><span class="p">,</span> 
+                           <span class="n">notify</span><span class="o">=</span><span class="p">(</span><span class="n">reload_blackbox_exporter</span><span class="p">,)))</span>
+</pre></div>
+
+<p>Notice that these are not 100% equivalent; the Python version uses <code>exporter</code> as the <code>loop_variable</code>,
+but in the Ansible code I never set that because it's so cumbersome.</p>
+<p>Why do I prefer that notation? Because: </p>
+<ul>
+<li>Even if Ansible aims to be a declarative language, it has many programming languages 
+  features like <code>when</code> (<code>if</code>), <code>loop</code> (<code>for</code>) and <code>block</code>/<code>recover</code> (<code>try</code>/<code>except</code>).</li>
+<li>Yes, the <code>register</code> equivalent I wrote there is not really nice, but alternatives are, I think, worse.</li>
+<li>When using certain modules I almost always use the same params. Notice that a proper translation 
+  would be <code>template(src=f"roles/server/files{exporter}", dest=exporter, owner='prometheus', group='root', mode=0o600)</code>,
+  and that this is very close to the inline module invocation a.k.a. free form arguments<sup id="fnref:1"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/#fn:1">1</a></sup>: <code>template: src="roles/server/files{{ exporter }}" dest="{{ exporter }}" owner=prometheus group=root mode=0600</code>.</li>
+<li>If the compiler would be clever enough, I could declare functions that would work as templates for 
+  tasks.</li>
+<li>As a programmer, this order makes more sense.</li>
+</ul>
+<p>But I don't have to wait to have enough energy to write such compiler myself; I can more or less 
+already change the order:</p>
+<div class="code"><pre class="code literal-block"><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prometheus Exporters</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Extend caps for ping - File</span>
+<span class="w">    </span><span class="nt">when</span><span class="p">:</span><span class="w"> </span><span class="s">"'blackbox'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">exporters"</span>
+<span class="w">    </span><span class="nt">loop</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf</span>
+<span class="w">    </span><span class="nt">register</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">foo</span>
+<span class="w">    </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">src</span><span class="p">:</span><span class="w">   </span><span class="s">"roles/server/files{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">dest</span><span class="p">:</span><span class="w">  </span><span class="s">"{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<span class="w">      </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">0600</span>
+<span class="w">    </span><span class="nt">notify</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># - Reload systemd</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Reload Blackbox Exporter</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config, monitoring</span>
+</pre></div>
+
+<p>Not 100% where I want it (setting <code>loop_variable</code> is still ugly), but in my head it's easier to read.
+I don't use free form arguments because it's not clear that I can split the line like I did on the 
+Python code.</p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>Thanks oblikoamorale#ansible@libera.chat. <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/#fnref:1" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 05, 2025 11:13 AM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html" class="hover:underline"
               >Towards PyPy3.11 - an update</a
             >
@@ -240,7 +354,7 @@ team. Have an idea for funding the work? Fantastic, let's talk. <a class="footn
           
           <h2 class="card-title text-xl font-bold text-white">
             <a href="https://vinayak.io/2025/01/02/ipychat/" class="hover:underline"
-              >IPychat — An AI extension for IPython</a
+              >IPychat — An AI extension for IPython that makes it work like Cursor</a
             >
           </h2>
           
@@ -1678,190 +1792,6 @@ and that you found something useful in my writings.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/oauth-api-integrations.html" class="hover:underline"
-              >Using OAuth in API Integrations</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/oauth-api-integrations.html">Using OAuth in API Integrations</a>
-</h1>
-<div class="article-meta">
-  2024-12-23, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>OAuth is often employed in processes requiring permissions to be granted to frontend applications and end users.
-Yet, what we typically need in API systems integrations is a way to secure connections between the integration
-middleware and backend systems without a need for any ongoing human interactions.</p>
-<p>OAuth can be a good choice for that scenario and this article shows how it can be achieved in Python, with backend
-systems using REST and HL7 FHIR.</p>
-<h2 id="what-we-would-like-to-have">What we would like to have</h2>
-<p>Let's say we have a typical integration scenario as in the diagram below:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-rest-hl7-api-architecture.png" /></p>
-<ul>
-<li>
-<p>External systems and applications invoke the interoperability layer (Zato) which is expected to further invoke a few
-  backend systems, e.g. a REST and HL7 FHIR one so as to return a combined result of backend API invocations. It does not
-  matter what technology the client systems use, i.e. whether they are REST ones or not.</p>
-</li>
-<li>
-<p>The interoperability layer needs to identify itself with the backend systems before it is allowed to invoke them - they
-  need to make sure that it really is Zato and that it accesses only the resources allowed.</p>
-</li>
-<li>
-<p>An OAuth server issues time-based access tokens, which are simple strings, like web browser session cookies, confirming that such and such
-  bearer of the said token is allowed to make such and such requests. Note that the tokens have an explicit expiration time,
-  e.g. they will become invalid after one hour. Also observe that Zato stores the tokens as-is, they are genuinely opaque
-  strings.</p>
-</li>
-<li>
-<p>If a client system invokes the interoperability layer, the layer will obtain a token from the OAuth server and keep it in an internal cache.
-  Next, Zato will invoke the backend systems, bearing the token among other HTTP headers. Each invoked backend system will extract the token
-  from the incoming request and validate it.</p>
-</li>
-</ul>
-<p>How the validation looks like in practices is something that Zato will not be aware of because it treats the token as an opaque string
-  but, in practice, if the token is self-contained (e.g. JWT data) the system may validate it on its own, and if it is not self-contained,
-  the system may invoke an introspection endpoint on the OAuth server to validate the access token from Zato.</p>
-<p>Once the validation succeeds, the backend system will reply with the business data and the interoperability layer will combine
-  the results for the calling application's benefit.</p>
-<p>In subsequent requests, the same access token will be reused by Zato with the same flow of messages as previously. However,
-  if the cached token expires, Zato will request a new one from the OAuth server - this will be transparent to the calling application -
-  and the flow will resume.</p>
-<p>In OAuth terminology, what is described above has specific names, the overall flow of messages between Zato and the OAuth server is
-called a "Client Credential Flow" and Zato is then considered a "client" from the OAuth server's perspective.</p>
-<h2 id="configuring-oauth">Configuring OAuth</h2>
-<p>First, we need to create an OAuth security definition that contains the OAuth server's connection details. In this case,
-the server is <a href="https://www.okta.com/">Okta</a>. Note the scopes field - it is a list of permissions ("scopes") that Zato will be able to make use of.</p>
-<p>What exactly the list of scopes should look like is something to be coordinated with the people who are responsible
-for the configuration of the OAuth server. If it is you personally, simply ensure that what is in the the OAuth server and in Zato is in sync.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-form.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-secret.png" /></p>
-<h2 id="calling-rest">Calling REST</h2>
-<p>To invoke REST services, fill out a form as below, pointing the "Security" field to the newly created OAuth definition.
-This suffices for Zato to understand when and how to obtain new tokens from the underlying OAuth server.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/rest-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/rest-form.png" /></p>
-<p>Here is sample code to invoke a backend REST system - note that we merely refer to a connection by its name, without having
-to think about security at all. It is Zato that knows how to get and use OAuth tokens as required.</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">GetClientBillingPlan</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Returns a billing plan for the input client.</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># In a real service, this would be read from input</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'client_id'</span><span class="p">:</span> <span class="mi">123</span><span class="p">}</span>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="c1"># Get a connection to the server ..</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">rest</span><span class="p">[</span><span class="s1">'REST Server'</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>        <span class="c1"># .. invoke it ..</span>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cid</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="c1"># .. and handle the response here.</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>        <span class="o">...</span>
-</code></pre></div>
-<h2 id="calling-hl7-fhir">Calling HL7 FHIR</h2>
-<p>Similarly to REST endpoints, to invoke HL7 FHIR servers, fill out a form as below and let the "Security" field point to the OAuth
-definition just created. This will suffice for Zato to know when and how to use tokens received from the underlying OAuth server.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/fhir-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/fhir-form.png" /></p>
-<p>Here is sample code to invoke a FHIR server system - as with REST servers above, observe that we only refer to a connection by its name
-and Zato takes care of OAuth.</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-1-5" name="line-1-5"></a><a href="#line-1-5"><span class="linenos"></span></a>
-<a id="line-1-6" name="line-1-6"></a><a href="#line-1-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">GetPractitioner</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-1-7" name="line-1-7"></a><a href="#line-1-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Returns a practictioner matching input data.</span>
-<a id="line-1-8" name="line-1-8"></a><a href="#line-1-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-1-9" name="line-1-9"></a><a href="#line-1-9"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'None'</span><span class="p">:</span>
-<a id="line-1-10" name="line-1-10"></a><a href="#line-1-10"><span class="linenos"></span></a>
-<a id="line-1-11" name="line-1-11"></a><a href="#line-1-11"><span class="linenos"></span></a>        <span class="c1"># Connection to use</span>
-<a id="line-1-12" name="line-1-12"></a><a href="#line-1-12"><span class="linenos"></span></a>        <span class="n">conn_name</span> <span class="o">=</span> <span class="s1">'My EHR'</span>
-<a id="line-1-13" name="line-1-13"></a><a href="#line-1-13"><span class="linenos"></span></a>
-<a id="line-1-14" name="line-1-14"></a><a href="#line-1-14"><span class="linenos"></span></a>        <span class="c1"># In a real service, this would be read from input</span>
-<a id="line-1-15" name="line-1-15"></a><a href="#line-1-15"><span class="linenos"></span></a>        <span class="n">practitioner_id</span> <span class="o">=</span> <span class="mi">456</span>
-<a id="line-1-16" name="line-1-16"></a><a href="#line-1-16"><span class="linenos"></span></a>
-<a id="line-1-17" name="line-1-17"></a><a href="#line-1-17"><span class="linenos"></span></a>        <span class="c1"># Get a connection to the server ..</span>
-<a id="line-1-18" name="line-1-18"></a><a href="#line-1-18"><span class="linenos"></span></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">hl7</span><span class="o">.</span><span class="n">fhir</span><span class="p">[</span><span class="n">conn_name</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span><span class="o">.</span><span class="n">client</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
-<a id="line-1-19" name="line-1-19"></a><a href="#line-1-19"><span class="linenos"></span></a>
-<a id="line-1-20" name="line-1-20"></a><a href="#line-1-20"><span class="linenos"></span></a>            <span class="c1"># Get a reference to a FHIR resource ..</span>
-<a id="line-1-21" name="line-1-21"></a><a href="#line-1-21"><span class="linenos"></span></a>            <span class="n">practitioners</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">resources</span><span class="p">(</span><span class="s1">'Practitioner'</span><span class="p">)</span>
-<a id="line-1-22" name="line-1-22"></a><a href="#line-1-22"><span class="linenos"></span></a>
-<a id="line-1-23" name="line-1-23"></a><a href="#line-1-23"><span class="linenos"></span></a>            <span class="c1"># .. look up the practitioner ..</span>
-<a id="line-1-24" name="line-1-24"></a><a href="#line-1-24"><span class="linenos"></span></a>            <span class="n">result</span> <span class="o">=</span> <span class="n">practitioners</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">_id</span><span class="o">=</span><span class="n">practitioner_id</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
-<a id="line-1-25" name="line-1-25"></a><a href="#line-1-25"><span class="linenos"></span></a>
-<a id="line-1-26" name="line-1-26"></a><a href="#line-1-26"><span class="linenos"></span></a>            <span class="c1"># .. and handle the response here.</span>
-<a id="line-1-27" name="line-1-27"></a><a href="#line-1-27"><span class="linenos"></span></a>            <span class="o">...</span>
-</code></pre></div>
-<h2 id="what-about-the-api-clients">What about the API clients?</h2>
-<p>One aspect omitted above are the initial API clients - this is on purpose. How they invoke Zato, using what protocols,
-with what security mechanisms, and how to build responses based on their input data, this is completely independent of how
-Zato uses OAuth in its own communication with backend systems.</p>
-<p>All of these aspects can and will be independent in practice,
-e.g. clients will use Basic Auth rather than OAuth. Or perhaps the clients will use AMQP, Odoo, SAP, or IBM MQ, without any HTTP,
-or maybe there will be no explicit API invocations and what we call "clients" will be actually CSV files in a shared
-directory that your services will be scheduled to periodically pick up. Yet, once more, regardless of what makes the input data
-available, the backend OAuth mechanism will work independently of it all.</p>
-<p><br />
-<img alt="" src="https://upcdn.io/kW15bqq/raw/root/static/img/intro/ira.png" />
-<br /></p>
-<h2 id="next-steps">Next steps</h2>
-<p>➤ <a href="https://zato.io/en/docs/3.3/intro/screenshots.html">API programming screenshots</a>
-<br />
-➤ Python <a href="https://zato.io/en/docs/3.3/tutorial/01.html">API integration tutorial</a>
-<br />
-➤ More <a href="https://zato.io/en/docs/3.3/dev/index.html">API programming examples in Python</a>
-<br />
-➤ Visit the <a href="https://support.zato.io/en/">support center</a> for more articles and FAQ
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 23, 2024 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/oauth-api-integrations.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1873,8 +1803,8 @@ available, the backend OAuth mechanism will work independently of it all.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9064</a></li>
-    <li><a>Unique Feeds: 425</a></li>
+    <li><a>Total Entries: 9086</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
