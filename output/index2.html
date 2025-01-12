@@ -53,6 +53,192 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html" class="hover:underline"
+              >Towards PyPy3.11 - an update</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We<sup id="fnref:0"><a class="footnote-ref" href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html#fn:0">1</a></sup> are steadily working towards a Python 3.11 interpreter, which will be part
+of the upcoming PyPy 7.3.18 release. Along with that, we also recently updated 
+<a href="https://speed.pypy.org">speed.pypy.org</a> to compare PyPy's performance to CPython
+3.11 (it used to be CPython 3.7). </p>
+<!-- TEASER_END -->
+<h2 id="why-is-there-no-pypy-for-python-311">Why is there no PyPy for Python 3.11?</h2>
+<p>TL;DR: we are working on it and hopefully will have a beta version soon</p>
+<p>We started by merging the <a href="https://peps.python.org/pep-0654/">exception groups</a>
+work by Nico Rittinghaus, merging the CPython stdlib for Python 3.11.9, and
+updating the regex engine to handle atomic groupings. I think these were the
+largest changes needed to support Python3.11, maybe I missed something else?</p>
+<p>We then created a <a href="https://github.com/pypy/pypy/milestone/15">milestone</a> with
+many of the changes that might not be caught in testing. As of today that
+milestone stands at 24/40 issues closed, 16 open. This is in addition to the
+<a href="https://github.com/pypy/pypy/milestone/22">v7.3.18 milestone</a>, which has 11/23
+issues closed, 12 open.</p>
+<p>We also updated our infrastructure to run nightly <a href="https://buildbot.pypy.org/summary?branch=py3.11">buildbot test of the
+py3.11</a> branch, including adding py3.11 to our benchmarking site <a href="https://speed.pypy.org/">speed.pypy.org</a>.</p>
+<p>Then the real work started: fixing these milestone issues and failing stdlib
+tests. Some of the changes were cosmetic changes to error messages, some were
+more involved changes to the interpreter to behave more like CPython. For instance,
+<code>hex(x)</code> where <code>x</code> is an int calls <code>long.format(x, "#x")</code> on CPython where in
+PyPy we used <code>x.__format__("#x")</code>. This subtle difference caused a failure in
+the <code>repr</code> of <code>IntEnum</code>. Tracking down problems like these takes time. We are
+now down to about 250 failing stdlib tests, with thousands passing. For comparison, 
+PyPy3.10, first released in June 2023, still has around 100 failing stdlib
+tests.</p>
+<h3 id="c-extension-support">C-extension support</h3>
+<p>PyPy supports the Python C-API via a cpyext compatibility layer. We "mangle"
+the CPython symbols to add an extra <code>Py</code> to prevent loading CPython c-extension
+modules into PyPy, since the ABI is different. So a function like
+<code>PyLong_FromLong</code> will be exported from the c shared object as
+<code>PyPyLong_FromLong</code>. One of my long-standing goals is to remove this mangling,
+but it then requires that our c declarations, inlined functions, and macros in
+the headers match 1:1 the CPython headers. We can get by with not declaring and
+implementing parts of the interfaces, but what is declared must be identical.
+This is a long-term project, with each release the headers get closer to the
+CPython versions. I hope to concentrate on the PyUnicode interfaces for this
+release.</p>
+<p>Note that the time to do this is before a new version release. Once the version
+is released, we cannot change the headers significantly.</p>
+<h3 id="so-what-is-left">So what is left?</h3>
+<p>Summarizing the milestones and other things to do:</p>
+<ul>
+<li>Update to the recently released 3.11.11 stdlib</li>
+<li>Make sure <a href="https://vmprof.readthedocs.io/en/latest/">vmprof</a> works</li>
+<li>Update the <code>time</code> module to use more <code>MONOTONIC_CLOCK</code>, implement
+  <code>time.sleep</code> differently, and clean up the many duplicate <code>time</code> like
+  interfaces we have across the codebase. We have the <code>time</code> module, some time
+  routines in the <code>_threading</code> module<code>and RPython threading support in the</code>rpython/rlib` code. We should also make sure we are using 64-bit time
+  interfaces.</li>
+<li>Decide whether zero-cost exceptions gain us in performance and whether we
+  should implement them even if they do not improve performance.</li>
+<li>Update our <a href="http://hpyproject.org/">hpy</a> backend to the latest HEAD, which
+  would allow running the <a href="https://github.com/hpyproject/numpy-hpy/tree/graal-team/hpy#readme">hpy numpy
+  fork</a></li>
+<li>Reintegrate the pure-python pyrepl libbrary from CPython 3.13.</li>
+</ul>
+<p>What else did I forget?</p>
+<h2 id="why-did-the-benchmark-results-get-worse-on-speedpypyorg">Why did the benchmark results get worse on speed.pypy.org?</h2>
+<p>TL;DR: running a benchmark site is hard. Something changed in the benchmark
+runner, and suddenly benchmarks got 10-15% slower.</p>
+<p>PyPy run an instance of
+<a href="https://github.com/python/codespeed/tree/speed.pypy.org">codepseed</a> with a
+very old <a href="https://foss.heptapod.net/pypy/benchmarks">benchmarking suite</a>
+that can still run Python2 (remember: that is the language of
+<a href="https://rpython.readthedocs.io/en/latest/">RPython</a> underlying PyPy). The site
+runs on PSA infrastructure and the benchmarking machine is generously sponsored
+by <a href="https://baroquesoftware.com/">Baroque Software</a>. On Nov 9, there was a
+sudden jump in benchmarking times. For instance
+<a href="https://speed.pypy.org/timeline/#/?exe=21,8&amp;base=10+2622&amp;ben=float&amp;revs=50&amp;equid=off&amp;quarts=on&amp;extr=on&amp;env=3">here</a>
+is the result for the <code>float</code> benchmark. This happened across various benchmark
+runs: both PyPy2.7 and PyPy3.11alpha, with and without the JIT. After spending
+some time rerunning various benchmarks, I could only conclude the machine
+itself had gotten slower, maybe due to some security update in the linux
+kernel, maybe some change in the hosting platform. This "broke" the front-page
+comparsison: suddenly "latest" is much slower than the historic benchmarks run
+previous to the changes in the machine.</p>
+<p>That page also recently (as of last week) uses CPython 3.11 as a baseline for
+comparison, where previously it used CPython3.7. It is common knowledge that
+the newer CPython versions are faster, and we see this now quite clearly.
+Diving into individual benchmarks, we can see that ones where PyPy-with-a-jit
+was comparable to CPython3.7 seem to be the ones that CPython3.11 improved
+greatly. Looking at a <a href="https://speed.pypy.org/comparison/?exe=22%2BL%2Bpy3.11%2C2%2B2360%2C2%2B3893&amp;ben=1%2C34%2C58%2C63%2C60%2C27%2C61%2C2%2C25%2C57%2C3%2C46%2C4%2C5%2C41%2C42%2C22%2C44%2C6%2C59%2C39%2C7%2C8%2C65%2C45%2C23%2C62%2C66%2C24%2C9%2C10%2C47%2C48%2C49%2C50%2C51%2C11%2C12%2C13%2C40%2C14%2C69%2C15%2C70%2C67%2C68%2C64%2C35%2C36%2C37%2C38%2C16%2C52%2C54%2C55%2C53%2C56%2C28%2C30%2C32%2C29%2C33%2C17%2C18%2C19%2C20%2C43&amp;env=3&amp;hor=true&amp;bas=2%2B2360&amp;chart=normal+bars">comparison of the
+runs</a>
+this can be seen in benchmarks like deltablue and the sqlalchemy family. So the
+new graph has more lines that extend past 1.5 than the old graph.</p>
+<p style="text-align: center;">
+New graph with PyPy3.11
+</p>
+<p><img alt="new graph" src="https://www.pypy.org/images/2024-12-new-graph.png" /></p>
+<p style="text-align: center;">
+Older graph with PyPy3.10
+</p>
+<p><img alt="old
+graph" src="https://www.pypy.org/images/2024-12-old-graph.png" />.</p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:0">
+<p>These days most of the work is done by <a href="https://cfbolz.de/">CF
+Bolz-Tereick</a> and <a href="https://github.com/mattip">me</a> on a
+volunteer basis. Want to get involved? Reach out, we would love to expand the
+team. Have an idea for funding the work? Fantastic, let's talk. <a class="footnote-backref" href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html#fnref:0" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 04, 2025 01:29 PM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/233/" class="hover:underline"
+              >The Real Python Podcast – Episode #233: PyCoder's Weekly 2024 Top Articles & Missing Gems</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            PyCoder's Weekly included over 1,500 links to articles, blog posts, tutorials, and projects in 2024. Christopher Trudeau is back on the show this week to help wrap it all up by sharing some highlights and uncovering a few missing gems from the pile.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 03, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/233/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://vinayak.io/2025/01/02/ipychat/" class="hover:underline"
               >IPychat — An AI extension for IPython to make it work like Cursor</a
             >
@@ -1532,228 +1718,6 @@ and that you found something useful in my writings.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/oauth-api-integrations.html" class="hover:underline"
-              >Using OAuth in API Integrations</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/oauth-api-integrations.html">Using OAuth in API Integrations</a>
-</h1>
-<div class="article-meta">
-  2024-12-23, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>OAuth is often employed in processes requiring permissions to be granted to frontend applications and end users.
-Yet, what we typically need in API systems integrations is a way to secure connections between the integration
-middleware and backend systems without a need for any ongoing human interactions.</p>
-<p>OAuth can be a good choice for that scenario and this article shows how it can be achieved in Python, with backend
-systems using REST and HL7 FHIR.</p>
-<h2 id="what-we-would-like-to-have">What we would like to have</h2>
-<p>Let's say we have a typical integration scenario as in the diagram below:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-rest-hl7-api-architecture.png" /></p>
-<ul>
-<li>
-<p>External systems and applications invoke the interoperability layer (Zato) which is expected to further invoke a few
-  backend systems, e.g. a REST and HL7 FHIR one so as to return a combined result of backend API invocations. It does not
-  matter what technology the client systems use, i.e. whether they are REST ones or not.</p>
-</li>
-<li>
-<p>The interoperability layer needs to identify itself with the backend systems before it is allowed to invoke them - they
-  need to make sure that it really is Zato and that it accesses only the resources allowed.</p>
-</li>
-<li>
-<p>An OAuth server issues time-based access tokens, which are simple strings, like web browser session cookies, confirming that such and such
-  bearer of the said token is allowed to make such and such requests. Note that the tokens have an explicit expiration time,
-  e.g. they will become invalid after one hour. Also observe that Zato stores the tokens as-is, they are genuinely opaque
-  strings.</p>
-</li>
-<li>
-<p>If a client system invokes the interoperability layer, the layer will obtain a token from the OAuth server and keep it in an internal cache.
-  Next, Zato will invoke the backend systems, bearing the token among other HTTP headers. Each invoked backend system will extract the token
-  from the incoming request and validate it.</p>
-</li>
-</ul>
-<p>How the validation looks like in practices is something that Zato will not be aware of because it treats the token as an opaque string
-  but, in practice, if the token is self-contained (e.g. JWT data) the system may validate it on its own, and if it is not self-contained,
-  the system may invoke an introspection endpoint on the OAuth server to validate the access token from Zato.</p>
-<p>Once the validation succeeds, the backend system will reply with the business data and the interoperability layer will combine
-  the results for the calling application's benefit.</p>
-<p>In subsequent requests, the same access token will be reused by Zato with the same flow of messages as previously. However,
-  if the cached token expires, Zato will request a new one from the OAuth server - this will be transparent to the calling application -
-  and the flow will resume.</p>
-<p>In OAuth terminology, what is described above has specific names, the overall flow of messages between Zato and the OAuth server is
-called a "Client Credential Flow" and Zato is then considered a "client" from the OAuth server's perspective.</p>
-<h2 id="configuring-oauth">Configuring OAuth</h2>
-<p>First, we need to create an OAuth security definition that contains the OAuth server's connection details. In this case,
-the server is <a href="https://www.okta.com/">Okta</a>. Note the scopes field - it is a list of permissions ("scopes") that Zato will be able to make use of.</p>
-<p>What exactly the list of scopes should look like is something to be coordinated with the people who are responsible
-for the configuration of the OAuth server. If it is you personally, simply ensure that what is in the the OAuth server and in Zato is in sync.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-form.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/oauth-secret.png" /></p>
-<h2 id="calling-rest">Calling REST</h2>
-<p>To invoke REST services, fill out a form as below, pointing the "Security" field to the newly created OAuth definition.
-This suffices for Zato to understand when and how to obtain new tokens from the underlying OAuth server.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/rest-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/rest-form.png" /></p>
-<p>Here is sample code to invoke a backend REST system - note that we merely refer to a connection by its name, without having
-to think about security at all. It is Zato that knows how to get and use OAuth tokens as required.</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">GetClientBillingPlan</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Returns a billing plan for the input client.</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># In a real service, this would be read from input</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span><span class="s1">'client_id'</span><span class="p">:</span> <span class="mi">123</span><span class="p">}</span>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="c1"># Get a connection to the server ..</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">rest</span><span class="p">[</span><span class="s1">'REST Server'</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>        <span class="c1"># .. invoke it ..</span>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cid</span><span class="p">,</span> <span class="n">payload</span><span class="p">)</span>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="c1"># .. and handle the response here.</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>        <span class="o">...</span>
-</code></pre></div>
-<h2 id="calling-hl7-fhir">Calling HL7 FHIR</h2>
-<p>Similarly to REST endpoints, to invoke HL7 FHIR servers, fill out a form as below and let the "Security" field point to the OAuth
-definition just created. This will suffice for Zato to know when and how to use tokens received from the underlying OAuth server.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/fhir-menu.png" />
-<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-oauth/fhir-form.png" /></p>
-<p>Here is sample code to invoke a FHIR server system - as with REST servers above, observe that we only refer to a connection by its name
-and Zato takes care of OAuth.</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-1-5" name="line-1-5"></a><a href="#line-1-5"><span class="linenos"></span></a>
-<a id="line-1-6" name="line-1-6"></a><a href="#line-1-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">GetPractitioner</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-1-7" name="line-1-7"></a><a href="#line-1-7"><span class="linenos"></span></a><span class="w">    </span><span class="sd">&quot;&quot;&quot; Returns a practictioner matching input data.</span>
-<a id="line-1-8" name="line-1-8"></a><a href="#line-1-8"><span class="linenos"></span></a><span class="sd">    &quot;&quot;&quot;</span>
-<a id="line-1-9" name="line-1-9"></a><a href="#line-1-9"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'None'</span><span class="p">:</span>
-<a id="line-1-10" name="line-1-10"></a><a href="#line-1-10"><span class="linenos"></span></a>
-<a id="line-1-11" name="line-1-11"></a><a href="#line-1-11"><span class="linenos"></span></a>        <span class="c1"># Connection to use</span>
-<a id="line-1-12" name="line-1-12"></a><a href="#line-1-12"><span class="linenos"></span></a>        <span class="n">conn_name</span> <span class="o">=</span> <span class="s1">'My EHR'</span>
-<a id="line-1-13" name="line-1-13"></a><a href="#line-1-13"><span class="linenos"></span></a>
-<a id="line-1-14" name="line-1-14"></a><a href="#line-1-14"><span class="linenos"></span></a>        <span class="c1"># In a real service, this would be read from input</span>
-<a id="line-1-15" name="line-1-15"></a><a href="#line-1-15"><span class="linenos"></span></a>        <span class="n">practitioner_id</span> <span class="o">=</span> <span class="mi">456</span>
-<a id="line-1-16" name="line-1-16"></a><a href="#line-1-16"><span class="linenos"></span></a>
-<a id="line-1-17" name="line-1-17"></a><a href="#line-1-17"><span class="linenos"></span></a>        <span class="c1"># Get a connection to the server ..</span>
-<a id="line-1-18" name="line-1-18"></a><a href="#line-1-18"><span class="linenos"></span></a>        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">out</span><span class="o">.</span><span class="n">hl7</span><span class="o">.</span><span class="n">fhir</span><span class="p">[</span><span class="n">conn_name</span><span class="p">]</span><span class="o">.</span><span class="n">conn</span><span class="o">.</span><span class="n">client</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
-<a id="line-1-19" name="line-1-19"></a><a href="#line-1-19"><span class="linenos"></span></a>
-<a id="line-1-20" name="line-1-20"></a><a href="#line-1-20"><span class="linenos"></span></a>            <span class="c1"># Get a reference to a FHIR resource ..</span>
-<a id="line-1-21" name="line-1-21"></a><a href="#line-1-21"><span class="linenos"></span></a>            <span class="n">practitioners</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">resources</span><span class="p">(</span><span class="s1">'Practitioner'</span><span class="p">)</span>
-<a id="line-1-22" name="line-1-22"></a><a href="#line-1-22"><span class="linenos"></span></a>
-<a id="line-1-23" name="line-1-23"></a><a href="#line-1-23"><span class="linenos"></span></a>            <span class="c1"># .. look up the practitioner ..</span>
-<a id="line-1-24" name="line-1-24"></a><a href="#line-1-24"><span class="linenos"></span></a>            <span class="n">result</span> <span class="o">=</span> <span class="n">practitioners</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">active</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">_id</span><span class="o">=</span><span class="n">practitioner_id</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
-<a id="line-1-25" name="line-1-25"></a><a href="#line-1-25"><span class="linenos"></span></a>
-<a id="line-1-26" name="line-1-26"></a><a href="#line-1-26"><span class="linenos"></span></a>            <span class="c1"># .. and handle the response here.</span>
-<a id="line-1-27" name="line-1-27"></a><a href="#line-1-27"><span class="linenos"></span></a>            <span class="o">...</span>
-</code></pre></div>
-<h2 id="what-about-the-api-clients">What about the API clients?</h2>
-<p>One aspect omitted above are the initial API clients - this is on purpose. How they invoke Zato, using what protocols,
-with what security mechanisms, and how to build responses based on their input data, this is completely independent of how
-Zato uses OAuth in its own communication with backend systems.</p>
-<p>All of these aspects can and will be independent in practice,
-e.g. clients will use Basic Auth rather than OAuth. Or perhaps the clients will use AMQP, Odoo, SAP, or IBM MQ, without any HTTP,
-or maybe there will be no explicit API invocations and what we call "clients" will be actually CSV files in a shared
-directory that your services will be scheduled to periodically pick up. Yet, once more, regardless of what makes the input data
-available, the backend OAuth mechanism will work independently of it all.</p>
-<p><br />
-<img alt="" src="https://upcdn.io/kW15bqq/raw/root/static/img/intro/ira.png" />
-<br /></p>
-<h2 id="next-steps">Next steps</h2>
-<p>➤ <a href="https://zato.io/en/docs/3.3/intro/screenshots.html">API programming screenshots</a>
-<br />
-➤ Python <a href="https://zato.io/en/docs/3.3/tutorial/01.html">API integration tutorial</a>
-<br />
-➤ More <a href="https://zato.io/en/docs/3.3/dev/index.html">API programming examples in Python</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 23, 2024 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/oauth-api-integrations.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/python-strings/" class="hover:underline"
-              >Strings and Character Data in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this tutorial, you'll learn how to use Python's rich set of operators and functions for working with strings. You'll cover the basics of creating strings using literals and the str() function, applying string methods, using operators and built-in functions with strings, and more!
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 22, 2024 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/python-strings/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1765,12 +1729,12 @@ available, the backend OAuth mechanism will work independently of it all.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8778</a></li>
-    <li><a>Unique Feeds: 422</a></li>
+    <li><a>Total Entries: 9059</a></li>
+    <li><a>Unique Feeds: 425</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://blog.pythonanywhere.com/feed/">Talk Python to Me (490)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (415)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (324)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (211)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://testandcode.com/rss">Talk Python to Me (490)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (415)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Matt Layman (324)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (223)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
