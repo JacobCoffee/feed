@@ -53,297 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html" class="hover:underline"
-              >The crudest CRUD of them all : the smallest CRUD possible in 150 lines of python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Right now, I am on a never ending quest that requires me to think of building a full fledge MVC controller : an anti-jira tracker that would favours HARD CHECKED facts over wishful thinking.<br /><br />
-For this to begin, I am not really motivated in beginning with a full fledged MVC (Model View Controller) à la django because there is a lot of boilerplates and actions to do before a result. But, it has a lot of feature I want, including authentication, authorization and handling security.<br /><br />
-For prototypes we normally flavours lightweight framework (à la flask), and CRUD.<br /><br />
-CRUD approach is a factorisation of all framework in a single dynamic form that adapts itself to the model to generate HTML forms to input data, tabulate, REST endpoints and search them from the python class declaration and generate the database model. One language to rule them all : PYTHON. You can easily generate even the javascript to handle autocompletion on the generated view from python with enough talent.<br /><br />
-But before using a <a href="https://en.wikipedia.org/wiki/Create,_read,_update_and_delete">CRUD framework</a>, we need a cruder one, ugly, disgusting but useful for a human before building the REST APIs, writing the class in python, the HTML form, and the controlers.<br /><br />
-I call this the <b>crudest CRUD of them all.</b><br /><br />
-Think hard at what you want when prototyping ...<br /><br />
-<ul>
-  <li>to write no CONTROLLERS ; flask documentation has a very verbose approach to exposing routes and writing them, writing controller for embasing and searching databases is boring</li>
-  <li>to write the fewer HTML views possible, one and only onle would be great ;</li>
-  <li>to avoid having to fiddle the many files reflecting separation of concerns : the lesser python files and class you touch the better; </li>
-  <li>to avoid having to write SQL nor use an ORM (at least a verbose declarative one) ;</li>
-  <li>show me your code and you can mesmerize and even fool me, however show me your data structure and I'll know everthing I have to know about your application : data structure should be under your nose in a readable fashion in the code;/</li>
-  <li>to have AT LEAST one end point for inserting and searching so that curl can be used to begin automation and testing, preferably in a factorisable fashion;</li>
-  <li>only one point of failure is accepted</li>
-</ul>
-<br />Once we set these few condition we see whatever we do WE NEED a dynamic http server at the core. Python being the topic here, we are gonna do it in python.<br /><br />
-What is the simplest dynamic web server in python ?<br /><br />The reference implementation of wsgi that is the crudest wsgi server of them all : <a href="https://docs.python.org/3/library/wsgiref.html">wsgiref</a>. And you don't need to download it since it's provided in python stdlib.<br /><br />
-First thing first, we are gonna had a default view so that we can serve an HTML static page with the list of the minimal HTML we need to interact with data : sets of input and forms.<br /><br />
-Here, we stop. And we see that these forms are describing the data model.<br /><br />
-Wouldn't it be nice if we could parse the HTML form easily with a tool from the standard library : <a href="https://docs.python.org/3/library/html.parser.html">html.parser</a> and maybe deduce the database model and even more than fields coud add relationship, and well since we are dreaming : what about creating the tables on the fly from the form if they don't exists ?<br /><br />
-The encoding of the relationship do require an hijack of convention where when the parser cross a name of the field in the form whatever_id it deduces it is a foreign key to table « whatever », column « id ».<br />
-Once this is done, we can parse the html, do some magick to match HTML input types to database types (adapter) and it's almost over. We can even dream of creating the database if it does not exists in a oneliner for sqlite.<br /><br />
-We just need to throw away all the frugality of dependencies by the window and spoil our karma of « digital soberty » by adding the almighty sqlalchemy the crudest (but still heavy) ORM when it comes of the field of <a href="https://docs.sqlalchemy.org/en/20/orm/extensions/automap.html">the introspective features of an ORM to map a database object to a python object in a clear consistent way</a>.
-With this, just one function is needed in the controller to switch from embasing (POST method) and searching (GET).<br /><br />
-Well, if the DOM is passed in the request. So of course I see the critics here :
-<ul><li>we can't pass the DOM in the request because the HTML form ignores the DOM</li>
-  <li>You are not scared of error 415 (request too large) in the get method if you pass the DOM ?</li>
-</ul>
-That's where we obviously need two important tools : 1) javascript, 2) limitations.<br /><br />
-Since we are human we would also like the form to be readable when served, because, well, human don't read the source and can't see the name attributes of the input. A tad of improving the raw html would be nice. It would also give consistency. It will also diminishes the required size of the formular to send. Here, javascript again is the right anwser. Fine, we serve the static page in the top of the controller. Let's use jquery to make it terse enough. Oh, if we have Javascript, wouldn't il be able to clone the part of the invented <i>model</i> tag inside every form so now we can pass the relevant part of the DOM to the controller ?<br /><br />
-I think we have everything to write the crudest CRUD server of them all :D 
-<br /><br />
-
-Happy code reading : 
-<pre>
-import multipart
-from wsgiref.simple_server import make_server
-from json import dumps
-from sqlalchemy import *
-from html.parser import HTMLParser
-from base64 import b64encode
-from sqlalchemy.ext.automap import automap_base
-from sqlalchemy.orm import Session
-from dateutil import parser
-from sqlalchemy_utils import database_exists, create_database
-from urllib.parse import parse_qsl, urlparse
-
-engine = create_engine("sqlite:///this.db")
-if not database_exists(engine.url):
-    create_database(engine.url)
-
-tables = dict()
-
-class HTMLtoData(HTMLParser):
-    def __init__(self):
-        global engine, tables
-        self.cols = []
-        self.table = ""
-        self.tables= []
-        self.engine= engine
-        self.meta = MetaData()
-        super().__init__()
-
-    def handle_starttag(self, tag, attrs):
-        attrs = dict(attrs)
-        simple_mapping = dict(
-            email = UnicodeText, url = UnicodeText, phone = UnicodeText, text = UnicodeText,
-            date = Date, time = Time, datetime = DateTime, file = Text
-        )
-        if tag == "input":
-            if attrs.get("name") == "id":
-                self.cols += [ Column('id', Integer, primary_key = True), ]
-                return
-            try:
-                if attrs.get("name").endswith("_id"):
-                    table,_=attrs.get("name").split("_")
-                    self.cols += [ Column(attrs["name"], Integer, ForeignKey(table + ".id")) ]
-                    return
-            except Exception as e: print(e)
-
-            if attrs.get("type") in simple_mapping.keys():
-                self.cols += [ Column(attrs["name"], simple_mapping[attrs["type"]]), ]
-
-            if attrs["type"] == "number":
-                if attrs["step"] == "any":
-                    self.cols+= [ Columns(attrs["name"], Float), ]
-                else:
-                    self.cols+= [ Column(attrs["name"], Integer), ]
-        if tag== "form":
-            self.table = urlparse(attrs["action"]).path[1:]
-
-    def handle_endtag(self, tag):
-        if tag=="form":
-            self.tables += [ Table(self.table, self.meta, *self.cols), ]
-            tables[self.table] = self.tables[-1]
-            self.table = ""
-            self.cols = []
-            with engine.connect() as cnx:
-                self.meta.create_all(engine)
-                cnx.commit()
-html = """
-&lt;!doctype html&gt;
-&lt;html&gt;
-&lt;head&gt;
-&lt;style&gt;
-* {    font-family:&quot;Sans Serif&quot; }
-body { text-align: center; }
-fieldset {  border: 1px solid #666;  border-radius: .5em; width: 30em; margin: auto; }
-form { text-align: left; display:inline-block; }
-input { margin-bottom:1em; padding:.5em;}
-[value=create] { background:#ffffba} [value=delete] { background:#bae1ff} [value=update] { background:#ffdfda}
-[value=read] { background:#baffc9}
-[type=submit] { margin-right:1em; margin-bottom:0em; border:1px solid #333; padding:.5em; border-radius:.5em; }
-&lt;/style&gt;
-&lt;script src=&quot;https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js&quot;&gt;&lt;/script&gt;
-&lt;script&gt;
-$(document).ready(function() {
-    $(&quot;form&quot;).each((i,el) =&gt; {
-        $(el).wrap(&quot;&lt;fieldset&gt;&lt;/fieldset&gt;&quot;  );
-        $(el).before(&quot;&lt;legend&gt;&quot; + el.action + &quot;&lt;/legend&gt;&quot;);
-        $(el).append(&quot;&lt;input name=_action type=submit value=create &gt;&lt;input name=_action type=submit value=read &gt;&quot;)
-        $(el).append(&quot;&lt;input name=_action type=submit value=update &gt;&lt;input name=_action type=submit value=delete &gt;&quot;)
-    });
-    $(&quot;input:not([type=hidden],[type=submit])&quot;).each((i,el) =&gt; {
-        $(el).before(&quot;&lt;label&gt;&quot; + el.name+ &quot;&lt;/label&gt;&lt;br/&gt;&quot;);
-        $(el).after(&quot;&lt;br&gt;&quot;);
-    });
-});
-&lt;/script&gt;
-&lt;/head&gt;
-&lt;body &gt;
-    &lt;form  action=/user method=post &gt;
-        &lt;input type=number name=id /&gt;
-        &lt;input type=text name=name /&gt;
-        &lt;input type=email name=email /&gt;
-    &lt;/form&gt;
-    &lt;form action=/event method=post &gt;
-        &lt;input type=number name=id /&gt;
-        &lt;input type=date name=from_date /&gt;
-        &lt;input type=date name=to_date /&gt;
-        &lt;input type=text name=text /&gt;
-        &lt;input type=number name=user_id /&gt;
-    &lt;/form&gt;
-&lt;/body&gt;
-&lt;/html&gt;
-
-"""
-
-
-router = dict({"" : lambda fo: html,})
-
-def simple_app(environ, start_response):
-    fo, fi=multipart.parse_form_data(environ)
-    fo.update(**{ k: dict(
-            name=fi[k].filename,
-            content_type=fi[k].content_type,
-            content=b64encode(fi[k].file.read())
-        ) for k,v in fi.items()})
-    table = route = environ["PATH_INFO"][1:]
-    fo.update(**dict(parse_qsl(environ["QUERY_STRING"])))
-    HTMLtoData().feed(html)
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
-    Base = automap_base(metadata=metadata)
-    Base.prepare()
-    attrs_to_dict = lambda attrs : {  k: (
-                    "date" in k or "time" in k ) and type(k) == str
-                        and parser.parse(v) or
-                    "file" in k and f"""data:{fo[k]["content_type"]}; base64, {fo[k]["content"].decode()}""" or v
-                    for k,v in attrs.items() if v and not k.startswith("_")
-    }
-    if route in tables.keys():
-        start_response('200 OK', [('Content-type', 'application/json; charset=utf-8')])
-        with Session(engine) as session:
-            try:
-                action = fo.get("_action", "")
-                Item = getattr(Base.classes, table)
-                if action == "delete":
-                    session.delete(session.get(Item, fo["id"]))
-                    session.commit()
-                    fo["result"] = "deleted"
-                if action == "create":
-                    new_item = Item(**attrs_to_dict(fo))
-                    session.add(new_item)
-                    session.flush()
-                    ret=session.commit()
-                    fo["result"] = new_item.id
-                if action == "update":
-                    session.delete(session.get(Item, fo["id"]))
-                    new_item = Item(**attrs_to_dict(fo))
-                    session.add(new_item)
-                    session.commit()
-                    fo["result"] = new_item.id
-                if action in { "read", "search" }:
-                    result = []
-                    for elt in session.execute(
-                        select(Item).filter_by(**attrs_to_dict(fo))).all():
-                        result += [{ k.name:getattr(elt[0], k.name) for k in tables[table].columns}]
-                    fo["result"] = result
-            except Exception as e:
-                fo["error"] = e
-                session.rollback()
-    else:
-        start_response('200 OK', [('Content-type', 'text/html; charset=utf-8')])
-
-    return [ router.get(route,lambda fo:dumps(fo.dict, indent=4, default=str))(fo).encode() ]
-
-print("Crudest CRUD of them all on port 5000...")
-make_server('', 5000, simple_app).serve_forever()
-
-</pre>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 06, 2024 08:50 AM UTC by
-            <a href="http://beauty-of-imagination.blogspot.fr/feeds/posts/default/-/python" class="link link-hover text-primary"
-              >Julien Tayon</a
-            >
-          </div>
-          <a
-            href="https://beauty-of-imagination.blogspot.com/2024/11/the-crudest-crud-of-them-all-smallest.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/" class="hover:underline"
-              >Deploy Your Own Web App With Kamal 2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Kamal offers zero-downtime deploys, rolling restarts, asset bridging, remote builds, accessory service management, and everything else you need to deploy and manage your web app in production with Docker. Originally built for Rails apps, Kamal will work with any type of web app that can be containerized. We dig into Kamal, how it works, and how you could use it on your next project.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 06, 2024 12:00 AM UTC by
-            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
-              >Matt Layman</a
-            >
-          </div>
-          <a
-            href="https://www.mattlayman.com/videos/deploy-your-own-web-app-with-kamal-2/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://testdriven.io/blog/django-avoid-counting/" class="hover:underline"
               >Avoid Counting in Django Pagination</a
             >
@@ -1754,6 +1463,87 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/" class="hover:underline"
+              >Python in Visual Studio Code – November 2024 Release</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The November 2024 release of the Python and Jupyter extensions for Visual Studio Code are now available. This month's updates include docstring template generation with Pylance, Fold/Unfold All Docstrings commands, a variable view with the Native REPL and more!</p>
+<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/">Python in Visual Studio Code &#8211; November 2024 Release</a> appeared first on <a href="https://devblogs.microsoft.com/python">Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 05:02 PM UTC by
+            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
+              >Python Engineering at Microsoft</a
+            >
+          </div>
+          <a
+            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2024-release/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html" class="hover:underline"
+              >Important Changes Ahead: A Commitment to Financial Transparency</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US is the largest and longest-running annual gathering for the community using and developing the open-source Python programming language. It is produced and underwritten by the <a href="https://www.python.org/psf-landing/">Python Software Foundation</a> (PSF), the 501(c)(3) nonprofit organization dedicated to advancing and promoting Python and its community.</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">The PSF is a grant-giving non-profit and the revenue generated by PyCon US is essential to our continued community support and operations. Check out our <a href="https://www.python.org/psf/mission/">Mission</a> and our <a href="https://www.python.org/psf/annual-report/2023/">latest Annual Impact Report</a> to get an idea of the scope of work our foundation is responsible for. Many misunderstand or are unaware of this relationship, but the PSF relies on maintaining a strict budget for the operation of PyCon US in order to continue its grants programs and other financial responsibilities.</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">With this in mind, PyCon US has taken on many expenses in the years following the pandemic, including the losses associated with canceling PyCon US 2020 and the move to PyCon US 2021 online. Additionally, inflation in event costs and lower projected sponsorships have combined to create a significant loss for PyCon US and the PSF in 2024.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">Because the PSF is a nonprofit, we keep PyCon US registration costs much lower than comparable technology conferences. Our goal is for PyCon US to remain accessible to the widest group possible. For us to continue to do so and ensure the sustainability of the event, we’ve had to make some changes to the structure of PyCon US. We know that an important piece of making changes to PyCon US is notice and awareness to our wonderful community– and we want to be transparent about the reasons behind them.&nbsp;</span></span></p><h3 style="text-align: left;">Ticket Prices</h3><p style="text-align: left;"><span style="font-family: inherit;">To continue providing the content, program, and opportunities of PyCon US this year and in the future and to offset these rising costs, we’ve decided to raise ticket prices this year by $50 USD for the Individual and Corporate rates and $25 USD for the Student rate.&nbsp;</span></p><p><span><span style="font-family: inherit;">New PyCon US 2025 registration prices:&nbsp;</span></span></p><p></p><ul style="text-align: left;"><li><span><span style="font-family: inherit;">Corporate: $800 USD</span></span></li><li><span style="font-family: inherit;">Individual: $450 USD</span></li><li><span style="font-family: inherit;">Student: $125 USD</span></li></ul><p></p><p><span><span style="font-family: inherit;">By adjusting ticket prices, we hope to continue delivering a valuable and enriching conference experience while still being financially accessible to our community.&nbsp;</span></span></p><h3 style="text-align: left;">PyCon US Online</h3><p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US moved to online for the first year in 2021 during the pandemic and we’ve been proud to offer the Online attendance option for the past three years since. While we recognize the value that PyCon US Online provides in terms of accessibility, the challenges of delivering a seamless and engaging experience for both in-person and virtual attendees have been significant. From a cost perspective alone, cutting the online event will free up resources that can be put back into the in person and after-conference experience.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">PyCon US will record all Talk tracks, Keynotes and Lightning Talks on the main days of the conference (Friday - Sunday) and we plan to publish these recordings very quickly after the sessions take place so those who can’t join us in person can access them while the topics are still current.&nbsp;</span></span></p><p style="text-align: left;"><span><span style="font-family: inherit;">We appreciate the enthusiasm and participation of everyone who was part of the PyCon US Online experience and encourage everyone who can to join us in person in Pittsburgh this year. If you are unable to join, we welcome you to subscribe to our <a href="https://www.youtube.com/c/pyconus">PyCon US YouTube channel</a> to receive notifications of new content.</span></span></p><h3 style="text-align: left;">Tutorial Recordings</h3><p><span><span style="font-family: inherit;">The pre-conference tutorials are a valuable part of the PyCon US conference and provide an opportunity for Pythonistas around the world to learn and grow their skills in hands-on sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Tutorial ticket sales are a large source of revenue for PyCon US, but in the past few years, the margin on the tutorials has declined due to rising costs associated with recording these sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Because tutorials are longer than talks and are in an interactive classroom-like setting, they require many resources such as power, better internet connectivity, and catering. Additionally, tutorial instructors are compensated due to the amount of work involved in preparing and providing these sessions.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">Since tutorial registration is at an additional cost, we want to prioritize the experience for those attending in person and to do so, we will be removing tutorial recordings this year. The value of the face-to-face learning, discussions, and hands-on engagement that occurs during the tutorials outweighs the benefits of capturing the sessions for later viewing and can’t be replicated in a recorded format. We hope this change will encourage more attendees to participate in the tutorials onsite and engage with the content the instructors work very hard to provide.&nbsp;</span></span></p><h3 style="text-align: left;">Speaker Travel Grant Limit</h3><p><span><span style="font-family: inherit;">The support of our community has allowed us to offer generous Travel Grants based on individual needs including travel, accommodation, and conference tickets. The Travel Grant program helps us shape a conference that is diverse on a number of axes from technical to geographic.</span></span></p><p><span><span style="font-family: inherit;">However, <a href="https://pycon.blogspot.com/2024/03/TravelGrantsReport2024.html">with decreased Travel Grant funds</a>, PyCon US wants to ensure that we can still spread out our funding to support as many people as possible. Currently, a large part of the Travel Grant budget goes to speakers, and all speakers who are included on the proposal for an accepted talk are automatically eligible for a travel grant. For 2025, there will be a limit of two Travel Grant-funded speakers per accepted proposal across all tracks. We believe this will allow us to spread our funding capacity across our community and welcome as many Pythonistas to PyCon US as we can, while not impacting the quality and diversity of our programming.</span></span></p><h3 style="text-align: left;">Thank you!</h3><p><span><span style="font-family: inherit;">PyCon US has been around for over 20 years, and we want to ensure it sticks around for many more! We recognize that these changes will impact many folks in a variety of ways, and we hope that our transparency about why these decisions were made will help bring understanding.&nbsp;</span></span></p><p><span><span style="font-family: inherit;">By making these changes and being willing to adapt, PyCon US can continue to be a welcoming, community conference, where everyone can meet new people and learn new things, connect with old friends and tell people about their projects. We appreciate our community’s support and understanding regarding these changes. If you have any feedback or questions, please feel free to <a href="mailto:pycon-reg@python.org">reach out to the organizing team</a>.&nbsp;&nbsp;</span></span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 01, 2024 02:00 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1765,12 +1555,12 @@ Python.  I guess in almost 20 years a lot can happen!</p><p>It&#8217;s interesti
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9025</a></li>
-    <li><a>Unique Feeds: 423</a></li>
+    <li><a>Total Entries: 8837</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (490)</a></li><li><a href="http://testandcode.com/rss">Awesome Python Applications (424)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Bytes (416)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (324)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (223)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (490)</a></li><li><a href="http://blog.pythonanywhere.com/feed/">Awesome Python Applications (424)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Bytes (416)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (324)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Anywhere (211)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
