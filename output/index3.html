@@ -53,6 +53,120 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/" class="hover:underline"
+              >We have been writing Ansible tasks wrong</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Look at the following Ansible task:</p>
+<div class="code"><pre class="code literal-block"><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prometheus Exporters</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Extend caps for ping - File</span>
+<span class="w">    </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">src</span><span class="p">:</span><span class="w">   </span><span class="s">"roles/server/files{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">dest</span><span class="p">:</span><span class="w">  </span><span class="s">"{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<span class="w">      </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">0600</span>
+<span class="w">    </span><span class="nt">loop</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf</span>
+<span class="w">    </span><span class="nt">when</span><span class="p">:</span><span class="w"> </span><span class="s">"'blackbox'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">exporters"</span>
+<span class="w">    </span><span class="nt">register</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">foo</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config, monitoring</span>
+<span class="w">    </span><span class="nt">notify</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># - Reload systemd</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Reload Blackbox Exporter</span>
+</pre></div>
+
+<p>For a while I have been wishing to be able to write this like this:</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span> <span class="nc">PrometheusExporters</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">extend_caps_for_ping_File</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s1">'blackbox'</span> <span class="ow">in</span> <span class="n">exporters</span><span class="p">:</span>
+            <span class="n">foo</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">exporter</span> <span class="ow">in</span> <span class="n">exporters</span><span class="p">:</span>
+                <span class="c1"># tags: config, monitoring</span>
+                <span class="n">foo</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">template</span><span class="p">(</span><span class="sa">f</span><span class="s2">"roles/server/files</span><span class="si">{</span><span class="n">exporter</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">exporter</span><span class="p">,</span> <span class="s1">'prometheus'</span><span class="p">,</span> <span class="s1">'root'</span><span class="p">,</span> <span class="mo">0o600</span><span class="p">,</span> 
+                           <span class="n">notify</span><span class="o">=</span><span class="p">(</span><span class="n">reload_blackbox_exporter</span><span class="p">,)))</span>
+</pre></div>
+
+<p>Notice that these are not 100% equivalent; the Python version uses <code>exporter</code> as the <code>loop_variable</code>,
+but in the Ansible code I never set that because it's so cumbersome.</p>
+<p>Why do I prefer that notation? Because: </p>
+<ul>
+<li>Even if Ansible aims to be a declarative language, it has many programming languages 
+  features like <code>when</code> (<code>if</code>), <code>loop</code> (<code>for</code>) and <code>block</code>/<code>recover</code> (<code>try</code>/<code>except</code>).</li>
+<li>Yes, the <code>register</code> equivalent I wrote there is not really nice, but alternatives are, I think, worse.</li>
+<li>When using certain modules I almost always use the same params. Notice that a proper translation 
+  would be <code>template(src=f"roles/server/files{exporter}", dest=exporter, owner='prometheus', group='root', mode=0o600)</code>,
+  and that this is very close to the inline module invocation a.k.a. free form arguments<sup id="fnref:1"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/#fn:1">1</a></sup>: <code>template: src="roles/server/files{{ exporter }}" dest="{{ exporter }}" owner=prometheus group=root mode=0600</code>.</li>
+<li>If the compiler would be clever enough, I could declare functions that would work as templates for 
+  tasks.</li>
+<li>As a programmer, this order makes more sense.</li>
+</ul>
+<p>But I don't have to wait to have enough energy to write such compiler myself; I can more or less 
+already change the order:</p>
+<div class="code"><pre class="code literal-block"><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Prometheus Exporters</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Extend caps for ping - File</span>
+<span class="w">    </span><span class="nt">when</span><span class="p">:</span><span class="w"> </span><span class="s">"'blackbox'</span><span class="nv"> </span><span class="s">in</span><span class="nv"> </span><span class="s">exporters"</span>
+<span class="w">    </span><span class="nt">loop</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/systemd/system/prometheus-blackbox-exporter.service.d/override.conf</span>
+<span class="w">    </span><span class="nt">register</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">foo</span>
+<span class="w">    </span><span class="nt">template</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">src</span><span class="p">:</span><span class="w">   </span><span class="s">"roles/server/files{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">dest</span><span class="p">:</span><span class="w">  </span><span class="s">"{{</span><span class="nv"> </span><span class="s">item</span><span class="nv"> </span><span class="s">}}"</span>
+<span class="w">      </span><span class="nt">owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prometheus</span>
+<span class="w">      </span><span class="nt">group</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+<span class="w">      </span><span class="nt">mode</span><span class="p">:</span><span class="w">  </span><span class="l l-Scalar l-Scalar-Plain">0600</span>
+<span class="w">    </span><span class="nt">notify</span><span class="p">:</span>
+<span class="w">    </span><span class="c1"># - Reload systemd</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Reload Blackbox Exporter</span>
+<span class="w">    </span><span class="nt">tags</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">config, monitoring</span>
+</pre></div>
+
+<p>Not 100% where I want it (setting <code>loop_variable</code> is still ugly), but in my head it's easier to read.
+I don't use free form arguments because it's not clear that I can split the line like I did on the 
+Python code.</p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>Thanks oblikoamorale#ansible@libera.chat. <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/#fnref:1" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 05, 2025 11:13 AM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/we-have-been-writing-ansible-tasks-wrong/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pypy.org/posts/2025/01/towards-pypy311-an-update.html" class="hover:underline"
               >Towards PyPy3.11 - an update</a
             >
@@ -2101,46 +2215,6 @@ available, the backend OAuth mechanism will work independently of it all.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://agileabstractions.com/security-article-part-1/" class="hover:underline"
-              >New Article: Essential Python Web Security Part 1</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            The Open Source Initiative have published part one of an article of mine. The article is called “Essential Python Web Security” and it’s part one of a series called “The Absolute Minimum Every Python Web Application Developer Must Know About Security”. The subject is Full Stack Security for Python web applications, based on the Defence in Depth approach. This series explores the critical security principles every Python web developer should know. Whilst hard and fast rules, like avoiding plaintext passwords and custom security algorithms, are essential - a deeper understanding of broader security principles is equally important. This first pots delves into fundamental security best practises, ranging from general principles to specific Python-related techniques. Essential Python Web Security: Part 1 Part 2, on Cryptographic Algorithms, will be published soon. When the series is complete it will probably also be available as an ebook. The full document, about fifty pages, can be read here: The Absolute Minimum Every Python Web Application Developer Must Know About Security Special thanks to Gigaclear Ltd who sponsored the creation of this article. Also thanks to Dr David Mertz and Daniel Roy Greenfeld for technical reviews of this article prior to publication.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 22, 2024 12:00 AM UTC by
-            <a href="https://agileabstractions.com/feed.xml" class="link link-hover text-primary"
-              >Michael Foord</a
-            >
-          </div>
-          <a
-            href="https://agileabstractions.com/security-article-part-1/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -2152,12 +2226,12 @@ available, the backend OAuth mechanism will work independently of it all.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8854</a></li>
-    <li><a>Unique Feeds: 425</a></li>
+    <li><a>Total Entries: 9077</a></li>
+    <li><a>Unique Feeds: 426</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (490)</a></li><li><a href="http://blog.pythonanywhere.com/feed/">Awesome Python Applications (424)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Bytes (416)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (324)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Anywhere (211)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (490)</a></li><li><a href="http://testandcode.com/rss">Awesome Python Applications (424)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Python Bytes (416)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (324)</a></li><li><a href="https://www.mattlayman.com/categories/python/index.xml">Test and Code (223)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
