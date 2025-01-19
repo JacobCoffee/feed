@@ -330,6 +330,93 @@ Gtk.main()
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html" class="hover:underline"
+              >Using (or really misusing) Path.resolve() in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&nbsp;</p><p>I just stumbled upon a code in Python that uses a simple `<b>Path(...).resolve()</b>`
+ after receiving a path in an API and suddenly reminded myself on the 
+many the bugs I've tripped over due to it, so, decided to share&nbsp; why I 
+hope at some point this function stops being so pervasive as it's 
+usually the wrong thing to call.. (maybe because when <b>Python </b>went from <b>os.path</b> to <b>pathlib </b>they added no real replacement and now you need to use both).</p><p>The main reason of bugs for that is that when you call <b>Path.resolve()</b> it'll actually resolve <b>symlinks </b>(and <b>substs on Windows</b>).<br /></p><p></p><p>This means that if the user crafted some structure as</p><p></p><blockquote><p>/myproject</p><p>/myproject/package.json</p><p>/myproject/src -&gt; symlink to sources in /allmysources/temp</p></blockquote><p></p><p>&nbsp;If you resolve `<b>/myproject/src/myfile.py</b>` to `<b>/allmysources/temp/myfile.py</b>` and actually want to get to the `<b>package.json</b>`, it'll never be found!</p><p>&nbsp;I was even looking at the python docs and found this nugget when talking about `<b>Path.parent</b>`:</p><p></p><p></p><blockquote><p>If you want to walk an arbitrary filesystem path upwards, it is
+recommended to first call <a class="reference internal" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve" title="pathlib.Path.resolve"><code class="xref py py-meth docutils literal notranslate"><span class="pre">Path.resolve()</span></code></a> so as to resolve
+symlinks and eliminate <code class="docutils literal notranslate"><span class="pre">".."</span></code> components.</p></blockquote><p></p><p></p><p>And that's completely <b>why you shouldn't use it</b> because if you do, then the parents will be completely off!</p><p>So, what should you do?</p><p>Unfortunately <b>pathlib </b>is not your friend here, you need to use `<b>os.path.normalize(os.path.abspath(...))</b>` to remove `<b>..</b>` occurrences from the string and make it absolute (and then after, sure, use <b>pathlib </b>for
+ the remainder of your program) -- possibly you even want to get the 
+real case in the filesystem if you're on Windows (which is very annoying
+ as then you end up needing to do a bunch of <b>listdir()</b> calls to get the case stored in the filesystem).</p><p>&nbsp;--
+ but also, keep in mind you usually just need to do that on boundaries 
+(i.e.: when you receive a relative path as an argument in the command 
+line for instance, not when you receive an API call from another program
+ -- chances are, the <b>cwd </b>of that program and your own are different and thus <b>calls to `absolute()` or `resolve()` are actually bugs</b>).</p><p></p><p>But isn't there any use-case for `<b>Path.resolve()</b>`?</p><p>As
+ far as I know, the only case where it's valid is if you do want to 
+create a cache of sorts where any representation of that file is 
+considered the same (i.e.: you really want the canonical representation 
+of the file).&nbsp;</p><p>Say, in an IDE you opened your `<b>subst</b>` in `<b>x:</b>` and then you have `<b>c:\project\foo.py</b>` and `<b>x:\foo.py</b>`
+ in a debugger and you want to always show the version that's opened 
+under your IDE, you need to build that mapping so that regardless of the
+ version that's accessed you will open the version that's being seen in 
+your IDE (and oh my god, I've seen so many IDEs get that wrong and the 
+effect is usually you'll have the same file opened under different names
+ in the IDE -- I know that in the <b>pydevd debugger</b> this is especially tricky because the name of the file is gotten from a <b>.pyc</b>
+ file, which depends on how it was generated and the cached version may 
+not match the version that the user is currently seeing -- the&nbsp; debugger
+ goes through great lengths to have an internal canonical representation
+ and a different version which should be what the user sees, but it's 
+not perfect and IDEs which actually open the file afterwards don't make 
+the due diligence to try to do the proper mapping afterwards -- even 
+worse when they fail because the path is the same but the drive is 
+uppercase and internally the path they have has the drive in lowercase).</p><p>Maybe even then it'd be better to use the inode of the file for a reference (gotten from `<b>Path.stat()</b>`)...</p><p>Anyways, to sum up, in its current format, I'd just recommend to <b>ALMOST NEVER </b>use `<b>resolve()</b>` as it's usually just the source of bugs, keep to <b>`Path(os.path.normalize(os.path.abspath(...)))` </b>on
+ program boundaries as that's just saner in general (and when you want 
+to pass files among APIs, make sure paths are already absolute and 
+normalized and fail if they aren't).<b><br /></b></p><p>p.s.: just as a 
+disclaimer, I've also seen a very minor subset of users on Linux (just 
+one so far really, but maybe there are others that want that behavior 
+out there) that say they want the symlinks resolved as the created 
+structure they have is always final and the symlinks are just a 
+commodity to avoid having to cd into that structure so that they can 
+freely cd into symlinks (and as such they don't want to affect the 
+structure when they created symlinks), but I don't think this is the 
+most common behavior (and if it is, then programs probably need to have a
+ flag determining on whether to use it or not (for instance, I know vite
+ from javascript has a <span class="kY2IgmnCmOGjharHErah"><span><b>resolve.preserveSymlinks </b>setting
+ so that the user can decide if they want it or not) -- although it's 
+also true that most users don't even care, because they don't put their 
+source code in a symlink or Windows subst 😊<br /></span></span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 08:43 PM UTC by
+            <a href="http://pydev.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Fabio Zadrozny</a
+            >
+          </div>
+          <a
+            href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/235/" class="hover:underline"
               >The Real Python Podcast – Episode #235: Principles for Considering Your Python Tooling</a
             >
@@ -2008,46 +2095,6 @@ policies</a> for further information.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/building-dictionary-comprehensions/" class="hover:underline"
-              >Building Dictionary Comprehensions in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this video course, you'll learn how to write dictionary comprehensions in Python. You'll also explore the most common use cases for dictionary comprehensions and learn about some bad practices that you should avoid when using them in your code.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 14, 2025 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/building-dictionary-comprehensions/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2059,8 +2106,8 @@ policies</a> for further information.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9099</a></li>
-    <li><a>Unique Feeds: 426</a></li>
+    <li><a>Total Entries: 9089</a></li>
+    <li><a>Unique Feeds: 425</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
