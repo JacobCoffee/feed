@@ -53,6 +53,220 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://rickardlindberg.me/2025/01/19/replacing-ctrlr-in-bash-without.html" class="hover:underline"
+              >Replacing Ctrl-R in Bash without TIOCSTI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I have <a href="https://rickardlindberg.me/2017/05/19/evolution-of-recalling.html">previously
+written</a>
+about how I use <a href="https://rickardlindberg.me/projects/rlselect/">rlselect</a> as a
+replacement for Ctrl+R in Bash.</p>
+<p>It works by creating a key binding in Bash for Ctrl+R that invokes <code>rlselect</code>
+instead of the default Bash interactive history search command. <code>rlselect</code>
+looks something like this:</p>
+<p><img alt="Screenshot of rlselect showing two entries, hello
+and world, with hello selected." height="373" src="https://cdn.uploads.micro.blog/173380/2025/rlselect-selecting-hello.png" width="600" /></p>
+<p>If you press tab, the current selection is inserted at the prompt. If you press
+enter, the current selection is executed. This is the same behavior as the
+default Ctrl+R.</p>
+<p>The mechanism for this stopped working in recent Linux kernel versions. I
+figured out how to solve it and in this blog post I explain how.</p>
+<h2 id="old-mechanism">Old Mechanism</h2>
+<p>When <code>rlselect</code> is invoked from Ctrl+R, it is invoked with the <code>--tab</code> and
+<code>--action</code> flags. The first flag allows the tab key to be used to select a line
+and the second makes <code>rlselect</code> print the action taken on the first line
+before to the selection.</p>
+<p>Here is an example where enter is pressed when &ldquo;hello&rdquo; is selected:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
+enter
+hello
+</code></pre></div><p>Here is an example where tab is pressed when &ldquo;world&rdquo; is selected:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
+tab
+world
+</code></pre></div><p>Here is an example where Ctrl+G is pressed:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
+ctrl-g
+</code></pre></div><p>Ctrl+G aborts, so no selection is printed on the second line.</p>
+<p>To feed this output to the prompt, TIOCSTI is used. It simulates that you type
+characters in the terminal. The full script that Ctrl+R invokes looks like
+this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">set -e
+
+result<span style="color: #f92672;">=</span><span style="color: #66d9ef;">$(</span>tac ~/.bash_history | rlselect --tab --action -- <span style="color: #e6db74;">"</span>$@<span style="color: #e6db74;">"</span><span style="color: #66d9ef;">)</span>
+
+python - <span style="color: #e6db74;">"</span>$result<span style="color: #e6db74;">"</span> <span style="color: #e6db74;">&lt;&lt; EOF
+</span><span style="color: #e6db74;">import fcntl
+</span><span style="color: #e6db74;">import sys
+</span><span style="color: #e6db74;">import termios
+</span><span style="color: #e6db74;">
+</span><span style="color: #e6db74;">action, selection = sys.argv[1].split("\n", 1)
+</span><span style="color: #e6db74;">
+</span><span style="color: #e6db74;">if action != "tab":
+</span><span style="color: #e6db74;">    selection += "\n"
+</span><span style="color: #e6db74;">
+</span><span style="color: #e6db74;">for ch in selection:
+</span><span style="color: #e6db74;">    fcntl.ioctl(sys.stdout.fileno(), termios.TIOCSTI, ch)
+</span><span style="color: #e6db74;">EOF</span>
+</code></pre></div><p>The last part is where TIOCSTI is used to simulate that you press the keys
+of the selection. Unless tab is pressed, it appends a newline to the
+selection to simulate that Enter is pressed.</p>
+<p>The Bash configuration looks like this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash"><span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[[</span> $- <span style="color: #f92672;">=</span>~ .*i.* <span style="color: #f92672;">]]</span>; <span style="color: #66d9ef;">then</span> bind <span style="color: #e6db74;">'"\C-r": "\C-a rlselect-history \C-j"'</span>; <span style="color: #66d9ef;">fi</span>
+</code></pre></div><p>Here is how it works:</p>
+<ul>
+<li>Ctrl+R is bound to a series of keystrokes.</li>
+<li>First Ctrl+A is simulated which takes the cursor to the beginning of the
+line.</li>
+<li>Then <code>&lt;space&gt;rlselect-history&lt;space&gt;</code> is typed.</li>
+<li>Then Ctrl+J is simulated which means accept the current line. Or execute it.
+The initial space entered in the previous step ensures that the
+<code>rlselect-history</code> command does not end up in the history. The moving of the
+cursor to the beginning of the line ensures that anything typed at the prompt
+is passed as an argument to <code>rlselect-history</code>.</li>
+</ul>
+<p>(This configuration also makes the text <code> rlselect-history ...</code> appear in the
+terminal. The new mechanism makes that go away.)</p>
+<p>This mechanism stopped working in recent Linux kernel versions because TIOCSTI
+can not be used like this. There is apparently security issues with TIOCSTI and
+it is now only allowed as root.</p>
+<h2 id="new-mechanism">New Mechanism</h2>
+<p>The new Bash configuration for Ctrl+R behavior that I came up with looks like
+this:</p>
+<div class="highlight"><pre tabindex="0"><code class="language-bash">rlselect-history<span style="color: #f92672;">()</span> <span style="color: #f92672;">{</span>
+    local action
+    local selection
+    <span style="color: #f92672;">{</span>
+        read action
+        read selection
+    <span style="color: #f92672;">}</span> &lt; &lt;<span style="color: #f92672;">(</span>tac ~/.bash_history | rlselect --tab --action -- <span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>READLINE_LINE<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span><span style="color: #f92672;">)</span>
+    <span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[</span> <span style="color: #e6db74;">"</span>$action<span style="color: #e6db74;">"</span> <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"tab"</span> <span style="color: #f92672;">]</span>; <span style="color: #66d9ef;">then</span>
+        READLINE_LINE<span style="color: #f92672;">=</span><span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>selection<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span>
+        READLINE_POINT<span style="color: #f92672;">=</span><span style="color: #e6db74;">${#</span>READLINE_LINE<span style="color: #e6db74;">}</span>
+        bind <span style="color: #e6db74;">'"\C-x2":'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to do nothing</span>
+    <span style="color: #66d9ef;">elif</span> <span style="color: #f92672;">[</span> <span style="color: #e6db74;">"</span>$action<span style="color: #e6db74;">"</span> <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"enter"</span> <span style="color: #f92672;">]</span>; <span style="color: #66d9ef;">then</span>
+        READLINE_LINE<span style="color: #f92672;">=</span><span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>selection<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span>
+        READLINE_POINT<span style="color: #f92672;">=</span><span style="color: #e6db74;">${#</span>READLINE_LINE<span style="color: #e6db74;">}</span>
+        bind <span style="color: #e6db74;">'"\C-x2": accept-line'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to accept line</span>
+    <span style="color: #66d9ef;">else</span>
+        bind <span style="color: #e6db74;">'"\C-x2":'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to do nothing</span>
+    <span style="color: #66d9ef;">fi</span>
+<span style="color: #f92672;">}</span>
+
+<span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[[</span> $- <span style="color: #f92672;">=</span>~ .*i.* <span style="color: #f92672;">]]</span>; <span style="color: #66d9ef;">then</span>
+    <span style="color: #75715e;"># Bind history command to Ctrl+x+1 followed by Ctrl+x+2:</span>
+    bind <span style="color: #e6db74;">'"\C-r": "\C-x1\C-x2"'</span>
+    <span style="color: #75715e;"># Bind Ctrl+x+1 to execute rlselect-history which does two things:</span>
+    <span style="color: #75715e;"># 1. Sets READLINE_*</span>
+    <span style="color: #75715e;"># 2. Binds Ctrl+x+2 to either accept line or do nothing.</span>
+    bind -x <span style="color: #e6db74;">'"\C-x1": rlselect-history'</span>
+<span style="color: #66d9ef;">fi</span>
+</code></pre></div><p>Let&rsquo;s break this down.</p>
+<ul>
+<li>
+<p>Ctrl+R is bound to a series of keystrokes.</p>
+</li>
+<li>
+<p>First Ctrl+X+1 is simulated.</p>
+</li>
+<li>
+<p>Then Ctrl+X+2 is simulated.</p>
+</li>
+<li>
+<p>Ctrl+X+1 is bound to execute the command <code>rlselect-history</code>. The <code>-x</code> to bind
+ensures that the variables <code>READLINE_*</code> can be set. From <code>man bash</code> on <code>set
+ -x</code>:</p>
+<blockquote>
+<p>Cause shell-command to  be executed  whenever keyseq is entered. When
+shell-command is executed, the shell sets the READLINE_LINE variable to the
+contents of the readline line buffer and the READLINE_POINT and
+READLINE_MARK variables [&hellip;] If the executed command changes the value of
+any of READLINE_LINE, READLINE_POINT, or READLINE_MARK, those new values
+will be reflected in the editing state.</p>
+</blockquote>
+</li>
+<li>
+<p><code>rlselect-history</code> is defined as a Bash function which allows it to
+reconfigure the key binding for Ctrl+X+2. Depending on if the current
+selection should be executed or not, it binds Ctrl+X+2 to either
+<code>accept-line</code> or nothing.</p>
+</li>
+</ul>
+<p>So the new mechanism relies on using two extra key bindings: Ctrl+X+1 and
+Ctrl+X+2. I chose them because I don&rsquo;t use them otherwise. But they can be any
+two key bindings.</p>
+<p>The trick to finding this solution for me was understanding Bash key bindings.
+<a href="https://stackoverflow.com/a/13978131">This answer</a> on StackOverflow writes the
+following:</p>
+<blockquote>
+<p>With <code>bind</code>, you can bind keys to do one of three things, but no combination
+of them:</p>
+<ul>
+<li>Execute a readline command: <code>bind '&quot;key&quot;: command'</code></li>
+<li>Execute a series of keystrokes: <code>bind '&quot;key&quot;:&quot;keystrokes&quot;'</code></li>
+<li>Execute a shell command: <code>bind -x '&quot;key&quot;: shell-command'</code></li>
+</ul>
+</blockquote>
+<p>That made me understand that you can not call <code>accept-line</code> from within
+<code>rlselect-history</code> because it is executed in the context of <code>bind -x</code>, and
+readline commands can only be executed in the context of <code>bind '&quot;key&quot;:
+ command'</code>.</p>
+<h2 id="resources">Resources</h2>
+<p>Here are some resources that talks about the problem with TIOCSTI that helped
+me:</p>
+<ul>
+<li>
+<p><a href="https://github.com/dvorka/hstr">hstr</a> (the program that initially inspired
+me to write <code>rlselect</code>) had a <a href="https://github.com/dvorka/hstr/issues/478">similar
+problem</a> and I found clues to my
+solution there.</p>
+</li>
+<li>
+<p>The <a href="https://github.com/4z3/fzf-plugins">fzf-plugins</a> repo and <a href="https://github.com/junegunn/fzf/pull/1492">this
+dicussion</a> provides a similar
+solution for <a href="https://github.com/junegunn/fzf">fzf</a>.</p>
+</li>
+<li>
+<p>The article <a href="https://countdigi.github.io/post/2021/08/readline-and-fuzzy-finder/">Readline and Fuzzy
+Finder</a>
+helped me understand how to work with <code>READLINE_*</code> in Bash.</p>
+</li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 19, 2025 05:11 AM UTC by
+            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
+              >Rickard Lindberg</a
+            >
+          </div>
+          <a
+            href="https://rickardlindberg.me/2025/01/19/replacing-ctrlr-in-bash-without.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/python-mock-library/" class="hover:underline"
               >Understanding the Python Mock Object Library</a
             >
@@ -1995,106 +2209,6 @@ But <code>range</code> also accepts a third argument!</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2025/jan/14/security-releases/" class="hover:underline"
-              >Django security releases issued: 5.1.5, 5.0.11, and 4.2.18</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In accordance with <a class="reference external" href="https://docs.djangoproject.com/en/dev/internals/security/">our security release policy</a>, the Django team
-is issuing releases for
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.1.5/">Django 5.1.5</a>,
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.0.11/">Django 5.0.11</a>, and
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/4.2.18/">Django 4.2.18</a>.
-These releases address the security issues detailed below. We encourage all
-users of Django to upgrade as soon as possible.</p>
-<div class="section" id="s-cve-2024-56374-potential-denial-of-service-vulnerability-in-ipv6-validation">
-<h3>CVE-2024-56374: Potential denial-of-service vulnerability in IPv6 validation</h3>
-<p>Lack of upper bound limit enforcement in strings passed when performing IPv6
-validation could lead to a potential denial-of-service attack. The undocumented
-and private functions <tt class="docutils literal">clean_ipv6_address</tt> and <tt class="docutils literal">is_valid_ipv6_address</tt> were
-vulnerable, as was the <tt class="docutils literal">django.forms.GenericIPAddressField</tt> form field,
-which has now been updated to define a <tt class="docutils literal">max_length</tt> of 39 characters.</p>
-<p>The <tt class="docutils literal">django.db.models.GenericIPAddressField</tt> model field was not affected.</p>
-<p>Thanks to Saravana Kumar for the report.</p>
-<p>This issue has severity &quot;moderate&quot; according to the Django security policy.</p>
-</div>
-<div class="section" id="s-affected-supported-versions">
-<h3>Affected supported versions</h3>
-<ul class="simple">
-<li>Django main</li>
-<li>Django 5.1</li>
-<li>Django 5.0</li>
-<li>Django 4.2</li>
-</ul>
-</div>
-<div class="section" id="s-resolution">
-<h3>Resolution</h3>
-<p>Patches to resolve the issue have been applied to Django's
-main, 5.1, 5.0, and 4.2 branches.
-The patches may be obtained from the following changesets.</p>
-<div class="section" id="s-cve-2024-56374-potential-denial-of-service-vulnerability-in-ipv6-validation-1">
-<h4>CVE-2024-56374: Potential denial-of-service vulnerability in IPv6 validation</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/ca2be7724e1244a4cb723de40a070f873c6e94bf">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/4806731e58f3e8700a3c802e77899d54ac6021fe">5.1 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/e8d4a2005955dcf962193600b53bf461b190b455">5.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/ad866a1ca3e7d60da888d25d27e46a8adb2ed36e">4.2 branch</a></li>
-</ul>
-</div>
-</div>
-<div class="section" id="s-the-following-releases-have-been-issued">
-<h3>The following releases have been issued</h3>
-<ul class="simple">
-<li>Django 5.1.5 (<a class="reference external" href="https://www.djangoproject.com/m/releases/5.1/Django-5.1.5.tar.gz">download Django 5.1.5</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-5.1.5.checksum.txt">5.1.5 checksums</a>)</li>
-<li>Django 5.0.11 (<a class="reference external" href="https://www.djangoproject.com/m/releases/5.0/Django-5.0.11.tar.gz">download Django 5.0.11</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-5.0.11.checksum.txt">5.0.11 checksums</a>)</li>
-<li>Django 4.2.18 (<a class="reference external" href="https://www.djangoproject.com/m/releases/4.2/Django-4.2.18.tar.gz">download Django 4.2.18</a> |
-<a class="reference external" href="https://www.djangoproject.com/m/pgp/Django-4.2.18.checksum.txt">4.2.18 checksums</a>)</li>
-</ul>
-<p>The PGP key ID used for this release is Natalia Bidart: <a class="reference external" href="https://github.com/nessita.gpg">2EE82A8D9470983E</a></p>
-</div>
-<div class="section" id="s-general-notes-regarding-security-reporting">
-<h3>General notes regarding security reporting</h3>
-<p>As always, we ask that potential security issues be reported via private email
-to <tt class="docutils literal">security&#64;djangoproject.com</tt>, and not via Django's Trac instance, nor via
-the Django Forum, nor via the django-developers list. Please see <a class="reference external" href="https://www.djangoproject.com/security/">our security
-policies</a> for further information.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 14, 2025 02:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2025/jan/14/security-releases/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2106,7 +2220,7 @@ policies</a> for further information.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9089</a></li>
+    <li><a>Total Entries: 9051</a></li>
     <li><a>Unique Feeds: 425</a></li>
     
 
