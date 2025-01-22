@@ -53,6 +53,170 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html" class="hover:underline"
+              >Dealing with egl_bad_alloc error for webkit</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <!--
+.. title: Dealing with egl_bad_alloc error for webkit
+.. slug: dealing-with-egl-bad-alloc-error-for-webkit
+.. date: 2025-01-18T08:43:01+01:00
+.. tags: Fedora, Python, WebKit, Gnome, GTK, Toga
+.. link:
+.. description:
+.. type: text
+-->
+<p>I was trying out some <a href="https://toga.readthedocs.io/en/stable/">Toga</a> examples,
+and for the webview I kept getting the following error and a blank screen.</p>
+<pre><code>Could not create EGL surfaceless context: EGL_BAD_ALLOC.
+</code></pre>
+<p>After many hours of searching I reduced the reproducer to a simple Python Gtk code.</p>
+<pre><code class="language-Python">import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('WebKit2', '4.0')
+
+from gi.repository import Gtk, WebKit2
+
+window = Gtk.Window()
+window.set_default_size(800, 600)
+window.connect(&quot;destroy&quot;, Gtk.main_quit)
+
+scrolled_window = Gtk.ScrolledWindow()
+webview = WebKit2.WebView()
+webview.load_uri(&quot;https://getfedora.org&quot;)
+scrolled_window.add(webview)
+
+window.add(scrolled_window)
+window.show_all()
+Gtk.main()
+</code></pre>
+<p>Finally I asked for help in #fedora IRC channel, within seconds <code>Khaytsus</code> gave me the fix:</p>
+<pre><code>WEBKIT_DISABLE_COMPOSITING_MODE=1 python g.py
+</code></pre>
+<p><img alt="working webview" src="https://kushaldas.in/images/fedora_webview.png" /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 18, 2025 07:43 AM UTC by
+            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
+              >Kushal Das</a
+            >
+          </div>
+          <a
+            href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html" class="hover:underline"
+              >Using (or really misusing) Path.resolve() in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&nbsp;</p><p>I just stumbled upon a code in Python that uses a simple `<b>Path(...).resolve()</b>`
+ after receiving a path in an API and suddenly reminded myself on the 
+many the bugs I've tripped over due to it, so, decided to share&nbsp; why I 
+hope at some point this function stops being so pervasive as it's 
+usually the wrong thing to call.. (maybe because when <b>Python </b>went from <b>os.path</b> to <b>pathlib </b>they added no real replacement and now you need to use both).</p><p>The main reason of bugs for that is that when you call <b>Path.resolve()</b> it'll actually resolve <b>symlinks </b>(and <b>substs on Windows</b>).<br /></p><p></p><p>This means that if the user crafted some structure as</p><p></p><blockquote><p>/myproject</p><p>/myproject/package.json</p><p>/myproject/src -&gt; symlink to sources in /allmysources/temp</p></blockquote><p></p><p>&nbsp;If you resolve `<b>/myproject/src/myfile.py</b>` to `<b>/allmysources/temp/myfile.py</b>` and actually want to get to the `<b>package.json</b>`, it'll never be found!</p><p>&nbsp;I was even looking at the python docs and found this nugget when talking about `<b>Path.parent</b>`:</p><p></p><p></p><blockquote><p>If you want to walk an arbitrary filesystem path upwards, it is
+recommended to first call <a class="reference internal" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve" title="pathlib.Path.resolve"><code class="xref py py-meth docutils literal notranslate"><span class="pre">Path.resolve()</span></code></a> so as to resolve
+symlinks and eliminate <code class="docutils literal notranslate"><span class="pre">".."</span></code> components.</p></blockquote><p></p><p></p><p>And that's completely <b>why you shouldn't use it</b> because if you do, then the parents will be completely off!</p><p>So, what should you do?</p><p>Unfortunately <b>pathlib </b>is not your friend here, you need to use `<b>os.path.normpath(os.path.abspath(...))</b>` to remove `<b>..</b>` occurrences from the string and make it absolute (and then after, sure, use <b>pathlib </b>for
+ the remainder of your program) -- possibly you even want to get the 
+real case in the filesystem if you're on Windows (which is very annoying
+ as then you end up needing to do a bunch of <b>listdir()</b> calls to get the case stored in the filesystem).</p><p>&nbsp;--
+ but also, keep in mind you usually just need to do that on boundaries 
+(i.e.: when you receive a relative path as an argument in the command 
+line for instance, not when you receive an API call from another program
+ -- chances are, the <b>cwd </b>of that program and your own are different and thus <b>calls to `absolute()` or `resolve()` are actually bugs</b>).</p><p></p><p>But isn't there any use-case for `<b>Path.resolve()</b>`?</p><p>As
+ far as I know, the only case where it's valid is if you do want to 
+create a cache of sorts where any representation of that file is 
+considered the same (i.e.: you really want the canonical representation 
+of the file).&nbsp;</p><p>Say, in an IDE you opened your `<b>subst</b>` in `<b>x:</b>` and then you have `<b>c:\project\foo.py</b>` and `<b>x:\foo.py</b>`
+ in a debugger and you want to always show the version that's opened 
+under your IDE, you need to build that mapping so that regardless of the
+ version that's accessed you will open the version that's being seen in 
+your IDE (and oh my god, I've seen so many IDEs get that wrong and the 
+effect is usually you'll have the same file opened under different names
+ in the IDE -- I know that in the <b>pydevd debugger</b> this is especially tricky because the name of the file is gotten from a <b>.pyc</b>
+ file, which depends on how it was generated and the cached version may 
+not match the version that the user is currently seeing -- the&nbsp; debugger
+ goes through great lengths to have an internal canonical representation
+ and a different version which should be what the user sees, but it's 
+not perfect and IDEs which actually open the file afterwards don't make 
+the due diligence to try to do the proper mapping afterwards -- even 
+worse when they fail because the path is the same but the drive is 
+uppercase and internally the path they have has the drive in lowercase).</p><p>Maybe even then it'd be better to use the inode of the file for a reference (gotten from `<b>Path.stat()</b>`)...</p><p>Anyways, to sum up, in its current format, I'd just recommend to <b>ALMOST NEVER </b>use `<b>resolve()</b>` as it's usually just the source of bugs, keep to <b>`Path(os.path.normpath(os.path.abspath(...)))` </b>on
+ program boundaries as that's just saner in general (and when you want 
+to pass files among APIs, make sure paths are already absolute and 
+normalized and fail if they aren't).<b><br /></b></p><p>p.s.: just as a 
+disclaimer, I've also seen a very minor subset of users on Linux (just 
+one so far really, but maybe there are others that want that behavior 
+out there) that say they want the symlinks resolved as the created 
+structure they have is always final and the symlinks are just a 
+commodity to avoid having to cd into that structure so that they can 
+freely cd into symlinks (and as such they don't want to affect the 
+structure when they created symlinks), but I don't think this is the 
+most common behavior (and if it is, then programs probably need to have a
+ flag determining on whether to use it or not (for instance, I know vite
+ from javascript has a <span class="kY2IgmnCmOGjharHErah"><span><b>resolve.preserveSymlinks </b>setting
+ so that the user can decide if they want it or not) -- although it's 
+also true that most users don't even care, because they don't put their 
+source code in a symlink or Windows subst 😊<br /></span></span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 08:43 PM UTC by
+            <a href="http://pydev.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Fabio Zadrozny</a
+            >
+          </div>
+          <a
+            href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/235/" class="hover:underline"
               >The Real Python Podcast – Episode #235: Principles for Considering Your Python Tooling</a
             >
@@ -1953,251 +2117,6 @@ In this article we’ll cover:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/api-rate-limiting-intro.html" class="hover:underline"
-              >Understanding API rate-limiting techniques</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/api-rate-limiting-intro.html">Understanding API rate-limiting techniques</a>
-</h1>
-<div class="article-meta">
-  2025-01-13, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>Enabling rate-limiting in Zato means that access to Zato APIs can be throttled per endpoint, user or service - including options to make limits apply to specific IP addresses only - and if limits are exceeded within a selected period of time, the invocation will fail. Let's check how to use it all.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/arch.png" /></p>
-<p>API rate limiting works on several levels and the configuration is always checked in the order below, which follows from the narrowest, most specific parts of the system (endpoints), through users which may apply to multiple endpoints, up to services which in turn may be used by both multiple endpoints and users.</p>
-<ul>
-<li>First, per-endpoint limits</li>
-<li>Then, per-user limits</li>
-<li>Finally, per-service limits</li>
-</ul>
-<p>When a request arrives through an endpoint, that endpoint's rate limiting configuration is checked. If the limit is already reached for the IP address or network of the calling application, the request is rejected.</p>
-<p>Next, if there is any user associated with the endpoint, that account's rate limits are checked in the same manner and, similarly, if they are reached, the request is rejected.</p>
-<p>Finally, if the endpoint's underlying service is configured to do so, it also checks if its invocation limits are not exceeded, rejecting the message accordingly if they are.</p>
-<p>Note that the three levels are distinct yet they overlap in what they allow one to achieve.</p>
-<p>For instance, it is possible to have the same user credentials be used in multiple endpoints and express ideas such as "Allow this and that user to invoke my APIs 1,000 requests/day but limit each endpoint to at most 5 requests/minute no matter which user".</p>
-<p>Moreover, because limits can be set on services, it is possible to make it even more flexible, e.g. "Let this service be invoked at most 10,000 requests/hour, no matter which user it is, with particular users being able to invoke at most 500 requests/minute, no matter which service, topping it off with per separate limits for REST vs. SOAP vs. JSON-RPC endpoint, depending on what application is invoke the endpoints". That lets one conveniently express advanced scenarios that often occur in practical situations.</p>
-<p>Also, observe that API rate limiting applies to REST, SOAP and JSON-RPC endpoints only, it is not used with other API endpoints, such as AMQP, IBM MQ, SAP, task scheduler or any other technologies. However, per-service limits work no matter which endpoint the service is invoked with and they will work with endpoints such as WebSockets, ZeroMQ or any other.</p>
-<p>Lastly, limits pertain to with incoming requests only - any outgoing ones, from Zato to external resources - are not covered by it.</p>
-<h2 id="per-ip-restrictions">Per-IP restrictions</h2>
-<p>The architecture is made even more versatile thanks to the fact that for each object - endpoint, user or service - different limits can be configured depending on the caller's IP address.</p>
-<p>This adds yet another dimension and allows to express ideas commonly witnessed in API-based projects, such as:</p>
-<ul>
-<li>External applications, depending on their IP addresses, can have their own limits</li>
-<li>Internal users, e.g. employees of the company using VPN, may have hire limits if their addresses are in the 172.x.x.x range</li>
-<li>For performance testing purposes, access to Zato from a few selected hosts may have no limits at all</li>
-</ul>
-<p>IP-based limits work hand in hand are an integral part of the mechanism - they do not rule out per-endpoit, user or service limits. In fact, for each such object, multiple IP-using limits can be set independently, thus allowing for highest degree of flexibility.</p>
-<h2 id="exact-or-approximate">Exact or approximate</h2>
-<p>Rate limits come in two types:</p>
-<ul>
-<li>Exact</li>
-<li>Approximate</li>
-</ul>
-<p>Exact rate limits are just that, exact - they en that a limit is not exceeded at all, not even by a single request.</p>
-<p>Approximate limits may let a very small number of requests to exceed the limit with the benefit being that approximate limits are faster to check than exact ones.</p>
-<p>When to use which type depends on a particular project:</p>
-<ul>
-<li>
-<p>In some projects, it does not really matter if callers have a limit of 1,000 requests/minute or 1,005 requests/minute because the difference is too tiny to make a business impact. Approximate limits work best in this case.</p>
-</li>
-<li>
-<p>In other projects, there may be requirements that the limit never be exceeded no matter the circumstances. Use exact limits here.</p>
-</li>
-</ul>
-<h2 id="python-code-and-web-admin">Python code and web-admin</h2>
-<p>Alright, let's check how to define the limits in the Zato Dashboard. We will use the sample service below:</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span> <span class="nn">zato.server.service</span> <span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span> <span class="nc">Sample</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.sample'</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># Return a simple string on response</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="s1">'Hello there!</span><span class="se">\n</span><span class="s1">'</span>
-</code></pre></div>
-<p>Now, in web-admin, we will configure limits - separately for the service, a new and a new REST API channel (endpoint).</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/service.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/user.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/channel.png" /></p>
-<p>Points of interest:</p>
-<ul>
-<li>Configuration for each type of object is independent - within the same invocation some limits may be exact, some may be approximate</li>
-<li>There can be multiple configuration entries for each object</li>
-<li>A unit of time is "m", "h" or "d", depending on whether the limit is per minute, hour or day, respectively</li>
-<li>All limits within the same configuration are checked in the order of their definition which is why the most generic ones should be listed first</li>
-</ul>
-<h2 id="testing-it-out">Testing it out</h2>
-<p>Now, all is left is to invoke the service from curl.</p>
-<p>As long as limits are not reached, a business response is returned:</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>$ curl http://my.user:password@localhost:11223/api/sample
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>Hello there!
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>$
-</code></pre></div>
-<p>But if a limit is reached, the caller receives an error message with the 429 HTTP status.</p>
-<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a>$ curl -v http://my.user:password@localhost:11223/api/sample
-<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>*   Trying 127.0.0.1...
-<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a>
-<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a>...
-<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
-<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a>&lt; HTTP/1.1 429 Too Many Requests
-<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a>&lt; Server: Zato
-<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>&lt; X-Zato-CID: b8053d68612d626d338b02
-<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a>
-<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a>...
-<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a>
-<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>{&quot;zato_env&quot;:{&quot;result&quot;:&quot;ZATO_ERROR&quot;,&quot;cid&quot;:&quot;b8053d68612d626d338b02eb&quot;,
-<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a> &quot;details&quot;:&quot;Error 429 Too Many Requests&quot;}}
-<a id="line-2-14" name="line-2-14"></a><a href="#line-2-14"><span class="linenos"></span></a>$
-</code></pre></div>
-<p>Note that the caller never knows what the limit was - that information is saved in Zato server logs along with other details so that API authors can correlate what callers get with the very rate limiting definition that prevented them from accessing the service.</p>
-<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a>zato.common.rate_limiting.common.RateLimitReached: Max. rate limit of 100/m reached;
-<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>from:`10.74.199.53`, network:`*`; last_from:`127.0.0.1;
-<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a>last_request_time_utc:`2025-01-12T15:30:41.943794;
-<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a>last_cid:`5f4f1ef65490a23e5c37eda1`; (cid:b8053d68612d626d338b02)
-</code></pre></div>
-<p>And this is it - we have created a new API rate limiting definition in Zato and tested it out successfully!</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/docs/3.3/tutorial/01.html">API integration tutorial</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 13, 2025 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/api-rate-limiting-intro.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2025/01/12/newsletter-december-advent-of-code.html" class="hover:underline"
-              >Newsletter December 2024: Advent of Code</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>December is the month of <a href="https://adventofcode.com/">Advent of Code</a>. I had
-told myself not to participate this year because I know I get <a href="https://youtu.be/stBGg7v-URg">completely
-consumed</a> by the problems and it has a negative
-impact on the rest of my life. It worked. Until December 15th. More on that
-later.</p>
-<h2 id="code-editor-update">Code Editor Update</h2>
-<p><a href="https://rickardlindberg.me/2024/12/08/newsletter-november-a.html">Last month</a>
-I started working on a <a href="https://github.com/rickardlindberg/rleditor">new code
-editor</a>. It is a mix of a text
-editor and a structured editor. It is all text, but parsers and pretty printers
-allow you to work with a tree structure and not think too much about syntax.</p>
-<p>I continued working on it this month. The big achievement was that I added
-support for another language in addition to JSON. The other language is
-<a href="https://rickardlindberg.me/categories/rlmeta/">rlmeta</a>. Here is a screenshot
-showing the parser opened in the editor:</p>
-<p><img alt="A screenshot of releditor editing the parser of
-rlmeta." height="289" src="https://cdn.uploads.micro.blog/173380/2025/rleditor-rlmeta-parser.png" width="600" /></p>
-<p>This is a big achievement because it ties everything together. You define a
-parser and a pretty printer for your language. That gives you all editing
-capabilities. However, you can also write a code generator, and now you have a
-full blown programming language with editing support &ldquo;for free&rdquo;. This
-potentially provides an environment to quickly experiment with new programming
-languages.</p>
-<p>Conceptually, I&rsquo;m quite happy with this achievement. However, there are many
-things to work on before this is &ldquo;production ready&rdquo;. First of all, the
-performance is pretty horrible because of the constant parsing and pretty
-printing. Second of all, I need to see if a tree based editor can actually
-become better than a regular text editor.</p>
-<h2 id="advent-of-code">Advent of Code</h2>
-<p>I couldn&rsquo;t help myself but to participate this year as well. The experience was
-not as stressful as last year. I still got consumed by the problems, but the
-feeling was mostly positive. I managed to complete all but 3 problems. Right
-now, the interest to complete them is pretty low. I might take a look at other
-solutions to see if I can learn something from that.</p>
-<p>My approach to solving the problems is that I try to solve them in order, and I
-don&rsquo;t look at others' solutions until I have solved both parts. However, I&rsquo;m
-out of ideas to try on the last problems, and I think the competition part is
-over by now. I might learn something for next year if I look at solutions now.</p>
-<p>This year I also practiced object oriented design. So my solutions involve many
-small objects interacting with each other to produce a solution. It was mostly
-a success I think. One of my favorite solutions is for <a href="https://github.com/rickardlindberg/aoc24/blob/main/11.py">day
-11</a>.</p>
-<p>This year I also think that I got the hang of Dijkstra and A*. (I found
-<a href="https://www.redblobgames.com/pathfinding/a-star/introduction.html">Introduction to the A*
-Algorithm</a>
-from Red Blob Games really helpful.)</p>
-<p>You can find all my solutions on
-<a href="https://github.com/rickardlindberg/aoc24">GitHub</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 12, 2025 11:45 AM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2025/01/12/newsletter-december-advent-of-code.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -2209,8 +2128,8 @@ from Red Blob Games really helpful.)</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9034</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 9043</a></li>
+    <li><a>Unique Feeds: 420</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
