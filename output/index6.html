@@ -53,482 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rickardlindberg.me/2025/01/19/replacing-ctrlr-in-bash-without.html" class="hover:underline"
-              >Replacing Ctrl-R in Bash without TIOCSTI</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I have <a href="https://rickardlindberg.me/2017/05/19/evolution-of-recalling.html">previously
-written</a>
-about how I use <a href="https://rickardlindberg.me/projects/rlselect/">rlselect</a> as a
-replacement for Ctrl+R in Bash.</p>
-<p>It works by creating a key binding in Bash for Ctrl+R that invokes <code>rlselect</code>
-instead of the default Bash interactive history search command. <code>rlselect</code>
-looks something like this:</p>
-<p><img alt="Screenshot of rlselect showing two entries, hello
-and world, with hello selected." height="373" src="https://cdn.uploads.micro.blog/173380/2025/rlselect-selecting-hello.png" width="600" /></p>
-<p>If you press tab, the current selection is inserted at the prompt. If you press
-enter, the current selection is executed. This is the same behavior as the
-default Ctrl+R.</p>
-<p>The mechanism for this stopped working in recent Linux kernel versions. I
-figured out how to solve it and in this blog post I explain how.</p>
-<h2 id="old-mechanism">Old Mechanism</h2>
-<p>When <code>rlselect</code> is invoked from Ctrl+R, it is invoked with the <code>--tab</code> and
-<code>--action</code> flags. The first flag allows the tab key to be used to select a line
-and the second makes <code>rlselect</code> print the action taken on the first line
-before to the selection.</p>
-<p>Here is an example where enter is pressed when &ldquo;hello&rdquo; is selected:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
-enter
-hello
-</code></pre></div><p>Here is an example where tab is pressed when &ldquo;world&rdquo; is selected:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
-tab
-world
-</code></pre></div><p>Here is an example where Ctrl+G is pressed:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-text">$ (echo hello; echo world) | rlselect --tab --action
-ctrl-g
-</code></pre></div><p>Ctrl+G aborts, so no selection is printed on the second line.</p>
-<p>To feed this output to the prompt, TIOCSTI is used. It simulates that you type
-characters in the terminal. The full script that Ctrl+R invokes looks like
-this:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-bash">set -e
-
-result<span style="color: #f92672;">=</span><span style="color: #66d9ef;">$(</span>tac ~/.bash_history | rlselect --tab --action -- <span style="color: #e6db74;">"</span>$@<span style="color: #e6db74;">"</span><span style="color: #66d9ef;">)</span>
-
-python - <span style="color: #e6db74;">"</span>$result<span style="color: #e6db74;">"</span> <span style="color: #e6db74;">&lt;&lt; EOF
-</span><span style="color: #e6db74;">import fcntl
-</span><span style="color: #e6db74;">import sys
-</span><span style="color: #e6db74;">import termios
-</span><span style="color: #e6db74;">
-</span><span style="color: #e6db74;">action, selection = sys.argv[1].split("\n", 1)
-</span><span style="color: #e6db74;">
-</span><span style="color: #e6db74;">if action != "tab":
-</span><span style="color: #e6db74;">    selection += "\n"
-</span><span style="color: #e6db74;">
-</span><span style="color: #e6db74;">for ch in selection:
-</span><span style="color: #e6db74;">    fcntl.ioctl(sys.stdout.fileno(), termios.TIOCSTI, ch)
-</span><span style="color: #e6db74;">EOF</span>
-</code></pre></div><p>The last part is where TIOCSTI is used to simulate that you press the keys
-of the selection. Unless tab is pressed, it appends a newline to the
-selection to simulate that Enter is pressed.</p>
-<p>The Bash configuration looks like this:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-bash"><span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[[</span> $- <span style="color: #f92672;">=</span>~ .*i.* <span style="color: #f92672;">]]</span>; <span style="color: #66d9ef;">then</span> bind <span style="color: #e6db74;">'"\C-r": "\C-a rlselect-history \C-j"'</span>; <span style="color: #66d9ef;">fi</span>
-</code></pre></div><p>Here is how it works:</p>
-<ul>
-<li>Ctrl+R is bound to a series of keystrokes.</li>
-<li>First Ctrl+A is simulated which takes the cursor to the beginning of the
-line.</li>
-<li>Then <code>&lt;space&gt;rlselect-history&lt;space&gt;</code> is typed.</li>
-<li>Then Ctrl+J is simulated which means accept the current line. Or execute it.
-The initial space entered in the previous step ensures that the
-<code>rlselect-history</code> command does not end up in the history. The moving of the
-cursor to the beginning of the line ensures that anything typed at the prompt
-is passed as an argument to <code>rlselect-history</code>.</li>
-</ul>
-<p>(This configuration also makes the text <code> rlselect-history ...</code> appear in the
-terminal. The new mechanism makes that go away.)</p>
-<p>This mechanism stopped working in recent Linux kernel versions because TIOCSTI
-can not be used like this. There is apparently security issues with TIOCSTI and
-it is now only allowed as root.</p>
-<h2 id="new-mechanism">New Mechanism</h2>
-<p>The new Bash configuration for Ctrl+R behavior that I came up with looks like
-this:</p>
-<div class="highlight"><pre tabindex="0"><code class="language-bash">rlselect-history<span style="color: #f92672;">()</span> <span style="color: #f92672;">{</span>
-    local action
-    local selection
-    <span style="color: #f92672;">{</span>
-        read action
-        read selection
-    <span style="color: #f92672;">}</span> &lt; &lt;<span style="color: #f92672;">(</span>tac ~/.bash_history | rlselect --tab --action -- <span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>READLINE_LINE<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span><span style="color: #f92672;">)</span>
-    <span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[</span> <span style="color: #e6db74;">"</span>$action<span style="color: #e6db74;">"</span> <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"tab"</span> <span style="color: #f92672;">]</span>; <span style="color: #66d9ef;">then</span>
-        READLINE_LINE<span style="color: #f92672;">=</span><span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>selection<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span>
-        READLINE_POINT<span style="color: #f92672;">=</span><span style="color: #e6db74;">${#</span>READLINE_LINE<span style="color: #e6db74;">}</span>
-        bind <span style="color: #e6db74;">'"\C-x2":'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to do nothing</span>
-    <span style="color: #66d9ef;">elif</span> <span style="color: #f92672;">[</span> <span style="color: #e6db74;">"</span>$action<span style="color: #e6db74;">"</span> <span style="color: #f92672;">=</span> <span style="color: #e6db74;">"enter"</span> <span style="color: #f92672;">]</span>; <span style="color: #66d9ef;">then</span>
-        READLINE_LINE<span style="color: #f92672;">=</span><span style="color: #e6db74;">"</span><span style="color: #e6db74;">${</span>selection<span style="color: #e6db74;">}</span><span style="color: #e6db74;">"</span>
-        READLINE_POINT<span style="color: #f92672;">=</span><span style="color: #e6db74;">${#</span>READLINE_LINE<span style="color: #e6db74;">}</span>
-        bind <span style="color: #e6db74;">'"\C-x2": accept-line'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to accept line</span>
-    <span style="color: #66d9ef;">else</span>
-        bind <span style="color: #e6db74;">'"\C-x2":'</span> <span style="color: #75715e;"># Bind Ctrl+x+2 to do nothing</span>
-    <span style="color: #66d9ef;">fi</span>
-<span style="color: #f92672;">}</span>
-
-<span style="color: #66d9ef;">if</span> <span style="color: #f92672;">[[</span> $- <span style="color: #f92672;">=</span>~ .*i.* <span style="color: #f92672;">]]</span>; <span style="color: #66d9ef;">then</span>
-    <span style="color: #75715e;"># Bind history command to Ctrl+x+1 followed by Ctrl+x+2:</span>
-    bind <span style="color: #e6db74;">'"\C-r": "\C-x1\C-x2"'</span>
-    <span style="color: #75715e;"># Bind Ctrl+x+1 to execute rlselect-history which does two things:</span>
-    <span style="color: #75715e;"># 1. Sets READLINE_*</span>
-    <span style="color: #75715e;"># 2. Binds Ctrl+x+2 to either accept line or do nothing.</span>
-    bind -x <span style="color: #e6db74;">'"\C-x1": rlselect-history'</span>
-<span style="color: #66d9ef;">fi</span>
-</code></pre></div><p>Let&rsquo;s break this down.</p>
-<ul>
-<li>
-<p>Ctrl+R is bound to a series of keystrokes.</p>
-</li>
-<li>
-<p>First Ctrl+X+1 is simulated.</p>
-</li>
-<li>
-<p>Then Ctrl+X+2 is simulated.</p>
-</li>
-<li>
-<p>Ctrl+X+1 is bound to execute the command <code>rlselect-history</code>. The <code>-x</code> to bind
-ensures that the variables <code>READLINE_*</code> can be set. From <code>man bash</code> on <code>set
- -x</code>:</p>
-<blockquote>
-<p>Cause shell-command to  be executed  whenever keyseq is entered. When
-shell-command is executed, the shell sets the READLINE_LINE variable to the
-contents of the readline line buffer and the READLINE_POINT and
-READLINE_MARK variables [&hellip;] If the executed command changes the value of
-any of READLINE_LINE, READLINE_POINT, or READLINE_MARK, those new values
-will be reflected in the editing state.</p>
-</blockquote>
-</li>
-<li>
-<p><code>rlselect-history</code> is defined as a Bash function which allows it to
-reconfigure the key binding for Ctrl+X+2. Depending on if the current
-selection should be executed or not, it binds Ctrl+X+2 to either
-<code>accept-line</code> or nothing.</p>
-</li>
-</ul>
-<p>So the new mechanism relies on using two extra key bindings: Ctrl+X+1 and
-Ctrl+X+2. I chose them because I don&rsquo;t use them otherwise. But they can be any
-two key bindings.</p>
-<p>The trick to finding this solution for me was understanding Bash key bindings.
-<a href="https://stackoverflow.com/a/13978131">This answer</a> on StackOverflow writes the
-following:</p>
-<blockquote>
-<p>With <code>bind</code>, you can bind keys to do one of three things, but no combination
-of them:</p>
-<ul>
-<li>Execute a readline command: <code>bind '&quot;key&quot;: command'</code></li>
-<li>Execute a series of keystrokes: <code>bind '&quot;key&quot;:&quot;keystrokes&quot;'</code></li>
-<li>Execute a shell command: <code>bind -x '&quot;key&quot;: shell-command'</code></li>
-</ul>
-</blockquote>
-<p>That made me understand that you can not call <code>accept-line</code> from within
-<code>rlselect-history</code> because it is executed in the context of <code>bind -x</code>, and
-readline commands can only be executed in the context of <code>bind '&quot;key&quot;:
- command'</code>.</p>
-<h2 id="resources">Resources</h2>
-<p>Here are some resources that talks about the problem with TIOCSTI that helped
-me:</p>
-<ul>
-<li>
-<p><a href="https://github.com/dvorka/hstr">hstr</a> (the program that initially inspired
-me to write <code>rlselect</code>) had a <a href="https://github.com/dvorka/hstr/issues/478">similar
-problem</a> and I found clues to my
-solution there.</p>
-</li>
-<li>
-<p>The <a href="https://github.com/4z3/fzf-plugins">fzf-plugins</a> repo and <a href="https://github.com/junegunn/fzf/pull/1492">this
-dicussion</a> provides a similar
-solution for <a href="https://github.com/junegunn/fzf">fzf</a>.</p>
-</li>
-<li>
-<p>The article <a href="https://countdigi.github.io/post/2021/08/readline-and-fuzzy-finder/">Readline and Fuzzy
-Finder</a>
-helped me understand how to work with <code>READLINE_*</code> in Bash.</p>
-</li>
-</ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 19, 2025 05:11 AM UTC by
-            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
-              >Rickard Lindberg</a
-            >
-          </div>
-          <a
-            href="https://rickardlindberg.me/2025/01/19/replacing-ctrlr-in-bash-without.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://lucumr.pocoo.org/2025/1/19/what-is-systemfd" class="hover:underline"
-              >Automatic Server Reloading in Rust on Change: What is listenfd/systemfd?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When I developed <a class="reference external" href="https://werkzeug.palletsprojects.com/">Werkzeug</a> (and
-later <a class="reference external" href="https://flask.palletsprojects.com/">Flask</a>), the most
-important part of the developer experience for me was enabling fast, automatic
-reloading.  Werkzeug (and with it Flask), this is achieved by using two
-procsses at all times.  The parent process holds on to the file descriptor
-of the socket on which the server listens, and a subprocess picks up that
-file descriptor.  That subprocess restarts when it detects changes.  This
-ensures that no matter what happens, there is no window where the browser
-reports a connection error.  At worst, the browser will hang until the
-process finishes reloading, after which the page loads successfully.  In
-case the inner process fails to come up during restarts, you get an error
-message.</p>
-<p>A few years ago, I wanted to accomplish the same experience for working
-with Rust code which is why I wrote <a class="reference external" href="https://github.com/mitsuhiko/systemfd">systemfd</a> and <a class="reference external" href="https://github.com/mitsuhiko/listenfd">listenfd</a>.  I however realized that I
-never really wrote here about how they work and disappointingly I think
-those crates, and a good auto-reloading experience in Rust are largely
-unknown.</p>
-<div class="section" id="watching-for-changes">
-<h2>Watching for Changes</h2>
-<p>Firstly one needs to monitor the file system for changes.  While in theory
-I could have done this myself, there was already a tool that could do
-that.</p>
-<p>At the time there was <a class="reference external" href="https://crates.io/crates/cargo-watch">cargo watch</a>.  Today one might instead use it
-together with the more generic <a class="reference external" href="https://github.com/watchexec/watchexec">watchexec</a>.  Either one monitor your
-workspace for changes and then executes a command.  So you can for
-instance tell it to restart your program.  One of these will work:</p>
-<pre class="literal-block">
-watchexec -r -- cargo run
-cargo watch -x run
-</pre>
-<p>You will need a tool like that to do the watching part.  At this point I
-recommend the more generic <cite>watchexec</cite> which you can find on <a class="reference external" href="https://github.com/watchexec/watchexec/blob/main/doc/packages.md">homebrew and
-elsewhere</a>.</p>
-</div>
-<div class="section" id="passing-sockets">
-<h2>Passing Sockets</h2>
-<p>But what about the socket?  The solution to this problem I picked comes
-from <a class="reference external" href="https://en.wikipedia.org/wiki/Systemd">systemd</a>.  Systemd has a
-“protocol” that standardizes passing file descriptors from one process to
-another through environment variables.  In systemd parlance this is called
-“socket activation,” as it allows systemd to only launch a program if
-someone started making a request to the socket.  This concept was
-originally introduced by Apple as part of launchd.</p>
-<p>To make this work with Rust, I created two crates:</p>
-<ul class="simple">
-<li><a class="reference external" href="https://github.com/mitsuhiko/systemfd">systemfd</a> is the command
-line tool that opens sockets and passes them on to other programs.</li>
-<li><a class="reference external" href="https://crates.io/crates/listenfd">listenfd</a> is a Rust crate that
-accepts file descriptors from systemd or <cite>systemfd</cite>.</li>
-</ul>
-<p>It's worth noting that systemfd is not exclusivly useful to Rust.  The
-systemd protocol can be implemented in other languages as well, meaning
-that if you have a socket server written in Go or Python, you can also use
-systemfd.</p>
-<p>So here is how you use it.</p>
-<p>First you need to add <cite>listenfd</cite> to your project:</p>
-<pre class="literal-block">
-cargo add listenfd
-</pre>
-<p>Then, modify your server code to accept sockets via listenfd before
-falling back to listening itself on ports provided through command-line
-arguments or configuration files.  Here is an example using <cite>listenfd</cite> in
-axum:</p>
-<div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">axum</span>::<span class="p">{</span><span class="n">routing</span>::<span class="n">get</span><span class="p">,</span><span class="w"> </span><span class="n">Router</span><span class="p">};</span><span class="w"></span>
-<span class="k">use</span><span class="w"> </span><span class="n">tokio</span>::<span class="n">net</span>::<span class="n">TcpListener</span><span class="p">;</span><span class="w"></span>
-
-<span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">index</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="kp">&amp;</span><span class="o">'</span><span class="nb">static</span> <span class="kt">str</span> <span class="p">{</span><span class="w"></span>
-<span class="w">    </span><span class="s">&quot;Hello, World!&quot;</span><span class="w"></span>
-<span class="p">}</span><span class="w"></span>
-
-<span class="cp">#[tokio::main]</span><span class="w"></span>
-<span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">app</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Router</span>::<span class="n">new</span><span class="p">().</span><span class="n">route</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">get</span><span class="p">(</span><span class="n">index</span><span class="p">));</span><span class="w"></span>
-
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">listenfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">listenfd</span>::<span class="n">ListenFd</span>::<span class="n">from_env</span><span class="p">();</span><span class="w"></span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">listener</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">listenfd</span><span class="p">.</span><span class="n">take_tcp_listener</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">?</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
-<span class="w">        </span><span class="nb">Some</span><span class="p">(</span><span class="n">listener</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">TcpListener</span>::<span class="n">from_std</span><span class="p">(</span><span class="n">listener</span><span class="p">),</span><span class="w"></span>
-<span class="w">        </span><span class="nb">None</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">TcpListener</span>::<span class="n">bind</span><span class="p">(</span><span class="s">&quot;0.0.0.0:3000&quot;</span><span class="p">).</span><span class="k">await</span><span class="p">,</span><span class="w"></span>
-<span class="w">    </span><span class="p">}</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
-
-<span class="w">    </span><span class="n">axum</span>::<span class="n">serve</span><span class="p">(</span><span class="n">listener</span><span class="p">,</span><span class="w"> </span><span class="n">app</span><span class="p">).</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
-<span class="w">    </span><span class="nb">Ok</span><span class="p">(())</span><span class="w"></span>
-<span class="p">}</span><span class="w"></span>
-</pre></div>
-<p>The key point here is to accept socket 0 from the environment as a TCP
-listener and use it if available.  If the socket is not provided (e.g.
-when launched without systemd/<cite>systemfd</cite>), the code falls back to opening a
-fixed port.</p>
-</div>
-<div class="section" id="putting-it-together">
-<h2>Putting it Together</h2>
-<p>Finally you can use <cite>cargo watch</cite> / <cite>watchexec</cite> together with <cite>systemfd</cite>:</p>
-<pre class="literal-block">
-systemfd --no-pid -s http::8888 -- watchexec -r -- cargo run
-systemfd --no-pid -s http::8888 -- cargo watch -x run
-</pre>
-<p>This is what the parameters mean:</p>
-<ul class="simple">
-<li><tt class="docutils literal">systemfd</tt> needs to be first it's the program that opens the sockets.</li>
-<li><tt class="docutils literal"><span class="pre">--no-pid</span></tt> is a flag prevents the PID from being passed.  This is necessary
-for <cite>listenfd</cite> to accept the socket.  This is a departure of the socket
-passing protocol from systemd which otherwise does not allow ports to be
-passed through another program (like <cite>watchexec</cite>).  In short: when the
-PID information is not passed, then listenfd will accept the socket
-regardless.  Otherwise it would only accept it from the direct parent
-process.</li>
-<li><tt class="docutils literal"><span class="pre">-s</span> <span class="pre">http::8888</span></tt> tells <cite>systemfd</cite> to open one TCP socket on port 8888.
-Using <cite>http</cite> instead of <cite>tcp</cite> is a small improvement that will cause
-systemfd to print out a URL on startup.</li>
-<li><tt class="docutils literal"><span class="pre">--</span> watchexec <span class="pre">-r</span></tt> makes <cite>watchexec</cite> restart the process when something
-changes in the current working directory.</li>
-<li><tt class="docutils literal"><span class="pre">--</span> cargo run</tt> is the program that watchexec will start and re-start onm
-changes.  In Rust this will first compile the changes and then run the
-application.  Because we put <cite>listenfd</cite> in, it will try to first accept
-the socket from <cite>systemfd</cite>.</li>
-</ul>
-<p>The end result is that you can edit your code, and it will recompile
-automatically and restart the server without dropping any requests.  When
-you run it, and perform changes, it will look a bit like this:</p>
-<pre class="literal-block">
-$ systemfd --no-pid -s http::5555 -- watchexec -r -- cargo run
-~&gt; socket http://127.0.0.1:5555/ -&gt; fd #3
-[Running: cargo run]
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
-     Running `target/debug/axum-test`
-[Running: cargo run]
-   Compiling axum-test v0.1.0 (/private/tmp/axum-test)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
-     Running `target/debug/axum-test`
-</pre>
-<p>For easier access, I recommend putting this into a <cite>Makefile</cite> or similar
-so you can just run <cite>make devserver</cite> and it runs the server in watch mode.</p>
-<p>To install <cite>systemfd</cite> you can use curl to bash:</p>
-<pre class="literal-block">
-curl -sSfL https://github.com/mitsuhiko/systemfd/releases/latest/download/systemfd-installer.sh | sh
-</pre>
-</div>
-<div class="section" id="what-about-windows">
-<h2>What About Windows?</h2>
-<p>Now how does this work on Windows?  The answer is that <cite>systemfd</cite> and
-<cite>listenfd</cite> have a custom, proprietary protocol that also makes socket
-passing work on Windows.  That's a more complex system which involves a
-local RPC server.  However the system does also support Windows and the
-details about how it works are largely irrelevant for you as a user
-—&nbsp;unless you want to implement that protocol for another programming
-language.</p>
-</div>
-<div class="section" id="potential-improvements">
-<h2>Potential Improvements</h2>
-<p>I really enjoy using this combination, but it can be quite frustrating to
-require so many commands, and the command line workflow isn't optimal.
-Ideally, this functionality would be better integrated into specific Rust
-frameworks like axum and provided through a dedicated cargo plugin.  In a
-perfect world, one could simply run <cite>cargo devserver</cite>, and everything
-would work seamlessly.</p>
-<p>However, maintaining such an integrated experience is a much more involved
-effort than what I have.  Hopefully, someone will be inspired to further
-enhance the developer experience and achieve deeper integration with Rust
-frameworks, making it more accessible and convenient for everyone.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 19, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="http://lucumr.pocoo.org/2025/1/19/what-is-systemfd"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/how-to-disable-copilot-in-github?utm_campaign=rss" class="hover:underline"
-              >How to disable Copilot in GitHub?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>For the first time in months GitHub has released
-a feature that I actually enjoy: a way to disable
-Copilot on the home screen. Thanks to <a href="https://infosec.
-exchange/@harrysintonen/113854967426639851">Harry Sintonen</a> for <a href="https://fosstodon.org/@harrysintonen@infosec.exchange/113854967522484490">sharing this on Mastodon</a>:</p>
-
-<ul>
-<li>Login to <code>github.com</code></li>
-<li>Profile -> Settings -> Copilot</li>
-<li>"Dashboard entry point" -> Select "Disabled"</li>
-<li>While you're here, disable the rest.</li>
-<li>Don't forget to <a href="https://github.com/copilot">leave any feedback you have</a> 
-in the (...) menu, too.</li>
-</ul>
-
-<p>I am not holding my breath that GitHub will
-start delivering more features that actually benefit users
-any time soon (<a href="https://github.
-com/orgs/community/discussions?
-discussions_q=is%3Aopen+github+security+advisories+sort%3Atop">GitHub Security Advisories</a>? Remember that feature?)</p>
-
-<p>Seeing a cascade of users disabling Copilot
-might provide enough signal that they are wasting
-their time pushing these useless features down everyone's
-throats.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 19, 2025 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/how-to-disable-copilot-in-github?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html" class="hover:underline"
               >Dealing with egl_bad_alloc error for webkit</a
             >
@@ -2476,6 +2000,245 @@ In this article we’ll cover:</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://rickardlindberg.me/2025/01/13/todays-realization-is-that-you.html" class="hover:underline"
+              >Unknown title</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Today&rsquo;s realization is that you can get important things done by consistently working on them for 15 minutes at the start of every day.</p>
+<p>By doing it at the start of the day, you ensure that it gets done. And the rest of the day you don&rsquo;t need to be stressed about not working on your important thing, because you already have.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2025 08:37 PM UTC by
+            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
+              >Rickard Lindberg</a
+            >
+          </div>
+          <a
+            href="https://rickardlindberg.me/2025/01/13/todays-realization-is-that-you.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/416/a-ghostly-episode" class="hover:underline"
+              >#416 A Ghostly Episode</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include , Winloop, , and uv-secure.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2025 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/416/a-ghostly-episode"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/api-rate-limiting-intro.html" class="hover:underline"
+              >Understanding API rate-limiting techniques</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/api-rate-limiting-intro.html">Understanding API rate-limiting techniques</a>
+</h1>
+<div class="article-meta">
+  2025-01-13, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p>Enabling rate-limiting in Zato means that access to Zato APIs can be throttled per endpoint, user or service - including options to make limits apply to specific IP addresses only - and if limits are exceeded within a selected period of time, the invocation will fail. Let's check how to use it all.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/arch.png" /></p>
+<p>API rate limiting works on several levels and the configuration is always checked in the order below, which follows from the narrowest, most specific parts of the system (endpoints), through users which may apply to multiple endpoints, up to services which in turn may be used by both multiple endpoints and users.</p>
+<ul>
+<li>First, per-endpoint limits</li>
+<li>Then, per-user limits</li>
+<li>Finally, per-service limits</li>
+</ul>
+<p>When a request arrives through an endpoint, that endpoint's rate limiting configuration is checked. If the limit is already reached for the IP address or network of the calling application, the request is rejected.</p>
+<p>Next, if there is any user associated with the endpoint, that account's rate limits are checked in the same manner and, similarly, if they are reached, the request is rejected.</p>
+<p>Finally, if the endpoint's underlying service is configured to do so, it also checks if its invocation limits are not exceeded, rejecting the message accordingly if they are.</p>
+<p>Note that the three levels are distinct yet they overlap in what they allow one to achieve.</p>
+<p>For instance, it is possible to have the same user credentials be used in multiple endpoints and express ideas such as "Allow this and that user to invoke my APIs 1,000 requests/day but limit each endpoint to at most 5 requests/minute no matter which user".</p>
+<p>Moreover, because limits can be set on services, it is possible to make it even more flexible, e.g. "Let this service be invoked at most 10,000 requests/hour, no matter which user it is, with particular users being able to invoke at most 500 requests/minute, no matter which service, topping it off with per separate limits for REST vs. SOAP vs. JSON-RPC endpoint, depending on what application is invoke the endpoints". That lets one conveniently express advanced scenarios that often occur in practical situations.</p>
+<p>Also, observe that API rate limiting applies to REST, SOAP and JSON-RPC endpoints only, it is not used with other API endpoints, such as AMQP, IBM MQ, SAP, task scheduler or any other technologies. However, per-service limits work no matter which endpoint the service is invoked with and they will work with endpoints such as WebSockets, ZeroMQ or any other.</p>
+<p>Lastly, limits pertain to with incoming requests only - any outgoing ones, from Zato to external resources - are not covered by it.</p>
+<h2 id="per-ip-restrictions">Per-IP restrictions</h2>
+<p>The architecture is made even more versatile thanks to the fact that for each object - endpoint, user or service - different limits can be configured depending on the caller's IP address.</p>
+<p>This adds yet another dimension and allows to express ideas commonly witnessed in API-based projects, such as:</p>
+<ul>
+<li>External applications, depending on their IP addresses, can have their own limits</li>
+<li>Internal users, e.g. employees of the company using VPN, may have hire limits if their addresses are in the 172.x.x.x range</li>
+<li>For performance testing purposes, access to Zato from a few selected hosts may have no limits at all</li>
+</ul>
+<p>IP-based limits work hand in hand are an integral part of the mechanism - they do not rule out per-endpoit, user or service limits. In fact, for each such object, multiple IP-using limits can be set independently, thus allowing for highest degree of flexibility.</p>
+<h2 id="exact-or-approximate">Exact or approximate</h2>
+<p>Rate limits come in two types:</p>
+<ul>
+<li>Exact</li>
+<li>Approximate</li>
+</ul>
+<p>Exact rate limits are just that, exact - they en that a limit is not exceeded at all, not even by a single request.</p>
+<p>Approximate limits may let a very small number of requests to exceed the limit with the benefit being that approximate limits are faster to check than exact ones.</p>
+<p>When to use which type depends on a particular project:</p>
+<ul>
+<li>
+<p>In some projects, it does not really matter if callers have a limit of 1,000 requests/minute or 1,005 requests/minute because the difference is too tiny to make a business impact. Approximate limits work best in this case.</p>
+</li>
+<li>
+<p>In other projects, there may be requirements that the limit never be exceeded no matter the circumstances. Use exact limits here.</p>
+</li>
+</ul>
+<h2 id="python-code-and-web-admin">Python code and web-admin</h2>
+<p>Alright, let's check how to define the limits in the Zato Dashboard. We will use the sample service below:</p>
+<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
+<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
+<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
+<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Service</span>
+<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
+<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">Sample</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
+<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.sample'</span>
+<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
+<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
+<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># Return a simple string on response</span>
+<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="s1">'Hello there!</span><span class="se">\n</span><span class="s1">'</span>
+</code></pre></div>
+<p>Now, in web-admin, we will configure limits - separately for the service, a new and a new REST API channel (endpoint).</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/service.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/user.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/channel.png" /></p>
+<p>Points of interest:</p>
+<ul>
+<li>Configuration for each type of object is independent - within the same invocation some limits may be exact, some may be approximate</li>
+<li>There can be multiple configuration entries for each object</li>
+<li>A unit of time is "m", "h" or "d", depending on whether the limit is per minute, hour or day, respectively</li>
+<li>All limits within the same configuration are checked in the order of their definition which is why the most generic ones should be listed first</li>
+</ul>
+<h2 id="testing-it-out">Testing it out</h2>
+<p>Now, all is left is to invoke the service from curl.</p>
+<p>As long as limits are not reached, a business response is returned:</p>
+<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>$ curl http://my.user:password@localhost:11223/api/sample
+<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>Hello there!
+<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>$
+</code></pre></div>
+<p>But if a limit is reached, the caller receives an error message with the 429 HTTP status.</p>
+<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a>$ curl -v http://my.user:password@localhost:11223/api/sample
+<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>*   Trying 127.0.0.1...
+<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a>
+<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a>...
+<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
+<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a>&lt; HTTP/1.1 429 Too Many Requests
+<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a>&lt; Server: Zato
+<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>&lt; X-Zato-CID: b8053d68612d626d338b02
+<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a>
+<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a>...
+<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a>
+<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>{&quot;zato_env&quot;:{&quot;result&quot;:&quot;ZATO_ERROR&quot;,&quot;cid&quot;:&quot;b8053d68612d626d338b02eb&quot;,
+<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a> &quot;details&quot;:&quot;Error 429 Too Many Requests&quot;}}
+<a id="line-2-14" name="line-2-14"></a><a href="#line-2-14"><span class="linenos"></span></a>$
+</code></pre></div>
+<p>Note that the caller never knows what the limit was - that information is saved in Zato server logs along with other details so that API authors can correlate what callers get with the very rate limiting definition that prevented them from accessing the service.</p>
+<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a>zato.common.rate_limiting.common.RateLimitReached: Max. rate limit of 100/m reached;
+<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>from:`10.74.199.53`, network:`*`; last_from:`127.0.0.1;
+<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a>last_request_time_utc:`2025-01-12T15:30:41.943794;
+<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a>last_cid:`5f4f1ef65490a23e5c37eda1`; (cid:b8053d68612d626d338b02)
+</code></pre></div>
+<p>And this is it - we have created a new API rate limiting definition in Zato and tested it out successfully!</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
+<br />
+➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2025 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/api-rate-limiting-intro.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -2487,12 +2250,12 @@ In this article we’ll cover:</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9051</a></li>
-    <li><a>Unique Feeds: 419</a></li>
+    <li><a>Total Entries: 8893</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (421)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (327)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (226)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (421)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (327)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (211)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
