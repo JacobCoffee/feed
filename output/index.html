@@ -53,6 +53,188 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/" class="hover:underline"
+              >scikit-survival 0.24.0 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>It&rsquo;s my pleasure to announce the release of <a href="https://scikit-survival.readthedocs.io/" target="_blank">scikit-survival</a> 0.24.0.</p>
+<p>A highlight of this release the addition of
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.nonparametric.cumulative_incidence_competing_risks.html#sksurv.nonparametric.cumulative_incidence_competing_risks" target="_blank">cumulative_incidence_competing_risks()</a>
+which implements a non-parameteric estimator of the cumulative incidence function in the presence of competing risks.
+In addition, the release adds support for scikit-learn 1.6, including the support for missing values for
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.ensemble.ExtraSurvivalTrees.html#sksurv.ensemble.ExtraSurvivalTrees" target="_blank">ExtraSurvivalTrees</a>.</p>
+<h2 id="analysis-of-competing-risks">Analysis of Competing Risks</h2>
+<p>In classical survival analysis, the focus is on the time until a specific event occurs. If no event is observed during the study period, the time of the event is considered censored. A common assumption is that censoring is non-informative, meaning that censored subjects have a similar prognosis to those who were not censored.</p>
+<p>Competing risks arise when each subject can experience an event due to one of $K$ ($K \geq 2$) mutually exclusive causes, termed competing risks. Thus, the occurrence of one event prevents the occurrence of other events. For example, after a bone marrow transplant, a patient might relapse or die from transplant-related causes (transplant-related mortality). In this case, death from transplant-related mortality precludes relapse.</p>
+<p>The bone marrow transplant data from <a href="https://doi.org/10.1038/sj.bmt.1705727" target="_blank">Scrucca et al., Bone Marrow Transplantation (2007)</a> includes data
+from 35 patients grouped into two cancer types: Acute Lymphoblastic Leukemia (ALL; coded as 0), and Acute Myeloid Leukemia (AML; coded as 1).</p>
+<pre><code class="language-python">from sksurv.datasets import load_bmt
+bmt_features, bmt_outcome = load_bmt()
+diseases = bmt_features[&quot;dis&quot;].cat.rename_categories(
+{&quot;0&quot;: &quot;ALL&quot;, &quot;1&quot;: &quot;AML&quot;}
+)
+diseases.value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 20%;">
+<thead>
+<tr>
+<th>dis</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>AML</th>
+<td>18</td>
+</tr>
+<tr style="text-align: right;">
+<th>ALL</th>
+<td>17</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>During the follow-up period, some patients might experience a relapse of the original leukemia or die
+while in remission (transplant related death).
+The outcome is defined similarly to standard time-to-event data, except that the event indicator specifies the type of event, where 0 always indicates censoring.</p>
+<pre><code class="language-python">import pandas as pd
+status_labels = {
+0: &quot;Censored&quot;,
+1: &quot;Transplant related mortality&quot;,
+2: &quot;Relapse&quot;,
+}
+risks = pd.DataFrame.from_records(bmt_outcome).assign(
+label=lambda x: x[&quot;status&quot;].replace(status_labels)
+)
+risks[&quot;label&quot;].value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 40%;">
+<thead>
+<tr>
+<th>label</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>Relapse</th>
+<td>15</td>
+</tr>
+<tr style="text-align: right;">
+<th>Censored</th>
+<td>11</td>
+</tr>
+<tr style="text-align: right;">
+<th>Transplant related mortality</th>
+<td>9</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The table above shows the number of observations for each status.</p>
+<h3 id="non-parametric-estimator-of-the-cumulative-incidence-function">Non-parametric Estimator of the Cumulative Incidence Function</h3>
+<p>If the goal is to estimate the probability of relapse, transplant-related death is a competing risk event. This means that the occurrence of relapse prevents the occurrence of transplant-related death, and vice versa. We aim to estimate curves that illustrate how the likelihood of these events changes over time.</p>
+<p>Let&rsquo;s begin by estimating the probability of relapse using the complement of the Kaplan-Meier estimator. With this approach, we treat deaths as censored observations. One minus the Kaplan-Meier estimator provides an estimate of the probability of relapse before time $t$.</p>
+<pre><code class="language-python">import matplotlib.pyplot as plt
+from sksurv.nonparametric import kaplan_meier_estimator
+times, km_estimate = kaplan_meier_estimator(
+bmt_outcome[&quot;status&quot;] == 1, bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, 1 - km_estimate, where=&quot;post&quot;)
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of relapsing before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-kaplan-meier.svg" width="400" />
+</figure>
+<p>However, this approach has a significant drawback: considering death as a censoring event violates the assumption that censoring is non-informative. This is because patients who died from transplant-related mortality have a different prognosis than patients who did not experience any event. Therefore, the estimated probability of relapse is often biased.</p>
+<p>The cause-specific <strong>cumulative incidence function (CIF)</strong> addresses this problem by estimating the cause-specific hazard of each event separately. The cumulative incidence function estimates the probability that the event of interest occurs before time $t$, and that it occurs before any of the competing causes of an event. In the bone marrow transplant dataset, the cumulative incidence function of relapse indicates the probability of relapse before time $t$, given that the patient has not died from other causes before time $t$.</p>
+<pre><code class="language-python">from sksurv.nonparametric import cumulative_incidence_competing_risks
+times, cif_estimates = cumulative_incidence_competing_risks(
+bmt_outcome[&quot;status&quot;], bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, cif_estimates[0], where=&quot;post&quot;, label=&quot;Total risk&quot;)
+for i, cif in enumerate(cif_estimates[1:], start=1):
+plt.step(times, cif, where=&quot;post&quot;, label=status_labels[i])
+plt.legend()
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of event before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence.svg" width="400" />
+</figure>
+<p>The plot shows the estimated probability of experiencing an event at time $t$ for both the individual risks and for the total risk.</p>
+<p>Next, we want to to estimate the cumulative incidence curves for the two cancer types — acute lymphoblastic leukemia (ALL) and acute myeloid leukemia (AML) — to examine how the probability of relapse depends on the original disease diagnosis.</p>
+<pre><code class="language-python">_, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
+for j, disease in enumerate(diseases.unique()):
+mask = diseases == disease
+event = bmt_outcome[&quot;status&quot;][mask]
+time = bmt_outcome[&quot;ftime&quot;][mask]
+times, cif_estimates, conf_int = cumulative_incidence_competing_risks(
+event,
+time,
+conf_type=&quot;log-log&quot;,
+)
+for i, (cif, ci, ax) in enumerate(
+zip(cif_estimates[1:], conf_int[1:], axs[:, j]), start=1
+):
+ax.step(times, cif, where=&quot;post&quot;)
+ax.fill_between(times, ci[0], ci[1], alpha=0.25, step=&quot;post&quot;)
+ax.set_title(f&quot;{disease}: {status_labels[i]}&quot;, size=&quot;small&quot;)
+ax.grid()
+for ax in axs[-1, :]:
+ax.set_xlabel(&quot;time $t$&quot;)
+for ax in axs[:, 0]:
+ax.set_ylim(0, 1)
+ax.set_ylabel(&quot;Probability of event before time $t$&quot;)
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence-by-diagnosis.svg" width="450" />
+</figure>
+<p>The left column shows the estimated cumulative incidence curves (solid lines) for patients diagnosed with ALL, while the right column shows the curves for patients diagnosed with AML, along with their 95% pointwise confidence intervals. The plot indicates that the estimated probability of relapse at $t=40$ days is more than three times higher for patients diagnosed with ALL compared to AML.</p>
+<p>If you want to run the examples above yourself, you can
+<a href="https://mybinder.org/v2/gh/sebp/scikit-survival/master?urlpath=lab/tree/notebooks/competing-risks.ipynb" target="_blank">execute them interactively in your browser using binder</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 26, 2025 09:26 PM UTC by
+            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
+              >Sebastian Pölsterl</a
+            >
+          </div>
+          <a
+            href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/polars-lazyframe/" class="hover:underline"
               >How to Work With Polars LazyFrames</a
             >
@@ -350,7 +532,7 @@ get pretty confusing -- there are many different GUI libraries available for Pyt
 <p><strong>Installation</strong> Already installed with Python on Windows and macOS. Ubuntu/Debian Linux <code>sudo apt install python3-tk</code></p>
 <p>A simple <em>hello world</em> application in Tkinter is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">Standard</li>
-<li class="tab-link">Class-based</li></ul><div class="tab-content current code-block-outer" id="8f9fa258b2884bd19f5690451e453303">
+<li class="tab-link">Class-based</li></ul><div class="tab-content current code-block-outer" id="e78a7cbfb5994909a1c6988a858fa88e">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">import tkinter as tk
@@ -372,7 +554,7 @@ window.mainloop()
 </code></pre>
 </div>
 </div>
-<div class="tab-content code-block-outer" id="19e3e03fa9f148358f15768552742f34">
+<div class="tab-content code-block-outer" id="d2213ccc44aa41e3b4473cb1b3cdd6e4">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">from tkinter import Tk, Button
@@ -415,7 +597,7 @@ Qt Widgets-based applications use platform native widgets to ensure they look an
 <p><strong>Installation</strong> <code>pip install pyqt6</code> or <code>pip install pyside6</code></p>
 <p>A simple <em>hello world</em> application in PyQt6, using the Qt Widgets API is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">PyQt6</li>
-<li class="tab-link">PySide6</li></ul><div class="tab-content current code-block-outer" id="fdbda34b26224942ad106a13313bdc01">
+<li class="tab-link">PySide6</li></ul><div class="tab-content current code-block-outer" id="179b2c9a20b14da09f58fb1501b1fe67">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">from PyQt6.QtWidgets import QMainWindow, QApplication, QPushButton
@@ -442,7 +624,7 @@ app.exec()
 </code></pre>
 </div>
 </div>
-<div class="tab-content code-block-outer" id="f4491fdb515c471dba084d4cb817c5db">
+<div class="tab-content code-block-outer" id="5493935df2664760b4f7f593cc7e63b1">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">from PySide6.QtWidgets import QMainWindow, QApplication, QPushButton
@@ -517,7 +699,7 @@ experiences, like those you find in media player applications like Spotify, or t
 <p><strong>Installation</strong> <code>pip install pyqt6</code> or <code>pip install pyside6</code></p>
 <p>A simple <em>Hello World</em> app in PyQt6 with QML. Save the QML file in the same folder as the Python file, and run as normally.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">main.py</li>
-<li class="tab-link">main.qml</li></ul><div class="tab-content current code-block-outer" id="b22b213261d14fe2adc7b97a16f028db">
+<li class="tab-link">main.qml</li></ul><div class="tab-content current code-block-outer" id="673635da356347f58ec1582989220624">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">import sys
@@ -536,7 +718,7 @@ sys.exit(app.exec())
 </code></pre>
 </div>
 </div>
-<div class="tab-content code-block-outer" id="21c0b25ecb9f4824a7830bfc1d85926a">
+<div class="tab-content code-block-outer" id="5e137af0d50b4773bebe4d617a729c3c">
 <div class="code-block">
 <span class="code-block-language code-block-qml">qml</span>
 <pre><code class="qml">import QtQuick 2.15
@@ -627,7 +809,7 @@ app.run()
 <em>Hello world application built using Kivy, running on Windows 11</em></p>
 <p>An equivalent application built using the Kv declarative language is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">main.py</li>
-<li class="tab-link">controller.kv</li></ul><div class="tab-content current code-block-outer" id="aecf467298144a8abb6c5973e9cc86da">
+<li class="tab-link">controller.kv</li></ul><div class="tab-content current code-block-outer" id="e0e9a476d19a47a79d38b6ec1547c261">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">import kivy
@@ -658,7 +840,7 @@ if __name__ == '__main__':
 </code></pre>
 </div>
 </div>
-<div class="tab-content code-block-outer" id="8b16a03f8dae4176b02e3a9c710a498d">
+<div class="tab-content code-block-outer" id="4cbae42b66bc4aed8fdca1e660ffa1ce">
 <div class="code-block">
 <span class="code-block-language code-block-python">python</span>
 <pre><code class="python">#:kivy 1.0
@@ -856,6 +1038,147 @@ and things you learn in one library will often apply in another.</p>
           </div>
           <a
             href="https://www.pythonguis.com/faq/which-python-gui-library/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/news/python-313-2025-breakthroughs-no-gil-jit-ios-support-explained/" class="hover:underline"
+              >Python 3.13 in 2025 Breakthroughs: No-GIL, JIT, and iOS Support Explained</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python 3.13 dropped its first stable release on October 7, 2024, and with the latest maintenance update—Python 3.13.2—released on February 6, 2025, the community’s still buzzing about what this version brings to the table. From iOS support to experimental no-GIL dreams, let’s break down the highlights, the chatter on X, and what it all means for Pythonistas in 2025.</p>
+
+<h2 id="python-313-tldr">Python 3.13: TLDR</h2>
+
+<p>Python 3.13 (released October 2024, latest update 3.13.2 in February 2025) brings significant changes:</p>
+
+<ul>
+  <li><strong>Performance boosts</strong>: 5-15% faster than Python 3.12, with experimental JIT compiler (<a href="https://peps.python.org/pep-0744/">PEP 744</a>) showing up to 30% speedups for computation-heavy tasks</li>
+  <li><strong>Experimental no-GIL mode</strong>: Optional free-threading via <a href="https://peps.python.org/pep-0703/">PEP 703</a> for better parallelism (use with <code class="highlighter-rouge">--free-threading</code> flag)</li>
+  <li><strong>iOS support</strong>: <a href="https://peps.python.org/pep-0730/">PEP 730</a> adds iOS build targets, opening doors for Python mobile development</li>
+  <li><strong>Improved typing</strong>: Enhanced TypedDict with <code class="highlighter-rouge">Required</code> and <code class="highlighter-rouge">NotRequired</code> operators for more precise type annotations (<a href="https://docs.python.org/3.13/library/typing.html#typing.TypedDict">typing docs</a>)</li>
+  <li><strong>Better pattern matching</strong>: More intuitive syntax including matching on attributes and properties (<a href="https://docs.python.org/3.13/tutorial/controlflow.html#match-statements">pattern matching docs</a>)</li>
+  <li><strong>Cleaner codebase</strong>: <a href="https://peps.python.org/pep-0594/">PEP 594</a> removed deprecated modules like smtpd and cgi</li>
+  <li><strong>Memory efficiency</strong>: 7% smaller memory footprint compared to 3.12</li>
+  <li><strong>Data science improvements</strong>: Better NumPy integration and optimized statistical functions</li>
+  <li><strong>Framework support</strong>: <a href="https://docs.djangoproject.com/en/5.1/releases/5.1/">Django 5.1</a> and <a href="https://fastapi.tiangolo.com/">FastAPI</a> already supporting 3.13 features</li>
+</ul>
+
+<p>The community sentiment: Excited about iOS possibilities and the no-GIL experiment, though the latter still has compatibility issues with some C extensions. Python 3.13 represents a stepping stone toward a faster Python that maintains its developer-friendly nature.
+<a href="https://www.techiediaries.com/news/python-313-2025-breakthroughs-no-gil-jit-ios-support-explained/">Source</a></p>
+<h2 id="the-big-wins-in-python-313">The Big Wins in Python 3.13</h2>
+
+<p>First off, Python 3.13 isn’t just another incremental update—it’s packing some serious punches. The improved interactive interpreter, inspired by PyPy, is a game-changer for anyone who lives in the REPL. It’s snappier, more intuitive, and honestly, just feels good to use. Then there’s the experimental free-threaded mode (thanks, PEP 703), which ditches the Global Interpreter Lock (GIL) for those brave enough to opt in. Pair that with a preliminary JIT compiler (PEP 744), and you’ve got Python flirting with performance levels we’ve only dreamed of. Oh, and deprecated modules? Gone—PEP 594 cleaned house, so say goodbye to relics like smtpd and cgi.</p>
+
+<p>The latest maintenance release, 3.13.2, doesn’t add shiny new toys but keeps things humming with around 250 bug fixes. Think stability: better IPv6 handling, an updated libexpat, and a smoother ride overall. It’s the kind of polish that keeps Python reliable while the experimental stuff matures.</p>
+
+<h2 id="significant-performance-improvements">Significant Performance Improvements</h2>
+
+<p>One of the most noticeable changes in Python 3.13 is the performance boost. Early benchmarks show a 5-15% improvement over Python 3.12 for common operations. The JIT compiler, while still experimental, shows promising results with some computation-heavy workloads seeing up to 30% speedups when properly configured.</p>
+
+<p>The memory footprint has also been reduced by roughly 7% compared to 3.12, making Python more efficient on resource-constrained systems. This is particularly important as Python continues expanding into embedded systems and mobile devices.</p>
+
+<h2 id="python-313-in-action-where-it-shines-and-where-it-doesnt">Python 3.13 in Action: Where It Shines (and Where It Doesn’t)</h2>
+
+<p>So, where does Python 3.13 actually make a difference? Let’s break it down:</p>
+
+<ul>
+  <li><strong>Data Science &amp; Machine Learning</strong> — Thanks to the JIT compiler, operations on large datasets in NumPy and Pandas are noticeably faster. Some benchmarks report a <strong>15-20% reduction in execution time</strong> for common matrix computations.</li>
+  <li><strong>Web Development</strong> — Django 5.1 and FastAPI are already adapting to Python 3.13, leveraging better typing support and free-threading optimizations.</li>
+  <li><strong>Mobile Development</strong> — The biggest wildcard is Python’s new iOS support. While it’s still early days, developers are experimenting with Python-based iOS apps, and frameworks like Kivy might see a resurgence.</li>
+  <li><strong>Concurrency &amp; Async</strong> — The free-threading experiment is exciting, but many popular C extensions aren’t yet fully compatible. Libraries like Twisted and Tornado need updates before they can truly benefit.</li>
+</ul>
+
+<h2 id="x-is-talking-ios-and-no-gil-steal-the-show">X Is Talking: iOS and No-GIL Steal the Show</h2>
+
+<p>Hop over to X, and you’ll see Python 3.13’s got people excited—and a little speculative. A wave of posts around mid-February (like from @DrGaryHoworth and @polyglotengine1) lit up with links to an article called “Python for iOS: A New Era with Python 3.13” by Pouya Hallaj. Turns out, PEP 730’s addition of an iOS target in the build system has devs dreaming of mobile Python apps. Imagine coding on your iPhone or shipping Python-powered tools to the App Store—that’s the vibe here, and it’s got traction.</p>
+
+<p>Meanwhile, the free-threading experiment’s got its own fanbase. @_salvasfreewill (in Persian, no less) traced the no-GIL journey from Python 3.11’s PEP 734 to interface tweaks in 3.14’s early notes, calling 3.13 a pivotal step. @dystopiabreaker chimed in too, praising the GIL-free release but grumbling about async support still lagging. The sentiment? Optimism with a side of “let’s see where this goes.”</p>
+
+<h2 id="the-new-pattern-matching-refinements">The New Pattern Matching Refinements</h2>
+
+<p>Python 3.13 builds on the pattern matching introduced in 3.10 with more intuitive syntax and better performance. One of the most requested features—the ability to match on attributes and properties—has finally landed:</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">match</span> <span class="n">user</span><span class="p">:</span>
+    <span class="n">case</span> <span class="n">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s">"Admin"</span><span class="p">,</span> <span class="n">role</span><span class="o">=</span><span class="n">AdminRole</span><span class="p">())</span> <span class="k">as</span> <span class="n">admin</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">admin</span><span class="p">.</span><span class="n">get_permissions</span><span class="p">()</span>
+    <span class="n">case</span> <span class="n">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">,</span> <span class="n">role</span><span class="o">=</span><span class="s">"editor"</span><span class="p">)</span> <span class="k">if</span> <span class="n">is_senior</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">editor_permissions</span><span class="p">()</span>
+    <span class="n">case</span> <span class="n">_</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">default_permissions</span><span class="p">()</span>
+
+</code></pre></div></div>
+
+<p>This syntax is cleaner and more natural than previous workarounds, making pattern matching truly Pythonic.</p>
+
+<h2 id="hidden-gems-in-python-313">Hidden Gems in Python 3.13</h2>
+
+<p>Beyond the headline features, Python 3.13 includes several smaller but impactful changes:</p>
+
+<ul>
+  <li><strong>Improved Debugging</strong> — The <code class="highlighter-rouge">traceback</code> module now provides richer error messages, making debugging a smoother experience.</li>
+  <li><strong>JSON Enhancements</strong> — The <code class="highlighter-rouge">json</code> module is faster and more memory-efficient, reducing serialization/deserialization overhead.</li>
+  <li><strong>Improved Unicode Handling</strong> — Python 3.13 refines Unicode support, particularly in file handling and string manipulations.</li>
+</ul>
+
+<h2 id="why-it-matters-in-2025">Why It Matters in 2025</h2>
+
+<p>Python 3.13 feels like a bridge. It’s stable enough for production with 3.13.2’s fixes, yet it’s teasing a future where Python could rival faster languages without losing its charm. The iOS push signals Python’s not just for servers or data science anymore—it’s eyeing your phone. And with each maintenance release (like the 400+ fixes in 3.13.1 last December), the core keeps getting stronger.</p>
+
+<p>For enterprises, Python 3.13’s performance improvements mean potential cost savings on compute resources, especially for data-intensive applications. The typing enhancements also make large codebases more maintainable, addressing one of Python’s traditional weaknesses in enterprise settings.</p>
+
+<h2 id="migration-considerations">Migration Considerations</h2>
+
+<p>If you’re planning to upgrade from Python 3.12, the transition should be relatively smooth for most applications. The deprecated modules removed in PEP 594 are the main breaking change, but they were already marked as deprecated for several versions, so well-maintained codebases should be prepared.</p>
+
+<p>For those interested in experimenting with the no-GIL mode, the Python core team recommends starting with isolated components rather than converting entire applications. The command-line flag <code class="highlighter-rouge">--free-threading</code> enables the mode, but be prepared for potential compatibility issues with C extensions.</p>
+
+<h2 id="want-more">Want More?</h2>
+
+<p>Curious about a feature? The Python docs or @ThePSF’s updates are goldmines. Me, I’m betting the iOS hype keeps growing, and that no-GIL dream? It’s closer than ever.</p>
+
+<p>The Python Language Summit scheduled for April 2025 will likely focus heavily on the future of the no-GIL implementation and whether it might become the default in Python 3.15 or beyond. If you’re invested in Python’s performance journey, that’s an event worth watching.</p>
+
+<p>What’s your take—trying 3.13 yet, or waiting for the dust to settle?</p>
+
+<h3 id="official-resources">Official Resources</h3>
+<ul>
+  <li><a href="https://www.python.org/downloads/release/python-3132/">Python 3.13.2 Release Page</a></li>
+  <li><a href="https://docs.python.org/3.13/whatsnew/3.13.html">What’s New in Python 3.13</a></li>
+  <li><a href="https://devguide.python.org/">Python Developer’s Guide</a></li>
+  <li><a href="https://www.python.org/psf-landing/">Python Software Foundation</a></li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 26, 2025 12:00 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/news/python-313-2025-breakthroughs-no-gil-jit-ios-support-explained/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1276,46 +1599,6 @@ PyPy eventually.</p>
           </div>
           <a
             href="https://realpython.com/quizzes/python-sort/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python" class="hover:underline"
-              >7 free Machine Learning projects to practice using Python | DataWars</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            A collection of free projects to practice machine learning with real life examples using Python
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 24, 2025 09:25 AM UTC by
-            <a href="https://www.datawars.io/articles/rss.xml" class="link link-hover text-primary"
-              >DataWars.io</a
-            >
-          </div>
-          <a
-            href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2186,46 +2469,6 @@ implementation:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.caktusgroup.com/blog/2025/02/18/how-fix-factory_boy-post-generation-deprecation-warning/" class="hover:underline"
-              >How to fix factory_boy post-generation deprecation warnings</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            We use factory_boy for bootstrapping test data on many Python and Django projects at Caktus. Recently, we encountered a deprecation warning on an older project that had been using factory_boy for some time: warnings.warn( /usr/local/lib/python3.12/site-packages/factory/django.py:182: DeprecationWarning: MyFactory._after_postgeneration will stop saving the instance after postgeneration hooks in the next major release. If the save call is…
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 18, 2025 05:52 PM UTC by
-            <a href="http://www.caktusgroup.com/feeds/tags/python/" class="link link-hover text-primary"
-              >Caktus Consulting Group</a
-            >
-          </div>
-          <a
-            href="https://www.caktusgroup.com/blog/2025/02/18/how-fix-factory_boy-post-generation-deprecation-warning/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2237,7 +2480,7 @@ implementation:</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9052</a></li>
+    <li><a>Total Entries: 9121</a></li>
     <li><a>Unique Feeds: 423</a></li>
     
 
