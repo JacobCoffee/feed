@@ -53,6 +53,102 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://coady.github.io/posts/go-iterators.html" class="hover:underline"
+              >Go iterators</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <section class="level1" id="pythonic-go-code.">
+<h1>Pythonic Go code.</h1>
+<p>The long arc of language convergence continues. With generics and iterators, Go is significantly closer to Python’s reusability and expressiveness.</p>
+<p>Take the built-in function <code>sum</code>. Prior to generics, a Go version would have needed a separate implementations for <code>int</code> and <code>float64</code>. But that was the least of the problems. Even with a <code>Number</code> interface, it also would have been restricted to a <code>slice</code> of numbers. Realistically, one never has a slice of numbers. One has a slice of objects with a numeric field, or perhaps a <code>map</code> with numeric values.</p>
+<p>Enter <a href="https://go.dev/doc/go1.23#iterators">iterators</a>. The <a href="https://go.dev/blog/range-functions">range over function</a> types are clunkier than Python generators, but to the caller the <code>range</code> interface is the same.</p>
+<div class="cell" id="cell-2">
+<div class="sourceCode cell-code" id="cb1" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><span class="bu" style="color: null; background-color: null; font-style: inherit;">type</span> Number interface {</span>
+<span id="cb1-2">    constraints.Integer <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">|</span> constraints.Float <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">|</span> constraints.Complex</span>
+<span id="cb1-3">}</span>
+<span id="cb1-4"></span>
+<span id="cb1-5">func Sum[N Number](seq <span class="bu" style="color: null; background-color: null; font-style: inherit;">iter</span>.Seq[N]) N {</span>
+<span id="cb1-6">    var total N</span>
+<span id="cb1-7">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">for</span> value <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">:=</span> <span class="bu" style="color: null; background-color: null; font-style: inherit;">range</span> seq {</span>
+<span id="cb1-8">        total <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">+=</span> value</span>
+<span id="cb1-9">    }</span>
+<span id="cb1-10">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> total</span>
+<span id="cb1-11">}</span></code></pre></div>
+</div>
+<p>The standard library includes helpers <code>slices.Values</code>, <code>maps.Keys</code>, and <code>maps.Values</code>. So there is no barrier to making <code>iter.Seq</code> the standard input for iterables.</p>
+<p>The Go equivalent of <a href="https://github.com/golang/go/issues/61898">itertools</a> is now inevitable. With one key difference: the lack of generator expressions will make Go more function oriented. <code>slices.ContainsFunc</code> is the equivalent of <code>any</code>; similarly the equivalent of <code>all</code> would likely embed the predicate.</p>
+<div class="cell" id="cell-4">
+<div class="sourceCode cell-code" id="cb2" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1">func AllFunc[E <span class="bu" style="color: null; background-color: null; font-style: inherit;">any</span>](seq <span class="bu" style="color: null; background-color: null; font-style: inherit;">iter</span>.Seq[E], f func(E) <span class="bu" style="color: null; background-color: null; font-style: inherit;">bool</span>) <span class="bu" style="color: null; background-color: null; font-style: inherit;">bool</span> {</span>
+<span id="cb2-2">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">for</span> value <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">:=</span> <span class="bu" style="color: null; background-color: null; font-style: inherit;">range</span> seq {</span>
+<span id="cb2-3">        <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">if</span> <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">!</span>f(value) {</span>
+<span id="cb2-4">            <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> false</span>
+<span id="cb2-5">        }</span>
+<span id="cb2-6">    }</span>
+<span id="cb2-7">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> true</span>
+<span id="cb2-8">}</span></code></pre></div>
+</div>
+<p>The big question is whether <code>MapFunc</code> and <code>FilterFunc</code> become standard. They have not been added to the <code>slices</code> package - presumably because iterators were coming - though <code>DeleteFunc</code> already managed to sneak in. Just imagine Python without comprehensions; <code>map</code> and <code>filter</code> would be ubiquitous.</p>
+<section class="level2" id="sort-keys">
+<h2 class="anchored">Sort keys</h2>
+<p>A related area of convergence is comparison functions. Go uses ternary <a href="https://pkg.go.dev/cmp">cmp</a> functions, and Python <a href="https://docs.python.org/3/library/functools.html#functools.cmp_to_key">used to</a>. Collective Python experience has shown that while more general, a ternary comparison is rarely needed. Even more so with the ability to reverse and stably sort.</p>
+<p>Go does not have the equivalent of Python’s orderable tuples, so a ternary <code>cmp</code> will always have its place. Still, sorting by scalars is extremely common, and Go could add <a href="https://github.com/golang/go/issues/71238">key-based</a> ordering, with iterator support.</p>
+<p>Note bound and unbound methods are also first class functions. So models with a standard ordering or identifier could add methods for each. Then pass <code>(*Type).Compare</code> as a <code>cmp</code> function, and <code>(*Type).Key</code> as a key function. The readability of function parameters is even better when referenced by name instead of a <code>lambda</code>.</p>
+<p>The key function approach is also simpler and more efficient for <code>comparable</code> use cases. Utilities like <code>slices.CompareFunc</code> could be <code>iter.CompareBy</code> and not repeat logic.</p>
+</section>
+<section class="level2" id="sets">
+<h2 class="anchored">Sets</h2>
+<p>Go does not have a built-in <code>set</code> type. The options are to use a <code>map</code> explicitly, or via a library which wraps a <code>map</code> and ignores the values. The author’s <a href="https://pkg.go.dev/github.com/coady/iterset">iterset</a> package demonstrates that a Pythonic approach is now possible. Set operations require either O(1) lookup - which maps already support - or mere iteration. So a custom <code>map</code> type is useful for efficiency, but its methods can support <code>iter.Seq</code> instead, just as Python methods do. This is both more flexible and efficient in most cases.</p>
+<p>Take <code>IsSubset</code> as an example. The four interface choices have usage and performance trade-offs.</p>
+<ol type="1">
+<li><code>IsSubset(iter.Seq[K], iter.Seq[K])</code>: most flexible, has to convert right argument to #2</li>
+<li><code>IsSubset(iter.Seq[K], map[K]V))</code>: fast, zero-copy, and flexible</li>
+<li><code>IsSubset(map[K]V), iter.Seq[K]</code>: similar to #1, but converting the right argument may exit early and use less space</li>
+<li><code>IsSubset(map[K]V1), map[K]V2)</code>: similar to #2, but could exit early with a size check</li>
+</ol>
+<p>Without function overloads, designing the interface for all use cases is a challenge. But in no case is forcing the caller to convert both arguments to <code>map[K]struct{}</code> first an improvement.</p>
+</section>
+<section class="level2" id="conclusion">
+<h2 class="anchored">Conclusion</h2>
+<p>Go has just started to include iterator utilities like <code>slices.Sorted{Func}</code>. Iterators are going to have a transformative effect on readability.</p>
+
+
+</section>
+</section>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 30, 2025 12:00 AM UTC by
+            <a href="https://coady.github.io/index.xml" class="link link-hover text-primary"
+              >Pythonicity</a
+            >
+          </div>
+          <a
+            href="https://coady.github.io/posts/go-iterators.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonspeed.com/articles/bytesio-reduce-memory-usage/" class="hover:underline"
               >The surprising way to save memory with BytesIO</a
             >
@@ -1238,46 +1334,6 @@ Let me walk you through this transformation.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/calls-for-proposals-is-open-and-we-want-you-in-prague/" class="hover:underline"
-              >Calls for Proposals Is Open and We Want YOU in Prague</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p></p><h2 id="%F0%9F%93%9D-calls-for-proposals">&#x1f4dd; Calls for Proposals&#xa0;</h2><p>The call for proposals for EuroPython 2025 is OPEN! &#x1f389; Similar to last year we will have a mixture of tutorials, talks and posters.</p><ul><li> Tutorials/Workshops (14-15 July): will be hands-on 180 min sessions with 40-100 participants</li><li>Talks &amp; Posters (16-18 July): 30 or 45</li></ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 21, 2025 07:00 AM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/calls-for-proposals-is-open-and-we-want-you-in-prague/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -1289,8 +1345,8 @@ Let me walk you through this transformation.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9039</a></li>
-    <li><a>Unique Feeds: 423</a></li>
+    <li><a>Total Entries: 9036</a></li>
+    <li><a>Unique Feeds: 421</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
