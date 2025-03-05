@@ -53,6 +53,490 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/api-rate-limiting-intro.html" class="hover:underline"
+              >Understanding API rate-limiting techniques</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/api-rate-limiting-intro.html">Understanding API rate-limiting techniques</a>
+</h1>
+<div class="article-meta">
+  2025-01-13, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p>Enabling rate-limiting in Zato means that access to Zato APIs can be throttled per endpoint, user or service - including options to make limits apply to specific IP addresses only - and if limits are exceeded within a selected period of time, the invocation will fail. Let's check how to use it all.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/arch.png" /></p>
+<p>API rate limiting works on several levels and the configuration is always checked in the order below, which follows from the narrowest, most specific parts of the system (endpoints), through users which may apply to multiple endpoints, up to services which in turn may be used by both multiple endpoints and users.</p>
+<ul>
+<li>First, per-endpoint limits</li>
+<li>Then, per-user limits</li>
+<li>Finally, per-service limits</li>
+</ul>
+<p>When a request arrives through an endpoint, that endpoint's rate limiting configuration is checked. If the limit is already reached for the IP address or network of the calling application, the request is rejected.</p>
+<p>Next, if there is any user associated with the endpoint, that account's rate limits are checked in the same manner and, similarly, if they are reached, the request is rejected.</p>
+<p>Finally, if the endpoint's underlying service is configured to do so, it also checks if its invocation limits are not exceeded, rejecting the message accordingly if they are.</p>
+<p>Note that the three levels are distinct yet they overlap in what they allow one to achieve.</p>
+<p>For instance, it is possible to have the same user credentials be used in multiple endpoints and express ideas such as "Allow this and that user to invoke my APIs 1,000 requests/day but limit each endpoint to at most 5 requests/minute no matter which user".</p>
+<p>Moreover, because limits can be set on services, it is possible to make it even more flexible, e.g. "Let this service be invoked at most 10,000 requests/hour, no matter which user it is, with particular users being able to invoke at most 500 requests/minute, no matter which service, topping it off with per separate limits for REST vs. SOAP vs. JSON-RPC endpoint, depending on what application is invoke the endpoints". That lets one conveniently express advanced scenarios that often occur in practical situations.</p>
+<p>Also, observe that API rate limiting applies to REST, SOAP and JSON-RPC endpoints only, it is not used with other API endpoints, such as AMQP, IBM MQ, SAP, task scheduler or any other technologies. However, per-service limits work no matter which endpoint the service is invoked with and they will work with endpoints such as WebSockets, ZeroMQ or any other.</p>
+<p>Lastly, limits pertain to with incoming requests only - any outgoing ones, from Zato to external resources - are not covered by it.</p>
+<h2 id="per-ip-restrictions">Per-IP restrictions</h2>
+<p>The architecture is made even more versatile thanks to the fact that for each object - endpoint, user or service - different limits can be configured depending on the caller's IP address.</p>
+<p>This adds yet another dimension and allows to express ideas commonly witnessed in API-based projects, such as:</p>
+<ul>
+<li>External applications, depending on their IP addresses, can have their own limits</li>
+<li>Internal users, e.g. employees of the company using VPN, may have hire limits if their addresses are in the 172.x.x.x range</li>
+<li>For performance testing purposes, access to Zato from a few selected hosts may have no limits at all</li>
+</ul>
+<p>IP-based limits work hand in hand are an integral part of the mechanism - they do not rule out per-endpoit, user or service limits. In fact, for each such object, multiple IP-using limits can be set independently, thus allowing for highest degree of flexibility.</p>
+<h2 id="exact-or-approximate">Exact or approximate</h2>
+<p>Rate limits come in two types:</p>
+<ul>
+<li>Exact</li>
+<li>Approximate</li>
+</ul>
+<p>Exact rate limits are just that, exact - they en that a limit is not exceeded at all, not even by a single request.</p>
+<p>Approximate limits may let a very small number of requests to exceed the limit with the benefit being that approximate limits are faster to check than exact ones.</p>
+<p>When to use which type depends on a particular project:</p>
+<ul>
+<li>
+<p>In some projects, it does not really matter if callers have a limit of 1,000 requests/minute or 1,005 requests/minute because the difference is too tiny to make a business impact. Approximate limits work best in this case.</p>
+</li>
+<li>
+<p>In other projects, there may be requirements that the limit never be exceeded no matter the circumstances. Use exact limits here.</p>
+</li>
+</ul>
+<h2 id="python-code-and-web-admin">Python code and web-admin</h2>
+<p>Alright, let's check how to define the limits in the Zato Dashboard. We will use the sample service below:</p>
+<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
+<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
+<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
+<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Service</span>
+<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
+<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">Sample</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
+<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a>    <span class="n">name</span> <span class="o">=</span> <span class="s1">'api.sample'</span>
+<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
+<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
+<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># Return a simple string on response</span>
+<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="s1">'Hello there!</span><span class="se">\n</span><span class="s1">'</span>
+</code></pre></div>
+<p>Now, in web-admin, we will configure limits - separately for the service, a new and a new REST API channel (endpoint).</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/service.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/user.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/api-rate-limit-intro/channel.png" /></p>
+<p>Points of interest:</p>
+<ul>
+<li>Configuration for each type of object is independent - within the same invocation some limits may be exact, some may be approximate</li>
+<li>There can be multiple configuration entries for each object</li>
+<li>A unit of time is "m", "h" or "d", depending on whether the limit is per minute, hour or day, respectively</li>
+<li>All limits within the same configuration are checked in the order of their definition which is why the most generic ones should be listed first</li>
+</ul>
+<h2 id="testing-it-out">Testing it out</h2>
+<p>Now, all is left is to invoke the service from curl.</p>
+<p>As long as limits are not reached, a business response is returned:</p>
+<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>$ curl http://my.user:password@localhost:11223/api/sample
+<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>Hello there!
+<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>$
+</code></pre></div>
+<p>But if a limit is reached, the caller receives an error message with the 429 HTTP status.</p>
+<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a>$ curl -v http://my.user:password@localhost:11223/api/sample
+<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>*   Trying 127.0.0.1...
+<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a>
+<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a>...
+<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
+<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a>&lt; HTTP/1.1 429 Too Many Requests
+<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a>&lt; Server: Zato
+<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>&lt; X-Zato-CID: b8053d68612d626d338b02
+<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a>
+<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a>...
+<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a>
+<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>{&quot;zato_env&quot;:{&quot;result&quot;:&quot;ZATO_ERROR&quot;,&quot;cid&quot;:&quot;b8053d68612d626d338b02eb&quot;,
+<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a> &quot;details&quot;:&quot;Error 429 Too Many Requests&quot;}}
+<a id="line-2-14" name="line-2-14"></a><a href="#line-2-14"><span class="linenos"></span></a>$
+</code></pre></div>
+<p>Note that the caller never knows what the limit was - that information is saved in Zato server logs along with other details so that API authors can correlate what callers get with the very rate limiting definition that prevented them from accessing the service.</p>
+<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a>zato.common.rate_limiting.common.RateLimitReached: Max. rate limit of 100/m reached;
+<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>from:`10.74.199.53`, network:`*`; last_from:`127.0.0.1;
+<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a>last_request_time_utc:`2025-01-12T15:30:41.943794;
+<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a>last_cid:`5f4f1ef65490a23e5c37eda1`; (cid:b8053d68612d626d338b02)
+</code></pre></div>
+<p>And this is it - we have created a new API rate limiting definition in Zato and tested it out successfully!</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
+<br />
+➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2025 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/api-rate-limiting-intro.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://rickardlindberg.me/2025/01/12/newsletter-december-advent-of-code.html" class="hover:underline"
+              >Newsletter December 2024: Advent of Code</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>December is the month of <a href="https://adventofcode.com/">Advent of Code</a>. I had
+told myself not to participate this year because I know I get <a href="https://youtu.be/stBGg7v-URg">completely
+consumed</a> by the problems and it has a negative
+impact on the rest of my life. It worked. Until December 15th. More on that
+later.</p>
+<h2 id="code-editor-update">Code Editor Update</h2>
+<p><a href="https://rickardlindberg.me/2024/12/08/newsletter-november-a.html">Last month</a>
+I started working on a <a href="https://github.com/rickardlindberg/rleditor">new code
+editor</a>. It is a mix of a text
+editor and a structured editor. It is all text, but parsers and pretty printers
+allow you to work with a tree structure and not think too much about syntax.</p>
+<p>I continued working on it this month. The big achievement was that I added
+support for another language in addition to JSON. The other language is
+<a href="https://rickardlindberg.me/categories/rlmeta/">rlmeta</a>. Here is a screenshot
+showing the parser opened in the editor:</p>
+<p><img alt="A screenshot of releditor editing the parser of
+rlmeta." height="289" src="https://cdn.uploads.micro.blog/173380/2025/rleditor-rlmeta-parser.png" width="600" /></p>
+<p>This is a big achievement because it ties everything together. You define a
+parser and a pretty printer for your language. That gives you all editing
+capabilities. However, you can also write a code generator, and now you have a
+full blown programming language with editing support &ldquo;for free&rdquo;. This
+potentially provides an environment to quickly experiment with new programming
+languages.</p>
+<p>Conceptually, I&rsquo;m quite happy with this achievement. However, there are many
+things to work on before this is &ldquo;production ready&rdquo;. First of all, the
+performance is pretty horrible because of the constant parsing and pretty
+printing. Second of all, I need to see if a tree based editor can actually
+become better than a regular text editor.</p>
+<h2 id="advent-of-code">Advent of Code</h2>
+<p>I couldn&rsquo;t help myself but to participate this year as well. The experience was
+not as stressful as last year. I still got consumed by the problems, but the
+feeling was mostly positive. I managed to complete all but 3 problems. Right
+now, the interest to complete them is pretty low. I might take a look at other
+solutions to see if I can learn something from that.</p>
+<p>My approach to solving the problems is that I try to solve them in order, and I
+don&rsquo;t look at others' solutions until I have solved both parts. However, I&rsquo;m
+out of ideas to try on the last problems, and I think the competition part is
+over by now. I might learn something for next year if I look at solutions now.</p>
+<p>This year I also practiced object oriented design. So my solutions involve many
+small objects interacting with each other to produce a solution. It was mostly
+a success I think. One of my favorite solutions is for <a href="https://github.com/rickardlindberg/aoc24/blob/main/11.py">day
+11</a>.</p>
+<p>This year I also think that I got the hang of Dijkstra and A*. (I found
+<a href="https://www.redblobgames.com/pathfinding/a-star/introduction.html">Introduction to the A*
+Algorithm</a>
+from Red Blob Games really helpful.)</p>
+<p>You can find all my solutions on
+<a href="https://github.com/rickardlindberg/aoc24">GitHub</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 12, 2025 11:45 AM UTC by
+            <a href="http://rickardlindberg.me/tags/python/rss.xml" class="link link-hover text-primary"
+              >Rickard Lindberg</a
+            >
+          </div>
+          <a
+            href="https://rickardlindberg.me/2025/01/12/newsletter-december-advent-of-code.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.glyph.im/2025/01/active-enum.html" class="hover:underline"
+              >The “Active Enum” Pattern</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Enums are objects, why not give them attributes?</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 10:37 PM UTC by
+            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
+              >Glyph Lefkowitz</a
+            >
+          </div>
+          <a
+            href="https://blog.glyph.im/2025/01/active-enum.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testandcode.com/episodes/pytest-plugins" class="hover:underline"
+              >pytest plugins - a full season</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This episode kicks off a season of pytest plugins.</p><p>In this episode:</p><ul><li>Introduction to pytest plugins</li><li>The pytest.org pytest plugin list</li><li>Finding pytest related packages on PyPI</li><li>The Top pytest plugins list on pythontest.com</li><li>Exploring popular plugins</li><li>Learning from plugin examples</li></ul><p>Links:</p><ul><li><a href="https://pythontest.com/top-pytest-plugins/">Top pytest plugins list</a></li><li><a href="https://docs.pytest.org/en/stable/reference/plugin_list.html">pytest.org plugin list</a></li><li><a href="https://hugovk.github.io/top-pypi-packages/">Top PyPI Packages</a></li><li>And links to plugins mentioned in the show can be found at <a href="https://pythontest.com/top-pytest-plugins/">pythontest.com/top-pytest-plugins</a></li></ul>
+<br /><p><strong> Learn pytest</strong></p><ul><li>pytest is the number one test framework for Python.</li><li>Learn the basics super fast with <a href="https://courses.pythontest.com/hello-pytest">Hello, pytest!</a></li><li>Then later you can become a pytest expert with <a href="https://courses.pythontest.com/the-complete-pytest-course">The Complete pytest Course</a></li><li>Both courses are at <a href="https://courses.pythontest.com/">courses.pythontest.com</a></li></ul>
+<strong>
+  <a href="https://www.patreon.com/c/testpodcast" rel="payment" title="★ Support this podcast on Patreon ★">★ Support this podcast on Patreon ★</a>
+</strong>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 09:00 PM UTC by
+            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
+              >Test and Code</a
+            >
+          </div>
+          <a
+            href="https://testandcode.com/episodes/pytest-plugins"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/trailing-commas-in-python/" class="hover:underline"
+              >The benefits of trailing commas</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Trailing commas make for <strong>easier code changes</strong>, <strong>shorter diffs</strong>, and <strong>fewer bugs</strong>.</p>
+
+
+<div>
+  
+    <a href="https://www.pythonmorsels.com/trailing-commas-in-python/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1969182583-ebbb2007bcff82f0158a7cb03ccc8367efecf2e65b5c5464da4dadbcc5ddb7f7-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#whats-a-trailing-comma" target="_blank">What's a trailing comma?</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#swapping-items-over-multiple-lines" target="_blank">Swapping items over multiple lines</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#adding-new-items-over-multiple-lines" target="_blank">Adding new items over multiple lines</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#the-dangers-of-implicit-string-concatenation" target="_blank">The dangers of implicit string concatenation</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#trailing-commas-easier-diffs-and-fewer-bugs" target="_blank">Trailing commas: easier diffs and fewer bugs</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>What's a trailing comma?</h2>
+    
+      
+        <p>When I'm make a multi-line list, dictionary, tuple or function call (see <a href="https://www.pythonmorsels.com/breaking-long-lines-code-python/" target="_blank">wrap a long line in Python</a>), I prefer to put the closing bracket or brace on its own line:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="n">fruits</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">"lemons"</span><span class="p">,</span>
+    <span class="s2">"pears"</span><span class="p">,</span>
+    <span class="s2">"jujubes"</span><span class="p">,</span>
+    <span class="s2">"apples"</span><span class="p">,</span>
+    <span class="s2">"bananas"</span><span class="p">,</span>
+    <span class="s2">"blueberries"</span><span class="p">,</span>
+    <span class="s2">"watermelon"</span><span class="p">,</span>
+<span class="p">]</span>
+</code></pre></div>
+
+
+      
+        <p>I also usually prefer to put each element on its own line, with a comma after each one, <strong>including the last element</strong>.
+This is called a <strong>trailing comma</strong>.</p>
+
+      
+        <p>A trailing comma is <em>not necessary</em> in Python, but <strong>it can be helpful</strong>.</p>
+
+      
+    
+  
+    <h2>Swapping items over multiple lines</h2>
+    
+      <p>Let's say we have a …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/trailing-commas-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/trailing-commas-in-python/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 03:15 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/trailing-commas-in-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.pythonanywhere.com/218/" class="hover:underline"
+              >We're hiring!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Are you so keen on PythonAnywhere that you&rsquo;d like to work with us?  We have an
+open role, and the recruitment team at our parent company <a href="https://www.anaconda.com/">Anaconda</a>
+are looking for great people.</p>
+<p>We&rsquo;re looking for <strong>a senior engineer</strong> with lots of experience in backend
+stuff, but an interest in working across the full stack from obscure kernel wrangling,
+custom Linux container-based virtualization, Django and Flask on the mid-tier,
+up to TypeScript and React on the front end.  There&rsquo;s even a (tiny) bit of Lua
+thrown in there.</p>
+<p>We&rsquo;re an <a href="https://en.wikipedia.org/wiki/Extreme_programming">Extreme Programming</a> team
+so you&rsquo;ll be pairing with other team members from day one.  All work is remote (bar
+occasional team meetups), and we can currently hire people based in the UK.</p>
+<p>There&rsquo;s more detailed information about the role on the
+<a href="https://ats.rippling.com/en-GB/anaconda/jobs/31371521-e9fb-4004-bea0-2705044019cc">official Anaconda jobs board</a>,
+and you can also apply there.  If you do, drop us a line at
+<a href="jobs@pythonanywhere.com">jobs@pythonanywhere.com</a> too so that we can tell the
+recruitment team to pull you to the front of the queue :-)</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 02:03 PM UTC by
+            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
+              >Python Anywhere</a
+            >
+          </div>
+          <a
+            href="https://blog.pythonanywhere.com/218/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/234/" class="hover:underline"
               >The Real Python Podcast – Episode #234: Building New Structures for Learning Python</a
             >
@@ -1926,246 +2410,6 @@ More <a href="https://discuss.tryton.org/t/newsletter-january-2025/8143/1">(clic
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/django-rest-framework/" class="hover:underline"
-              >Building HTTP APIs With Django REST Framework</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This course will get you ready to build HTTP APIs with Django REST Framework. The Django REST framework (DRF) is a toolkit built on top of the Django web framework that reduces the amount of code you need to write to create REST interfaces.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 31, 2024 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/django-rest-framework/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.paulox.net/2024/12/31/my-2024-in-review/" class="hover:underline"
-              >My 2024 in review</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A quick review of my 2024 done in a hurry, trying to remember the many experiences I had, the people I met, the places I visited and the changes I went&nbsp;through.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 30, 2024 11:00 PM UTC by
-            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
-              >Paolo Melchiorre</a
-            >
-          </div>
-          <a
-            href="https://www.paulox.net/2024/12/31/my-2024-in-review/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lukeplant.me.uk/blog/posts/recursive-project-search-in-emacs/" class="hover:underline"
-              >Recursive project search in Emacs</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The workflow of recursively searching for things or dealing with a list of issues to fix without getting lost.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 30, 2024 07:34 PM UTC by
-            <a href="http://lukeplant.me.uk/blog/categories/python/atom/index.xml" class="link link-hover text-primary"
-              >Luke Plant</a
-            >
-          </div>
-          <a
-            href="https://lukeplant.me.uk/blog/posts/recursive-project-search-in-emacs/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.holoviz.org/posts/hv_release_1.20/" class="hover:underline"
-              >HoloViews 1.20 - A year in review</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Release announcement for HoloViews 1.20
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 30, 2024 12:00 AM UTC by
-            <a href="https://blog.holoviz.org/index.xml" class="link link-hover text-primary"
-              >HoloViz</a
-            >
-          </div>
-          <a
-            href="https://blog.holoviz.org/posts/hv_release_1.20/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://testdriven.io/blog/django-ecs-aws-copilot/" class="hover:underline"
-              >Deploying a Django App to AWS ECS with AWS Copilot</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This tutorial looks at how to deploy a Django app to AWS ECS with AWS Copilot.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 28, 2024 10:28 PM UTC by
-            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
-              >TestDriven.io</a
-            >
-          </div>
-          <a
-            href="https://testdriven.io/blog/django-ecs-aws-copilot/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.spyder-ide.org/blog/spyder-6-carlos" class="hover:underline"
-              >Spyder 6 project lead: Remote development interface and application UI/UX improvements</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Spyder's lead maintainer, Carlos Cordoba, shares his insights on the projects and features he helped develop for Spyder 6.0, particularly UI/UX and where the IDE is headed next.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 28, 2024 12:00 AM UTC by
-            <a href="https://www.spyder-ide.org/blog/feed.xml" class="link link-hover text-primary"
-              >Spyder IDE</a
-            >
-          </div>
-          <a
-            href="https://www.spyder-ide.org/blog/spyder-6-carlos"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -2177,12 +2421,12 @@ More <a href="https://discuss.tryton.org/t/newsletter-january-2025/8143/1">(clic
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8811</a></li>
-    <li><a>Unique Feeds: 423</a></li>
+    <li><a>Total Entries: 9057</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (422)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (327)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (211)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="http://testandcode.com/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (422)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (327)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (227)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
