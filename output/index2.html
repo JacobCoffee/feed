@@ -53,6 +53,374 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2025-02-28-fish/" class="hover:underline"
+              >testing the fish shell</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I have been testing fish for a couple months now (this file started on
+2025-01-03T23:52:15-0500 according to <code>stat(1)</code>), and those are my
+notes. I suspect people will have Opinions about my comments here. Do
+not comment unless you have some Constructive feedback to provide: I
+don't want to know if you think I am holding it Wrong. Consider that I
+might have used UNIX shells for longer that you have lived.</p>
+
+<p>I'm not sure I'll keep using fish, but so far it's the first shell
+that survived heavy use outside of <code>zsh(1)</code> (unless you count
+<code>tcsh(1)</code>, but that was in another millenia).</p>
+
+<p>My normal shell is <code>bash(1)</code>, and it's still the shell I used
+everywhere else than my laptop, as I haven't switched on all the
+servers I managed, although it <a href="https://gitlab.torproject.org/tpo/tpa/team/-/issues/40854">is available since August 2022</a> on
+<code>torproject.org</code> servers. I first got interested in fish because they
+<a href="https://fishshell.com/blog/rustport/">ported to Rust</a>, making it one of the rare shells out there
+written in a "safe" and modern programming language, released after an
+impressive ~2 year of work with <a href="https://fishshell.com/blog/new-in-40/">Fish 4.0</a>.</p>
+
+<h1 id="cool-things">Cool things</h1>
+
+<p>Current directory gets shortened,
+<code>~/wikis/anarc.at/software/desktop/wayland</code> shows up as
+<code>~/w/a/s/d/wayland</code></p>
+
+<p>Autocompletion rocks.</p>
+
+<p>Default prompt rocks. Doesn't seem vulnerable to command injection
+assaults, at least it doesn't trip on the <a href="https://github.com/jwilk/git-landmine">git-landmine</a>.</p>
+
+<p>It even includes pipe status output, which was a <em>huge pain</em> to
+implement in bash. Made me realized that if the last command succeeds,
+we don't see other failures, which is the case of my current prompt
+anyways! Signal reporting is better than my bash implementation too.</p>
+
+<p>So far the only modification I have made to the prompt is to add a
+<code>printf '\a'</code> to <a href="https://anarc.at/blog/2022-11-08-modern-bell-urgency/">output a bell</a>.</p>
+
+<p>By default, fish keeps a directory history (but separate from the
+<code>pushd</code> stack), that can be navigated with <code>cdh</code>, <code>prevd</code>, and
+<code>nextd</code>, <code>dirh</code> shows the history.</p>
+
+<h1 id="less-cool">Less cool</h1>
+
+<p>I feel there's visible latency in the prompt creation.</p>
+
+<p>POSIX-style functions (<code>foo() { true }</code>) are unsupported. Instead,
+fish uses whitespace-sensitive definitions like this:</p>
+
+<pre><code>function foo
+    true
+end
+</code></pre>
+
+<p>This means my (modest) collection of POSIX functions need to be ported
+to fish. Workaround: simple functions can be turned into aliases,
+which fish supports (but implements using functions).</p>
+
+<p>EOF heredocs are considered to be "<a href="https://fishshell.com/docs/current/fish_for_bash_users.html#heredocs">minor syntactic sugar</a>". I find
+them frigging useful.</p>
+
+<p>Process substitution is split on newlines, not whitespace. you need to
+pipe through <code>string split -n " "</code> to get the equivalent.</p>
+
+<p><code>&lt;(cmd)</code> doesn't exist: <a href="https://fishshell.com/docs/current/fish_for_bash_users.html#process-substitution">they claim</a> you can use <code>cmd | foo -</code> as a
+replacement, but that's not correct: I used <code>&lt;(cmd)</code> mostly where
+<code>foo</code> does <em>not</em> support <code>-</code> as a magic character to say 'read from
+stdin'.</p>
+
+<p>Documentation is... limited. It seems mostly geared <a href="https://fishshell.com/docs/current/index.html">the web docs</a>
+which are... okay (but I couldn't find out about
+<code>~/.config/fish/conf.d</code> there!), but this is really inconvenient when
+you're trying to browse the manual pages. For example, fish thinks
+there's a <code>fish_prompt</code> manual page, according to its own completion
+mechanism, but <code>man(1)</code> cannot find that manual page. I can't find the
+manual for the <a href="https://fishshell.com/docs/current/cmds/time.html">time command</a> (which is actually a keyword!)</p>
+
+<p>Fish renders multi-line commands with newlines. So if your terminal
+looks like this, say:</p>
+
+<pre><code>anarcat@angela:~&gt; sq keyring merge torproject-keyring/lavamind-
+95F341D746CF1FC8B05A0ED5D3F900749268E55E.gpg torproject-keyrin
+g/weasel-E3ED482E44A53F5BBE585032D50F9EBC09E69937.gpg | wl-copy
+</code></pre>
+
+<p>... but it's actually one line, when you copy-paste the above, in
+foot(1), it will show up <em>exactly</em> like this, newlines and all:</p>
+
+<pre><code>sq keyring merge torproject-keyring/lavamind-
+95F341D746CF1FC8B05A0ED5D3F900749268E55E.gpg torproject-keyrin
+g/weasel-E3ED482E44A53F5BBE585032D50F9EBC09E69937.gpg | wl-copy
+</code></pre>
+
+<p>Whereas it should show up like this:</p>
+
+<pre><code>sq keyring merge torproject-keyring/lavamind-95F341D746CF1FC8B05A0ED5D3F900749268E55E.gpg torproject-keyring/weasel-E3ED482E44A53F5BBE585032D50F9EBC09E69937.gpg | wl-copy
+</code></pre>
+
+<p>Note that this is an issue specific to foot(1), alacritty(1) and
+gnome-terminal(1) don't suffer from that issue.</p>
+
+<h1 id="blockers">Blockers</h1>
+
+<p><code>()</code> is like <code>$()</code>: it's process substitution, and not a
+subshell. This is really impractical: I use <code>( cd foo ; do_something)</code>
+all the time to avoid losing the current directory... I guess I'm
+supposed to use <code>pushd</code> for this, but ouch. This wouldn't be so bad if
+it was just for <code>cd</code> though. Clean constructs like this:</p>
+
+<pre><code>( git grep -l '^#!/.*bin/python' ; fdfind .py ) | sort -u
+</code></pre>
+
+<p>Turn into what i find rather horrible:</p>
+
+<pre><code>begin; git grep -l '^#!/.*bin/python' ; fdfind .py ; end | sort -ub
+</code></pre>
+
+<p>It... <em>works</em>, but it goes back to "oh dear, now there's a new
+langage again". I only found out about this construct while trying:</p>
+
+<pre><code>{ git grep -l '^#!/.*bin/python' ; fdfind .py } | sort -u 
+</code></pre>
+
+<p>... which fails and suggests using <code>begin</code>/<code>end</code>, at which point: why
+not just support the curly braces?</p>
+
+<p><code>FOO=bar</code> is not allowed. It's actually recognized syntax, but creates
+a warning. We're supposed to use <code>set foo bar</code> instead. This <em>really</em>
+feels like a needless divergence from standard.</p>
+
+<p>Aliases are... peculiar. Typical constructs like <code>alias mv="\mv -i"</code>
+don't work because fish treats aliases as a function definition, and
+<code>\</code> is not magical there. This can be worked around by specifying the
+full path to the command, with e.g. <code>alias mv="/bin/mv -i"</code>. Another
+problem is trying to override a built-in, which seems completely
+<a href="https://github.com/fish-shell/fish-shell/issues/3000">impossible</a>. In my case, I <em>like</em> the <code>time(1)</code> command the way it
+is, thank you very much, and fish provides no way to bypass that
+builtin. It <em>is</em> possible to call <code>time(1)</code> with <code>command time</code>, but
+it's not possible to replace the <code>command</code> keyword so that means a lot
+of typing.</p>
+
+<p>Again: you can't use <code>\</code> to bypass aliases. This is a huge annoyance
+for me. I would need to learn to type <code>command</code> in long form, and I
+use that stuff pretty regularly. I guess I could alias <code>command</code> to
+<code>c</code> or something, but this is one of those huge muscle memory challenges.</p>
+
+<p><kbd>alt .</kbd> doesn't <em>always</em> work the way i expect.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 28, 2025 05:31 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2025-02-28-fish/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/" class="hover:underline"
+              >scikit-survival 0.24.0 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>It&rsquo;s my pleasure to announce the release of <a href="https://scikit-survival.readthedocs.io/" target="_blank">scikit-survival</a> 0.24.0.</p>
+<p>A highlight of this release the addition of
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.nonparametric.cumulative_incidence_competing_risks.html#sksurv.nonparametric.cumulative_incidence_competing_risks" target="_blank">cumulative_incidence_competing_risks()</a>
+which implements a non-parameteric estimator of the cumulative incidence function in the presence of competing risks.
+In addition, the release adds support for scikit-learn 1.6, including the support for missing values for
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.ensemble.ExtraSurvivalTrees.html#sksurv.ensemble.ExtraSurvivalTrees" target="_blank">ExtraSurvivalTrees</a>.</p>
+<h2 id="analysis-of-competing-risks">Analysis of Competing Risks</h2>
+<p>In classical survival analysis, the focus is on the time until a specific event occurs. If no event is observed during the study period, the time of the event is considered censored. A common assumption is that censoring is non-informative, meaning that censored subjects have a similar prognosis to those who were not censored.</p>
+<p>Competing risks arise when each subject can experience an event due to one of $K$ ($K \geq 2$) mutually exclusive causes, termed competing risks. Thus, the occurrence of one event prevents the occurrence of other events. For example, after a bone marrow transplant, a patient might relapse or die from transplant-related causes (transplant-related mortality). In this case, death from transplant-related mortality precludes relapse.</p>
+<p>The bone marrow transplant data from <a href="https://doi.org/10.1038/sj.bmt.1705727" target="_blank">Scrucca et al., Bone Marrow Transplantation (2007)</a> includes data
+from 35 patients grouped into two cancer types: Acute Lymphoblastic Leukemia (ALL; coded as 0), and Acute Myeloid Leukemia (AML; coded as 1).</p>
+<pre><code class="language-python">from sksurv.datasets import load_bmt
+bmt_features, bmt_outcome = load_bmt()
+diseases = bmt_features[&quot;dis&quot;].cat.rename_categories(
+{&quot;0&quot;: &quot;ALL&quot;, &quot;1&quot;: &quot;AML&quot;}
+)
+diseases.value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 20%;">
+<thead>
+<tr>
+<th>dis</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>AML</th>
+<td>18</td>
+</tr>
+<tr style="text-align: right;">
+<th>ALL</th>
+<td>17</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>During the follow-up period, some patients might experience a relapse of the original leukemia or die
+while in remission (transplant related death).
+The outcome is defined similarly to standard time-to-event data, except that the event indicator specifies the type of event, where 0 always indicates censoring.</p>
+<pre><code class="language-python">import pandas as pd
+status_labels = {
+0: &quot;Censored&quot;,
+1: &quot;Transplant related mortality&quot;,
+2: &quot;Relapse&quot;,
+}
+risks = pd.DataFrame.from_records(bmt_outcome).assign(
+label=lambda x: x[&quot;status&quot;].replace(status_labels)
+)
+risks[&quot;label&quot;].value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 40%;">
+<thead>
+<tr>
+<th>label</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>Relapse</th>
+<td>15</td>
+</tr>
+<tr style="text-align: right;">
+<th>Censored</th>
+<td>11</td>
+</tr>
+<tr style="text-align: right;">
+<th>Transplant related mortality</th>
+<td>9</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The table above shows the number of observations for each status.</p>
+<h3 id="non-parametric-estimator-of-the-cumulative-incidence-function">Non-parametric Estimator of the Cumulative Incidence Function</h3>
+<p>If the goal is to estimate the probability of relapse, transplant-related death is a competing risk event. This means that the occurrence of relapse prevents the occurrence of transplant-related death, and vice versa. We aim to estimate curves that illustrate how the likelihood of these events changes over time.</p>
+<p>Let&rsquo;s begin by estimating the probability of relapse using the complement of the Kaplan-Meier estimator. With this approach, we treat deaths as censored observations. One minus the Kaplan-Meier estimator provides an estimate of the probability of relapse before time $t$.</p>
+<pre><code class="language-python">import matplotlib.pyplot as plt
+from sksurv.nonparametric import kaplan_meier_estimator
+times, km_estimate = kaplan_meier_estimator(
+bmt_outcome[&quot;status&quot;] == 1, bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, 1 - km_estimate, where=&quot;post&quot;)
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of relapsing before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-kaplan-meier.svg" width="400" />
+</figure>
+<p>However, this approach has a significant drawback: considering death as a censoring event violates the assumption that censoring is non-informative. This is because patients who died from transplant-related mortality have a different prognosis than patients who did not experience any event. Therefore, the estimated probability of relapse is often biased.</p>
+<p>The cause-specific <strong>cumulative incidence function (CIF)</strong> addresses this problem by estimating the cause-specific hazard of each event separately. The cumulative incidence function estimates the probability that the event of interest occurs before time $t$, and that it occurs before any of the competing causes of an event. In the bone marrow transplant dataset, the cumulative incidence function of relapse indicates the probability of relapse before time $t$, given that the patient has not died from other causes before time $t$.</p>
+<pre><code class="language-python">from sksurv.nonparametric import cumulative_incidence_competing_risks
+times, cif_estimates = cumulative_incidence_competing_risks(
+bmt_outcome[&quot;status&quot;], bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, cif_estimates[0], where=&quot;post&quot;, label=&quot;Total risk&quot;)
+for i, cif in enumerate(cif_estimates[1:], start=1):
+plt.step(times, cif, where=&quot;post&quot;, label=status_labels[i])
+plt.legend()
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of event before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence.svg" width="400" />
+</figure>
+<p>The plot shows the estimated probability of experiencing an event at time $t$ for both the individual risks and for the total risk.</p>
+<p>Next, we want to to estimate the cumulative incidence curves for the two cancer types — acute lymphoblastic leukemia (ALL) and acute myeloid leukemia (AML) — to examine how the probability of relapse depends on the original disease diagnosis.</p>
+<pre><code class="language-python">_, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
+for j, disease in enumerate(diseases.unique()):
+mask = diseases == disease
+event = bmt_outcome[&quot;status&quot;][mask]
+time = bmt_outcome[&quot;ftime&quot;][mask]
+times, cif_estimates, conf_int = cumulative_incidence_competing_risks(
+event,
+time,
+conf_type=&quot;log-log&quot;,
+)
+for i, (cif, ci, ax) in enumerate(
+zip(cif_estimates[1:], conf_int[1:], axs[:, j]), start=1
+):
+ax.step(times, cif, where=&quot;post&quot;)
+ax.fill_between(times, ci[0], ci[1], alpha=0.25, step=&quot;post&quot;)
+ax.set_title(f&quot;{disease}: {status_labels[i]}&quot;, size=&quot;small&quot;)
+ax.grid()
+for ax in axs[-1, :]:
+ax.set_xlabel(&quot;time $t$&quot;)
+for ax in axs[:, 0]:
+ax.set_ylim(0, 1)
+ax.set_ylabel(&quot;Probability of event before time $t$&quot;)
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence-by-diagnosis.svg" width="450" />
+</figure>
+<p>The left column shows the estimated cumulative incidence curves (solid lines) for patients diagnosed with ALL, while the right column shows the curves for patients diagnosed with AML, along with their 95% pointwise confidence intervals. The plot indicates that the estimated probability of relapse at $t=40$ days is more than three times higher for patients diagnosed with ALL compared to AML.</p>
+<p>If you want to run the examples above yourself, you can
+<a href="https://mybinder.org/v2/gh/sebp/scikit-survival/master?urlpath=lab/tree/notebooks/competing-risks.ipynb" target="_blank">execute them interactively in your browser using binder</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 26, 2025 09:26 PM UTC by
+            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
+              >Sebastian Pölsterl</a
+            >
+          </div>
+          <a
+            href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/polars-lazyframe/" class="hover:underline"
               >How to Work With Polars LazyFrames</a
             >
@@ -1459,46 +1827,6 @@ PyPy eventually.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python" class="hover:underline"
-              >7 free Machine Learning projects to practice using Python | DataWars</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            A collection of free projects to practice machine learning with real life examples using Python
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 24, 2025 09:25 AM UTC by
-            <a href="https://www.datawars.io/articles/rss.xml" class="link link-hover text-primary"
-              >DataWars.io</a
-            >
-          </div>
-          <a
-            href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.djangoproject.com/weblog/2025/feb/24/cfp-for-djangocon-africa-2025-is-now-open/" class="hover:underline"
               >Call for Proposals for DjangoCon Africa 2025 is now open!</a
             >
@@ -2217,48 +2545,6 @@ implementation:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycoders.com/issues/669" class="hover:underline"
-              >Issue #669: Joining Strings, MongoDB in Django, Mobile Wheels, and More (Feb. 18, 2025)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p> <span>#669 – FEBRUARY 18, 2025</span><br /> <span><a href="https://pycoders.com/issues/669/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14078/feed" target="_blank">How to Join Strings in Python</a></h3> <p style="margin-bottom: 0;"> In this tutorial, you&rsquo;ll learn how to use Python&rsquo;s built-in <code>.join()</code> method to combine string elements from an iterable into a single string with a specified separator. You&rsquo;ll also learn about common pitfalls, and how CPython makes <code>.join()</code> work efficiently.<br /> <span><a href="https://pycoders.com/link/14078/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14070/feed" target="_blank">Creating the MongoDB Database Backend for Django</a></h3> <p style="margin-bottom: 0;"> Django supports a number of relational databases, but to go NoSQL you need to use third party tools. This is about to change as a backend for MongoDB is in development. This talks about the history of Mongo and Django and how the new code is structured.<br /> <span><a href="https://pycoders.com/link/14070/feed" target="_blank">JIB ADEGUNLOYE</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14060/feed" target="_blank">Postgres, Now with Built-in Warehousing</a></h3> <a href="https://pycoders.com/link/14060/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/4dd25e2d2167a6db637fa22dc4481ced" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Why manage two databases when one does it all? Crunchy Data Warehouse keeps your transactional database running smoothly while adding warehouse features like querying object storage, BI tool connections, and more. <a href="https://pycoders.com/link/14060/feed" target="_blank">Scale efficiently with the Postgres you trust, without the complexity →</a><br /> <span><a href="https://pycoders.com/link/14060/feed" target="_blank">CRUNCHY DATA</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14085/feed" target="_blank">PyPI Now Supports iOS and Android Wheels</a></h3> <p style="margin-bottom: 0;"> PyPI now supports iOS and Android wheels, making it easier for Python developers to distribute mobile packages.<br /> <span><a href="https://pycoders.com/link/14085/feed" target="_blank">SARAH GOODING</a> • Shared by <a href="https://pycoders.com/link/14072/feed" target="_blank">Sarah Gooding</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14084/feed" target="_blank">Python Release 3.14.0a5</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14084/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14076/feed" target="_blank">PyPy v7.3.18 Released</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14076/feed" target="_blank">PYPY.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14074/feed" target="_blank">PEP 765: Disallow Return/Break/Continue That Exit a Finally Block (Accepted)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14074/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14064/feed" target="_blank">Quiz: How to Join Strings in Python</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14064/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14089/feed" target="_blank">Quiz: Python <code>for</code> Loops: The Pythonic Way</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14089/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <h2>Python Jobs</h2> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14065/feed" target="_blank">Backend Software Engineer (Anywhere)</a></h3> <p><a href="https://pycoders.com/link/14065/feed" target="_blank">Brilliant.org</a></p> <p><a href="https://www.pythonjobshq.com?utm_source=newsletter&amp;utm_campaign=pycoders669&amp;utm_medium=feed" target="_blank">More Python Jobs &gt;&gt;&gt;</a></p> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14091/feed" target="_blank">Charlie Marsh: Accelerating Python Tooling With Ruff and <code>uv</code></a></h3> <p style="margin-bottom: 0;"> Are you looking for fast tools to lint your code and manage your projects? How is the Rust programming language being used to speed up Python tools? This week on the show, we speak with Charlie Marsh about his company, Astral, and their tools, uv and Ruff.<br /> <span><a href="https://pycoders.com/link/14091/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14073/feed" target="_blank">Managing Django&rsquo;s Queue</a></h3> <p style="margin-bottom: 0;"> Carlton is one of the core developers of Django. This post talks about staying on top of the incoming pull-requests, bug fixes, and everything else in the development queue.<br /> <span><a href="https://pycoders.com/link/14073/feed" target="_blank">CARLTON GIBSON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14059/feed" target="_blank">Unify Distributed Data from Edge-to-Cloud</a></h3> <a href="https://pycoders.com/link/14059/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/d704e75a7b7c5bd1d53ab6d8bd971b78" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Meet HiveMQ Pulse: Built to organize distributed data into a structured namespace for seamless access from edge-to-cloud. Gain insights from distributed devices and systems, with a single source of truth for your data. <a href="https://pycoders.com/link/14059/feed" target="_blank">Get early access →</a><br /> <span><a href="https://pycoders.com/link/14059/feed" target="_blank">HIVEMQ</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14077/feed" target="_blank">Shipping Software on Time and on Budget</a></h3> <p style="margin-bottom: 0;"> The detailed post talks about all the things you can do to try to get better at delivering on time and on budget. The article includes a lot of good references as well.<br /> <span><a href="https://pycoders.com/link/14077/feed" target="_blank">CARLTON GIBSON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14071/feed" target="_blank">Great Tables</a></h3> <p style="margin-bottom: 0;"> Talk Python To Me interviews Rich Iannone and Michael Chow from Posit. They discuss the transformative power of data tables with the Great Tables library.<br /> <span><a href="https://pycoders.com/link/14071/feed" target="_blank">KENNEDY, IANNONE, &amp; CHOW</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14096/feed" target="_blank"><code>pytest-mock</code>: Mocking in pytest</a></h3> <p style="margin-bottom: 0;"> <code>pytest-mock</code> is currently the #3 pytest plugin. It is a wrapper around <code>unittest.mock</code>. This covers what mocking is, and how to do it well in pytest.<br /> <span><a href="https://pycoders.com/link/14096/feed" target="_blank">BRIAN OKKEN</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14095/feed" target="_blank">Tail-Call Interpreter Added to CPython</a></h3> <p style="margin-bottom: 0;"> New code for a tail-call interpreter has been added to the Python 3.14 alpha. It is an opt-in feature for now, but promises performance improvements.<br /> <span><a href="https://pycoders.com/link/14095/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14075/feed" target="_blank">Python Free-Threading Guide</a></h3> <p style="margin-bottom: 0;"> This is a centralized collection of documentation and trackers around compatibility with free-threaded CPython for the Python open source ecosystem.<br /> <span><a href="https://pycoders.com/link/14075/feed" target="_blank">QUANSIGHT</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14092/feed" target="_blank"><code>re.Match.groupdict</code></a></h3> <p style="margin-bottom: 0;"> This quick TIL post shows how you can use the <code>.groupdict()</code> method from a regex match to get a dictionary with all named groups.<br /> <span><a href="https://pycoders.com/link/14092/feed" target="_blank">RODRIGO GIRÃO SERRÃO</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14094/feed" target="_blank">The 10-Step Checklist for Continuous Delivery</a></h3> <p style="margin-bottom: 0;"> Learn how to implement Continuous Delivery with this 10-step guide featuring actionable insights, examples, and best practices.<br /> <span><a href="https://pycoders.com/link/14094/feed" target="_blank">ANTHONY CAMPOLO</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14081/feed" target="_blank">Exploring ICEYE&rsquo;s Satellite Imagery</a></h3> <p style="margin-bottom: 0;"> This article does a deep dive data-analysis on satellite imagery of an airport. It uses pandas, geopandas, PyTorch, and more.<br /> <span><a href="https://pycoders.com/link/14081/feed" target="_blank">MARK LITWINTSCHIK</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14093/feed" target="_blank">Terminal Colours Are Tricky</a></h3> <p style="margin-bottom: 0;"> Choosing just the right palette for your terminal can be tricky. This article talks about the why and how.<br /> <span><a href="https://pycoders.com/link/14093/feed" target="_blank">JULIE EVANS</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14063/feed" target="_blank">Validoopsie: Data Validation Made Effortless!</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14063/feed" target="_blank">GITHUB.COM/AKMALSOLIEV</a> • Shared by Akmal Soliev</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14086/feed" target="_blank">tea-tasting: Statistical Analysis of A/B Tests</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14086/feed" target="_blank">GITHUB.COM/E10V</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14061/feed" target="_blank">pyquery: A Jquery-Like Library for Python</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14061/feed" target="_blank">GITHUB.COM/GAWEL</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14067/feed" target="_blank">arq: Fast Job Queuing and RPC With Asyncio and Redis</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14067/feed" target="_blank">GITHUB.COM/PYTHON-ARQ</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14082/feed" target="_blank">micropie: Ultra-Micro Python Web Framework</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/14082/feed" target="_blank">GITHUB.COM/PATX</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14097/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> February 19, 2025<br /> <span><a href="https://pycoders.com/link/14097/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14088/feed" target="_blank">Workshop: Creating Python Communities</a></h3> <p style="margin-bottom: 0;"> February 20 to February 21, 2025<br /> <span><a href="https://pycoders.com/link/14088/feed" target="_blank">PYTHON-GM.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14083/feed" target="_blank">PyData Bristol Meetup</a></h3> <p style="margin-bottom: 0;"> February 20, 2025<br /> <span><a href="https://pycoders.com/link/14083/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14062/feed" target="_blank">PyLadies Dublin</a></h3> <p style="margin-bottom: 0;"> February 20, 2025<br /> <span><a href="https://pycoders.com/link/14062/feed" target="_blank">PYLADIES.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14068/feed" target="_blank">Django Girls Koforidua</a></h3> <p style="margin-bottom: 0;"> February 21 to February 23, 2025<br /> <span><a href="https://pycoders.com/link/14068/feed" target="_blank">DJANGOGIRLS.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14066/feed" target="_blank">Python Weekend Abuja</a></h3> <p style="margin-bottom: 0;"> February 21, 2025<br /> <span><a href="https://pycoders.com/link/14066/feed" target="_blank">CODECAMPUS.COM.NG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14087/feed" target="_blank">DjangoCongress JP 2025</a></h3> <p style="margin-bottom: 0;"> February 22 to February 23, 2025<br /> <span><a href="https://pycoders.com/link/14087/feed" target="_blank">DJANGOCONGRESS.JP</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14090/feed" target="_blank">PyConf Hyderabad 2025</a></h3> <p style="margin-bottom: 0;"> February 22 to February 24, 2025<br /> <span><a href="https://pycoders.com/link/14090/feed" target="_blank">PYCONFHYD.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14080/feed" target="_blank">PyCon Namibia</a></h3> <p style="margin-bottom: 0;"> February 24 to February 28, 2025<br /> <span><a href="https://pycoders.com/link/14080/feed" target="_blank">PYCON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/14069/feed" target="_blank">PyCon APAC 2025</a></h3> <p style="margin-bottom: 0;"> March 1 to March 3, 2025<br /> <span><a href="https://pycoders.com/link/14069/feed" target="_blank">PYTHON.PH</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #669.<br /><a href="https://pycoders.com/issues/669/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/669/open/feed" width="1" /> 
-        <hr />
-        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 18, 2025 07:30 PM UTC by
-            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
-              >PyCoder’s Weekly</a
-            >
-          </div>
-          <a
-            href="https://pycoders.com/issues/669"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -2270,8 +2556,8 @@ implementation:</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9003</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 9020</a></li>
+    <li><a>Unique Feeds: 422</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
