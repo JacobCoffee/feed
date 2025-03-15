@@ -53,529 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://lucumr.pocoo.org/2025/1/19/what-is-systemfd" class="hover:underline"
-              >Automatic Server Reloading in Rust on Change: What is listenfd/systemfd?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When I developed <a class="reference external" href="https://werkzeug.palletsprojects.com/">Werkzeug</a> (and
-later <a class="reference external" href="https://flask.palletsprojects.com/">Flask</a>), the most
-important part of the developer experience for me was enabling fast, automatic
-reloading.  Werkzeug (and with it Flask), this is achieved by using two
-procsses at all times.  The parent process holds on to the file descriptor
-of the socket on which the server listens, and a subprocess picks up that
-file descriptor.  That subprocess restarts when it detects changes.  This
-ensures that no matter what happens, there is no window where the browser
-reports a connection error.  At worst, the browser will hang until the
-process finishes reloading, after which the page loads successfully.  In
-case the inner process fails to come up during restarts, you get an error
-message.</p>
-<p>A few years ago, I wanted to accomplish the same experience for working
-with Rust code which is why I wrote <a class="reference external" href="https://github.com/mitsuhiko/systemfd">systemfd</a> and <a class="reference external" href="https://github.com/mitsuhiko/listenfd">listenfd</a>.  I however realized that I
-never really wrote here about how they work and disappointingly I think
-those crates, and a good auto-reloading experience in Rust are largely
-unknown.</p>
-<div class="section" id="watching-for-changes">
-<h2>Watching for Changes</h2>
-<p>Firstly one needs to monitor the file system for changes.  While in theory
-I could have done this myself, there was already a tool that could do
-that.</p>
-<p>At the time there was <a class="reference external" href="https://crates.io/crates/cargo-watch">cargo watch</a>.  Today one might instead use it
-together with the more generic <a class="reference external" href="https://github.com/watchexec/watchexec">watchexec</a>.  Either one monitor your
-workspace for changes and then executes a command.  So you can for
-instance tell it to restart your program.  One of these will work:</p>
-<pre class="literal-block">
-watchexec -r -- cargo run
-cargo watch -x run
-</pre>
-<p>You will need a tool like that to do the watching part.  At this point I
-recommend the more generic <cite>watchexec</cite> which you can find on <a class="reference external" href="https://github.com/watchexec/watchexec/blob/main/doc/packages.md">homebrew and
-elsewhere</a>.</p>
-</div>
-<div class="section" id="passing-sockets">
-<h2>Passing Sockets</h2>
-<p>But what about the socket?  The solution to this problem I picked comes
-from <a class="reference external" href="https://en.wikipedia.org/wiki/Systemd">systemd</a>.  Systemd has a
-“protocol” that standardizes passing file descriptors from one process to
-another through environment variables.  In systemd parlance this is called
-“socket activation,” as it allows systemd to only launch a program if
-someone started making a request to the socket.  This concept was
-originally introduced by Apple as part of launchd.</p>
-<p>To make this work with Rust, I created two crates:</p>
-<ul class="simple">
-<li><a class="reference external" href="https://github.com/mitsuhiko/systemfd">systemfd</a> is the command
-line tool that opens sockets and passes them on to other programs.</li>
-<li><a class="reference external" href="https://crates.io/crates/listenfd">listenfd</a> is a Rust crate that
-accepts file descriptors from systemd or <cite>systemfd</cite>.</li>
-</ul>
-<p>It's worth noting that systemfd is not exclusivly useful to Rust.  The
-systemd protocol can be implemented in other languages as well, meaning
-that if you have a socket server written in Go or Python, you can also use
-systemfd.</p>
-<p>So here is how you use it.</p>
-<p>First you need to add <cite>listenfd</cite> to your project:</p>
-<pre class="literal-block">
-cargo add listenfd
-</pre>
-<p>Then, modify your server code to accept sockets via listenfd before
-falling back to listening itself on ports provided through command-line
-arguments or configuration files.  Here is an example using <cite>listenfd</cite> in
-axum:</p>
-<div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">axum</span>::<span class="p">{</span><span class="n">routing</span>::<span class="n">get</span><span class="p">,</span><span class="w"> </span><span class="n">Router</span><span class="p">};</span><span class="w"></span>
-<span class="k">use</span><span class="w"> </span><span class="n">tokio</span>::<span class="n">net</span>::<span class="n">TcpListener</span><span class="p">;</span><span class="w"></span>
-
-<span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">index</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="kp">&amp;</span><span class="o">'</span><span class="nb">static</span> <span class="kt">str</span> <span class="p">{</span><span class="w"></span>
-<span class="w">    </span><span class="s">&quot;Hello, World!&quot;</span><span class="w"></span>
-<span class="p">}</span><span class="w"></span>
-
-<span class="cp">#[tokio::main]</span><span class="w"></span>
-<span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">app</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Router</span>::<span class="n">new</span><span class="p">().</span><span class="n">route</span><span class="p">(</span><span class="s">&quot;/&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">get</span><span class="p">(</span><span class="n">index</span><span class="p">));</span><span class="w"></span>
-
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">listenfd</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">listenfd</span>::<span class="n">ListenFd</span>::<span class="n">from_env</span><span class="p">();</span><span class="w"></span>
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">listener</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">listenfd</span><span class="p">.</span><span class="n">take_tcp_listener</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">?</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
-<span class="w">        </span><span class="nb">Some</span><span class="p">(</span><span class="n">listener</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">TcpListener</span>::<span class="n">from_std</span><span class="p">(</span><span class="n">listener</span><span class="p">),</span><span class="w"></span>
-<span class="w">        </span><span class="nb">None</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">TcpListener</span>::<span class="n">bind</span><span class="p">(</span><span class="s">&quot;0.0.0.0:3000&quot;</span><span class="p">).</span><span class="k">await</span><span class="p">,</span><span class="w"></span>
-<span class="w">    </span><span class="p">}</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
-
-<span class="w">    </span><span class="n">axum</span>::<span class="n">serve</span><span class="p">(</span><span class="n">listener</span><span class="p">,</span><span class="w"> </span><span class="n">app</span><span class="p">).</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
-<span class="w">    </span><span class="nb">Ok</span><span class="p">(())</span><span class="w"></span>
-<span class="p">}</span><span class="w"></span>
-</pre></div>
-<p>The key point here is to accept socket 0 from the environment as a TCP
-listener and use it if available.  If the socket is not provided (e.g.
-when launched without systemd/<cite>systemfd</cite>), the code falls back to opening a
-fixed port.</p>
-</div>
-<div class="section" id="putting-it-together">
-<h2>Putting it Together</h2>
-<p>Finally you can use <cite>cargo watch</cite> / <cite>watchexec</cite> together with <cite>systemfd</cite>:</p>
-<pre class="literal-block">
-systemfd --no-pid -s http::8888 -- watchexec -r -- cargo run
-systemfd --no-pid -s http::8888 -- cargo watch -x run
-</pre>
-<p>This is what the parameters mean:</p>
-<ul class="simple">
-<li><tt class="docutils literal">systemfd</tt> needs to be first it's the program that opens the sockets.</li>
-<li><tt class="docutils literal"><span class="pre">--no-pid</span></tt> is a flag prevents the PID from being passed.  This is necessary
-for <cite>listenfd</cite> to accept the socket.  This is a departure of the socket
-passing protocol from systemd which otherwise does not allow ports to be
-passed through another program (like <cite>watchexec</cite>).  In short: when the
-PID information is not passed, then listenfd will accept the socket
-regardless.  Otherwise it would only accept it from the direct parent
-process.</li>
-<li><tt class="docutils literal"><span class="pre">-s</span> <span class="pre">http::8888</span></tt> tells <cite>systemfd</cite> to open one TCP socket on port 8888.
-Using <cite>http</cite> instead of <cite>tcp</cite> is a small improvement that will cause
-systemfd to print out a URL on startup.</li>
-<li><tt class="docutils literal"><span class="pre">--</span> watchexec <span class="pre">-r</span></tt> makes <cite>watchexec</cite> restart the process when something
-changes in the current working directory.</li>
-<li><tt class="docutils literal"><span class="pre">--</span> cargo run</tt> is the program that watchexec will start and re-start onm
-changes.  In Rust this will first compile the changes and then run the
-application.  Because we put <cite>listenfd</cite> in, it will try to first accept
-the socket from <cite>systemfd</cite>.</li>
-</ul>
-<p>The end result is that you can edit your code, and it will recompile
-automatically and restart the server without dropping any requests.  When
-you run it, and perform changes, it will look a bit like this:</p>
-<pre class="literal-block">
-$ systemfd --no-pid -s http::5555 -- watchexec -r -- cargo run
-~&gt; socket http://127.0.0.1:5555/ -&gt; fd #3
-[Running: cargo run]
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
-     Running `target/debug/axum-test`
-[Running: cargo run]
-   Compiling axum-test v0.1.0 (/private/tmp/axum-test)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
-     Running `target/debug/axum-test`
-</pre>
-<p>For easier access, I recommend putting this into a <cite>Makefile</cite> or similar
-so you can just run <cite>make devserver</cite> and it runs the server in watch mode.</p>
-<p>To install <cite>systemfd</cite> you can use curl to bash:</p>
-<pre class="literal-block">
-curl -sSfL https://github.com/mitsuhiko/systemfd/releases/latest/download/systemfd-installer.sh | sh
-</pre>
-</div>
-<div class="section" id="what-about-windows">
-<h2>What About Windows?</h2>
-<p>Now how does this work on Windows?  The answer is that <cite>systemfd</cite> and
-<cite>listenfd</cite> have a custom, proprietary protocol that also makes socket
-passing work on Windows.  That's a more complex system which involves a
-local RPC server.  However the system does also support Windows and the
-details about how it works are largely irrelevant for you as a user
-—&nbsp;unless you want to implement that protocol for another programming
-language.</p>
-</div>
-<div class="section" id="potential-improvements">
-<h2>Potential Improvements</h2>
-<p>I really enjoy using this combination, but it can be quite frustrating to
-require so many commands, and the command line workflow isn't optimal.
-Ideally, this functionality would be better integrated into specific Rust
-frameworks like axum and provided through a dedicated cargo plugin.  In a
-perfect world, one could simply run <cite>cargo devserver</cite>, and everything
-would work seamlessly.</p>
-<p>However, maintaining such an integrated experience is a much more involved
-effort than what I have.  Hopefully, someone will be inspired to further
-enhance the developer experience and achieve deeper integration with Rust
-frameworks, making it more accessible and convenient for everyone.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 19, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="http://lucumr.pocoo.org/2025/1/19/what-is-systemfd"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html" class="hover:underline"
-              >Dealing with egl_bad_alloc error for webkit</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <!--
-.. title: Dealing with egl_bad_alloc error for webkit
-.. slug: dealing-with-egl-bad-alloc-error-for-webkit
-.. date: 2025-01-18T08:43:01+01:00
-.. tags: Fedora, Python, WebKit, Gnome, GTK, Toga
-.. link:
-.. description:
-.. type: text
--->
-<p>I was trying out some <a href="https://toga.readthedocs.io/en/stable/">Toga</a> examples,
-and for the webview I kept getting the following error and a blank screen.</p>
-<pre><code>Could not create EGL surfaceless context: EGL_BAD_ALLOC.
-</code></pre>
-<p>After many hours of searching I reduced the reproducer to a simple Python Gtk code.</p>
-<pre><code class="language-Python">import gi
-
-gi.require_version('Gtk', '3.0')
-gi.require_version('WebKit2', '4.0')
-
-from gi.repository import Gtk, WebKit2
-
-window = Gtk.Window()
-window.set_default_size(800, 600)
-window.connect(&quot;destroy&quot;, Gtk.main_quit)
-
-scrolled_window = Gtk.ScrolledWindow()
-webview = WebKit2.WebView()
-webview.load_uri(&quot;https://getfedora.org&quot;)
-scrolled_window.add(webview)
-
-window.add(scrolled_window)
-window.show_all()
-Gtk.main()
-</code></pre>
-<p>Finally I asked for help in #fedora IRC channel, within seconds <code>Khaytsus</code> gave me the fix:</p>
-<pre><code>WEBKIT_DISABLE_COMPOSITING_MODE=1 python g.py
-</code></pre>
-<p><img alt="working webview" src="https://kushaldas.in/images/fedora_webview.png" /></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 18, 2025 07:43 AM UTC by
-            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
-              >Kushal Das</a
-            >
-          </div>
-          <a
-            href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html" class="hover:underline"
-              >Using (or really misusing) Path.resolve() in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>&nbsp;</p><p>I just stumbled upon a code in Python that uses a simple `<b>Path(...).resolve()</b>`
- after receiving a path in an API and suddenly reminded myself on the 
-many the bugs I've tripped over due to it, so, decided to share&nbsp; why I 
-hope at some point this function stops being so pervasive as it's 
-usually the wrong thing to call.. (maybe because when <b>Python </b>went from <b>os.path</b> to <b>pathlib </b>they added no real replacement and now you need to use both).</p><p>The main reason of bugs for that is that when you call <b>Path.resolve()</b> it'll actually resolve <b>symlinks </b>(and <b>substs on Windows</b>).<br /></p><p></p><p>This means that if the user crafted some structure as</p><p></p><blockquote><p>/myproject</p><p>/myproject/package.json</p><p>/myproject/src -&gt; symlink to sources in /allmysources/temp</p></blockquote><p></p><p>&nbsp;If you resolve `<b>/myproject/src/myfile.py</b>` to `<b>/allmysources/temp/myfile.py</b>` and actually want to get to the `<b>package.json</b>`, it'll never be found!</p><p>&nbsp;I was even looking at the python docs and found this nugget when talking about `<b>Path.parent</b>`:</p><p></p><p></p><blockquote><p>If you want to walk an arbitrary filesystem path upwards, it is
-recommended to first call <a class="reference internal" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve" title="pathlib.Path.resolve"><code class="xref py py-meth docutils literal notranslate"><span class="pre">Path.resolve()</span></code></a> so as to resolve
-symlinks and eliminate <code class="docutils literal notranslate"><span class="pre">".."</span></code> components.</p></blockquote><p></p><p></p><p>And that's completely <b>why you shouldn't use it</b> because if you do, then the parents will be completely off!</p><p>So, what should you do?</p><p>Unfortunately <b>pathlib </b>is not your friend here, you need to use `<b>os.path.normpath(os.path.abspath(...))</b>` to remove `<b>..</b>` occurrences from the string and make it absolute (and then after, sure, use <b>pathlib </b>for
- the remainder of your program) -- possibly you even want to get the 
-real case in the filesystem if you're on Windows (which is very annoying
- as then you end up needing to do a bunch of <b>listdir()</b> calls to get the case stored in the filesystem).</p><p>&nbsp;--
- but also, keep in mind you usually just need to do that on boundaries 
-(i.e.: when you receive a relative path as an argument in the command 
-line for instance, not when you receive an API call from another program
- -- chances are, the <b>cwd </b>of that program and your own are different and thus <b>calls to `absolute()` or `resolve()` are actually bugs</b>).</p><p></p><p>But isn't there any use-case for `<b>Path.resolve()</b>`?</p><p>As
- far as I know, the only case where it's valid is if you do want to 
-create a cache of sorts where any representation of that file is 
-considered the same (i.e.: you really want the canonical representation 
-of the file).&nbsp;</p><p>Say, in an IDE you opened your `<b>subst</b>` in `<b>x:</b>` and then you have `<b>c:\project\foo.py</b>` and `<b>x:\foo.py</b>`
- in a debugger and you want to always show the version that's opened 
-under your IDE, you need to build that mapping so that regardless of the
- version that's accessed you will open the version that's being seen in 
-your IDE (and oh my god, I've seen so many IDEs get that wrong and the 
-effect is usually you'll have the same file opened under different names
- in the IDE -- I know that in the <b>pydevd debugger</b> this is especially tricky because the name of the file is gotten from a <b>.pyc</b>
- file, which depends on how it was generated and the cached version may 
-not match the version that the user is currently seeing -- the&nbsp; debugger
- goes through great lengths to have an internal canonical representation
- and a different version which should be what the user sees, but it's 
-not perfect and IDEs which actually open the file afterwards don't make 
-the due diligence to try to do the proper mapping afterwards -- even 
-worse when they fail because the path is the same but the drive is 
-uppercase and internally the path they have has the drive in lowercase).</p><p>Maybe even then it'd be better to use the inode of the file for a reference (gotten from `<b>Path.stat()</b>`)...</p><p>Anyways, to sum up, in its current format, I'd just recommend to <b>ALMOST NEVER </b>use `<b>resolve()</b>` as it's usually just the source of bugs, keep to <b>`Path(os.path.normpath(os.path.abspath(...)))` </b>on
- program boundaries as that's just saner in general (and when you want 
-to pass files among APIs, make sure paths are already absolute and 
-normalized and fail if they aren't).<b><br /></b></p><p>p.s.: just as a 
-disclaimer, I've also seen a very minor subset of users on Linux (just 
-one so far really, but maybe there are others that want that behavior 
-out there) that say they want the symlinks resolved as the created 
-structure they have is always final and the symlinks are just a 
-commodity to avoid having to cd into that structure so that they can 
-freely cd into symlinks (and as such they don't want to affect the 
-structure when they created symlinks), but I don't think this is the 
-most common behavior (and if it is, then programs probably need to have a
- flag determining on whether to use it or not (for instance, I know vite
- from javascript has a <span class="kY2IgmnCmOGjharHErah"><span><b>resolve.preserveSymlinks </b>setting
- so that the user can decide if they want it or not) -- although it's 
-also true that most users don't even care, because they don't put their 
-source code in a symlink or Windows subst 😊<br /></span></span></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 17, 2025 08:43 PM UTC by
-            <a href="http://pydev.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Fabio Zadrozny</a
-            >
-          </div>
-          <a
-            href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/235/" class="hover:underline"
-              >The Real Python Podcast – Episode #235: Principles for Considering Your Python Tooling</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            What are the principles you should consider when making decisions about which Python tools to use? What anti-patterns get in the way of making the right choices for your team? Christopher Trudeau is back on the show this week, bringing another batch of PyCoder's Weekly articles and projects.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 17, 2025 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/235/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mattlayman.com/videos/building-saas-with-python-and-django-212/" class="hover:underline"
-              >Building SaaS with Python and Django #212.2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this episode, we continued on the sign up workflow simplification. The focus of this stream was on adding the background task that will send the magic link email to allow sign in. This is the second half of the stream because my internet cut out.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 17, 2025 12:00 AM UTC by
-            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
-              >Matt Layman</a
-            >
-          </div>
-          <a
-            href="https://www.mattlayman.com/videos/building-saas-with-python-and-django-212/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mattlayman.com/videos/signin-email-building-saas-212/" class="hover:underline"
-              >Signin Email - Building SaaS #212.1</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this episode, we continued on the sign up workflow simplification. The focus of this stream was on adding the background task that will send the magic link email to allow sign in.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 17, 2025 12:00 AM UTC by
-            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
-              >Matt Layman</a
-            >
-          </div>
-          <a
-            href="https://www.mattlayman.com/videos/signin-email-building-saas-212/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-machine-learning/" class="hover:underline"
-              >Anomaly Detection in Machine Learning Using Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In recent years, many of our applications have been driven by the high volume of data that we are able to collect and process. Some may refer to us being in the age of data. One of the essential aspects of handling such a large amount of data is anomaly detection – processes that enable [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 16, 2025 10:08 AM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-machine-learning/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://testdriven.io/blog/django-db-indexing/" class="hover:underline"
               >Database Indexing in Django</a
             >
@@ -1631,8 +1108,8 @@ from Red Blob Games really helpful.)</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://testandcode.com/episodes/pytest-plugins" class="hover:underline"
-              >pytest plugins - a full season</a
+            <a href="https://www.pythonmorsels.com/trailing-commas-in-python/" class="hover:underline"
+              >The benefits of trailing commas</a
             >
           </h2>
           
@@ -1641,24 +1118,462 @@ from Red Blob Games really helpful.)</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>This episode kicks off a season of pytest plugins.</p><p>In this episode:</p><ul><li>Introduction to pytest plugins</li><li>The pytest.org pytest plugin list</li><li>Finding pytest related packages on PyPI</li><li>The Top pytest plugins list on pythontest.com</li><li>Exploring popular plugins</li><li>Learning from plugin examples</li></ul><p>Links:</p><ul><li><a href="https://pythontest.com/top-pytest-plugins/">Top pytest plugins list</a></li><li><a href="https://docs.pytest.org/en/stable/reference/plugin_list.html">pytest.org plugin list</a></li><li><a href="https://hugovk.github.io/top-pypi-packages/">Top PyPI Packages</a></li><li>And links to plugins mentioned in the show can be found at <a href="https://pythontest.com/top-pytest-plugins/">pythontest.com/top-pytest-plugins</a></li></ul>
-<br /><p><strong> Learn pytest</strong></p><ul><li>pytest is the number one test framework for Python.</li><li>Learn the basics super fast with <a href="https://courses.pythontest.com/hello-pytest">Hello, pytest!</a></li><li>Then later you can become a pytest expert with <a href="https://courses.pythontest.com/the-complete-pytest-course">The Complete pytest Course</a></li><li>Both courses are at <a href="https://courses.pythontest.com/">courses.pythontest.com</a></li></ul>
-<strong>
-  <a href="https://www.patreon.com/c/testpodcast" rel="payment" title="★ Support this podcast on Patreon ★">★ Support this podcast on Patreon ★</a>
-</strong>
+            <p>Trailing commas make for <strong>easier code changes</strong>, <strong>shorter diffs</strong>, and <strong>fewer bugs</strong>.</p>
+
+
+<div>
+  
+    <a href="https://www.pythonmorsels.com/trailing-commas-in-python/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1969182583-ebbb2007bcff82f0158a7cb03ccc8367efecf2e65b5c5464da4dadbcc5ddb7f7-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#whats-a-trailing-comma" target="_blank">What's a trailing comma?</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#swapping-items-over-multiple-lines" target="_blank">Swapping items over multiple lines</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#adding-new-items-over-multiple-lines" target="_blank">Adding new items over multiple lines</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#the-dangers-of-implicit-string-concatenation" target="_blank">The dangers of implicit string concatenation</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/trailing-commas-in-python/#trailing-commas-easier-diffs-and-fewer-bugs" target="_blank">Trailing commas: easier diffs and fewer bugs</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>What's a trailing comma?</h2>
+    
+      
+        <p>When I'm make a multi-line list, dictionary, tuple or function call (see <a href="https://www.pythonmorsels.com/breaking-long-lines-code-python/" target="_blank">wrap a long line in Python</a>), I prefer to put the closing bracket or brace on its own line:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="n">fruits</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">"lemons"</span><span class="p">,</span>
+    <span class="s2">"pears"</span><span class="p">,</span>
+    <span class="s2">"jujubes"</span><span class="p">,</span>
+    <span class="s2">"apples"</span><span class="p">,</span>
+    <span class="s2">"bananas"</span><span class="p">,</span>
+    <span class="s2">"blueberries"</span><span class="p">,</span>
+    <span class="s2">"watermelon"</span><span class="p">,</span>
+<span class="p">]</span>
+</code></pre></div>
+
+
+      
+        <p>I also usually prefer to put each element on its own line, with a comma after each one, <strong>including the last element</strong>.
+This is called a <strong>trailing comma</strong>.</p>
+
+      
+        <p>A trailing comma is <em>not necessary</em> in Python, but <strong>it can be helpful</strong>.</p>
+
+      
+    
+  
+    <h2>Swapping items over multiple lines</h2>
+    
+      <p>Let's say we have a …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/trailing-commas-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/trailing-commas-in-python/</a></h3>
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 10, 2025 09:00 PM UTC by
-            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
-              >Test and Code</a
+            Posted on January 10, 2025 03:15 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
             >
           </div>
           <a
-            href="https://testandcode.com/episodes/pytest-plugins"
+            href="https://www.pythonmorsels.com/trailing-commas-in-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.pythonanywhere.com/218/" class="hover:underline"
+              >We're hiring!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Are you so keen on PythonAnywhere that you&rsquo;d like to work with us?  We have an
+open role, and the recruitment team at our parent company <a href="https://www.anaconda.com/">Anaconda</a>
+are looking for great people.</p>
+<p>We&rsquo;re looking for <strong>a senior engineer</strong> with lots of experience in backend
+stuff, but an interest in working across the full stack from obscure kernel wrangling,
+custom Linux container-based virtualization, Django and Flask on the mid-tier,
+up to TypeScript and React on the front end.  There&rsquo;s even a (tiny) bit of Lua
+thrown in there.</p>
+<p>We&rsquo;re an <a href="https://en.wikipedia.org/wiki/Extreme_programming">Extreme Programming</a> team
+so you&rsquo;ll be pairing with other team members from day one.  All work is remote (bar
+occasional team meetups), and we can currently hire people based in the UK.</p>
+<p>There&rsquo;s more detailed information about the role on the
+<a href="https://ats.rippling.com/en-GB/anaconda/jobs/31371521-e9fb-4004-bea0-2705044019cc">official Anaconda jobs board</a>,
+and you can also apply there.  If you do, drop us a line at
+<a href="jobs@pythonanywhere.com">jobs@pythonanywhere.com</a> too so that we can tell the
+recruitment team to pull you to the front of the queue :-)</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 02:03 PM UTC by
+            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
+              >Python Anywhere</a
+            >
+          </div>
+          <a
+            href="https://blog.pythonanywhere.com/218/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/234/" class="hover:underline"
+              >The Real Python Podcast – Episode #234: Building New Structures for Learning Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What are the new ways we can teach and share our knowledge about Python? How can we improve the structure of our current offerings and build new educational resources for our audience of Python learners? This week on the show, Real Python core team members Stephen Gruppetta and Martin Breuss join us to discuss enhancements to the site and new ways to learn Python.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 10, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/234/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonshow.com/p/51-dead-simple-python-with-jason" class="hover:underline"
+              >51 - Dead Simple Python with Jason McDonald</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, we have special guest, Jason McDonald, the author of Dead Simple Python from No Starch Press.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 09, 2025 09:35 PM UTC by
+            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
+              >The Python Show</a
+            >
+          </div>
+          <a
+            href="https://www.pythonshow.com/p/51-dead-simple-python-with-jason"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.egenix.com/company/news/Python-Meeting-Duesseldorf-2025-01-22" class="hover:underline"
+              >Python Meeting Düsseldorf - 2025-01-22</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span style="font-style: italic;">The following text is in German, since we're announcing a regional user group meeting in Düsseldorf, Germany.</span><br />
+</p>
+<h2>Ankündigung</h2>
+<p>Das nächste <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> findet an folgendem Termin statt:<br />
+</p>
+<p style="text-align: center; font-weight: bold;">22.01.2025, 18:00 Uhr<br />
+  <span style="font-weight: normal;">Raum 1, 2.OG im <a href="http://www.duesseldorf.de/jugendamt/fam/famfoe/bueh/ac/index.shtml">Bürgerhaus Stadtteilzentrum Bilk</a><br />
+    <a href="http://www.duesseldorf-arcaden.de/anfahrt.html">Düsseldorfer Arcaden</a>, <a href="http://maps.google.com/maps?q=51.209169,6.775339&amp;layer=c&amp;sll=51.209353,6.775272&amp;cbp=11,177.96,,0,0.79&amp;cbll=51.209412,6.77577&amp;ie=UTF8&amp;t=m&amp;vpsrc=0&amp;panoid=0NGUHHHEpGGMCcqpf3Gmbw&amp;z=17">Bachstr. 145, 40217 Düsseldorf</a><br />
+  </span></p>
+<p style="text-align: center; font-weight: bold;"><span style="font-weight: normal;"><br />
+  </span><span style="font-weight: normal;"></span></p>
+
+<h2>Programm</h2>
+<h3>Bereits angemeldete Vorträge</h3>
+<ul class="pl-5 list-disc mb-4"><li>Daniel Schmitz:<br />
+<i><b>Maintaining SciPy: Large scale Open Source in practice</b></i></li>
+<li>Arkadius Schuchhardt:<br />
+  <i><b>Erfahrungen mit Reflex</b></i></li>
+<li>Marc-André Lemburg:<br />
+  <i><b>Programming hardware displays the easy way - using MicroPython and LVGL</b></i></li>
+<li>Jochen Wersdörfer:<br />
+  <i><b>Skip the Overhead: Lean Web Development with Django</b></i></li>
+<li>Klaus Bremer: <br />
+  <i><b>Server Side Events (SSE) with htmx and async frameworks</b></i></li>
+</ul>
+Weitere Vorträge können gerne noch angemeldet werden. Bei Interesse, bitte unter <a href="mailto:info@pyddf.de">info@pyddf.de</a> melden.
+
+
+
+
+
+
+<h3>Startzeit und Ort<br />
+</h3>
+<p>Wir treffen uns um 18:00 Uhr im Bürgerhaus in den 
+Düsseldorfer Arcaden.</p>
+<p>Das Bürgerhaus teilt sich den Eingang mit dem Schwimmbad und befindet 
+sich an der Seite der Tiefgarageneinfahrt der Düsseldorfer Arcaden.<br />
+  <br />
+Über dem Eingang steht ein großes "Schwimm’ in Bilk" Logo. Hinter der Tür
+ direkt links zu den zwei Aufzügen, dann in den 2. Stock hochfahren. Der
+ Eingang zum Raum 1 liegt direkt links, wenn man aus dem Aufzug kommt.<br />
+  <br />
+&gt;&gt;&gt; <a href="http://bit.ly/11sCfiw">Eingang in Google Street View</a></p><b>⚠️ Wichtig</b>: Bitte nur dann anmelden, wenn ihr absolut 
+sicher seid, dass ihr auch kommt. Angesichts der begrenzten Anzahl Plätze, haben
+ wir kein Verständnis für kurzfristige Absagen oder No-Shows.
+<h2>Einleitung</h2>
+
+
+
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> ist eine regelmäßige Veranstaltung in Düsseldorf, die sich an Python Begeisterte aus der Region wendet.</p>Einen guten Überblick über die Vorträge bietet unser <a href="http://www.youtube.com/pyddf/" style="font-weight: bold;">PyDDF YouTube-Kanal</a>, auf dem wir Videos der Vorträge nach den Meetings veröffentlichen.<br />
+
+
+
+<p>Veranstaltet wird das Meeting von der <a href="/">eGenix.com GmbH</a>, Langenfeld, in Zusammenarbeit mit <a href="http://www.clark-consulting.eu/">Clark Consulting &amp; Research</a>, Düsseldorf:<br />
+</p>
+<h2>Format</h2>
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> nutzt eine Mischung aus (Lightning) Talks und offener Diskussion.</p>Vorträge können vorher angemeldet werden, oder auch spontan 
+während des Treffens eingebracht werden. Ein Beamer mit HDMI und FullHD Auflösung 
+steht zur Verfügung.<p><span style="font-weight: bold;">(Lightning) Talk Anmeldung</span> bitte formlos per EMail an <a href="mailto:info@pyddf.de?subject=Anmeldung&amp;nbsp;Lightning&amp;nbsp;Talk&amp;nbsp;Python&amp;nbsp;Meeting&amp;nbsp;D&amp;uuml;sseldorf">info@pyddf.de</a></p>
+<h2>Kostenbeteiligung</h2>
+
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> wird von Python Nutzern für Python Nutzer veranstaltet.</p>
+<p>Da Tagungsraum, Beamer, Internet und Getränke Kosten produzieren, 
+bitten wir die Teilnehmer um einen Beitrag in Höhe von <span style="font-weight: bold;">EUR 10,00</span> inkl. 
+19% Mwst. Schüler und Studenten zahlen <span style="font-weight: bold;">EUR 5,00</span> inkl. 
+19% Mwst.</p>
+<p>Wir möchten alle Teilnehmer bitten, den Betrag in bar mitzubringen.</p>
+<h2>Anmeldung</h2>
+<p>Da wir nur 25 Personen in dem angemieteten Raum empfangen können, möchten wir bitten, sich vorher anzumelden.<br />
+</p>
+<blockquote>
+  <p><b>Meeting Anmeldung</b> bitte per <a href="https://www.meetup.com/Python-Meeting-Dusseldorf/">Meetup</a><br />
+  </p>
+</blockquote>
+
+
+
+
+
+<h2>Weitere Informationen</h2>
+<p>Weitere Informationen finden Sie auf der Webseite des Meetings:<br />
+<br />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://pyddf.de/">https://pyddf.de/</a><br />
+</p>
+
+<p>Viel Spaß !</p>
+<p>Marc-Andre Lemburg, eGenix.com
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 09, 2025 08:00 AM UTC by
+            <a href="http://www.egenix.com/company/news/rss2" class="link link-hover text-primary"
+              >eGenix.com</a
+            >
+          </div>
+          <a
+            href="https://www.egenix.com/company/news/Python-Meeting-Duesseldorf-2025-01-22"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.europython-society.org/board-report-for-december-2024/" class="hover:underline"
+              >Board Report for December 2024</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The board has been working tirelessly over the past month to bootstrap the organization of the 2025 conference and lead the Society toward a more sustainable and stable future!</p><p>In December, we focused on three main areas:</p><ol><li>Onboarding</li><li>Hiring an Event Manager</li><li>Bootstrapping the 2025 conference</li></ol><h3 id="onboarding">Onboarding:</h3><p>All board members</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 08, 2025 10:32 PM UTC by
+            <a href="http://www.europython-society.org/rss" class="link link-hover text-primary"
+              >EuroPython Society</a
+            >
+          </div>
+          <a
+            href="https://www.europython-society.org/board-report-for-december-2024/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/01/data-cleaning-in-data-science/" class="hover:underline"
+              >Data Cleaning in Data Science</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this Data Science blog post series, we’ve talked about where to get data from and how to explore that data using pandas, but whilst that data is excellent for learning, it’s not similar to what we will term real-world data. Data for learning has often already been cleaned and curated to allow you to [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 08, 2025 03:02 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/01/data-cleaning-in-data-science/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://labs.quansight.org/blog/narwhals-pycapsule" class="hover:underline"
+              >Universal dataframe support with the Arrow PyCapsule Interface + Narwhals</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Support everything, depend on (almost) nothing
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 08, 2025 12:00 AM UTC by
+            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
+              >Quansight Labs Blog</a
+            >
+          </div>
+          <a
+            href="https://labs.quansight.org/blog/narwhals-pycapsule"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1678,12 +1593,12 @@ from Red Blob Games really helpful.)</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9020</a></li>
-    <li><a>Unique Feeds: 422</a></li>
+    <li><a>Total Entries: 8431</a></li>
+    <li><a>Unique Feeds: 418</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://testandcode.com/rss">Python Bytes (423)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (327)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (227)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (494)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (423)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (211)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (197)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
