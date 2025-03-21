@@ -53,653 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://coady.github.io/posts/go-iterators.html" class="hover:underline"
-              >Go iterators</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <section class="level1" id="pythonic-go-code.">
-<h1>Pythonic Go code.</h1>
-<p>The long arc of language convergence continues. With generics and iterators, Go is significantly closer to Python’s reusability and expressiveness.</p>
-<p>Take the built-in function <code>sum</code>. Prior to generics, a Go version would have needed a separate implementations for <code>int</code> and <code>float64</code>. But that was the least of the problems. Even with a <code>Number</code> interface, it also would have been restricted to a <code>slice</code> of numbers. Realistically, one never has a slice of numbers. One has a slice of objects with a numeric field, or perhaps a <code>map</code> with numeric values.</p>
-<p>Enter <a href="https://go.dev/doc/go1.23#iterators">iterators</a>. The <a href="https://go.dev/blog/range-functions">range over function</a> types are clunkier than Python generators, but to the caller the <code>range</code> interface is the same.</p>
-<div class="cell" id="cell-2">
-<div class="sourceCode cell-code" id="cb1" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb1-1"><span class="bu" style="color: null; background-color: null; font-style: inherit;">type</span> Number interface {</span>
-<span id="cb1-2">    constraints.Integer <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">|</span> constraints.Float <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">|</span> constraints.Complex</span>
-<span id="cb1-3">}</span>
-<span id="cb1-4"></span>
-<span id="cb1-5">func Sum[N Number](seq <span class="bu" style="color: null; background-color: null; font-style: inherit;">iter</span>.Seq[N]) N {</span>
-<span id="cb1-6">    var total N</span>
-<span id="cb1-7">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">for</span> value <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">:=</span> <span class="bu" style="color: null; background-color: null; font-style: inherit;">range</span> seq {</span>
-<span id="cb1-8">        total <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">+=</span> value</span>
-<span id="cb1-9">    }</span>
-<span id="cb1-10">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> total</span>
-<span id="cb1-11">}</span></code></pre></div>
-</div>
-<p>The standard library includes helpers <code>slices.Values</code>, <code>maps.Keys</code>, and <code>maps.Values</code>. So there is no barrier to making <code>iter.Seq</code> the standard input for iterables.</p>
-<p>The Go equivalent of <a href="https://github.com/golang/go/issues/61898">itertools</a> is now inevitable. With one key difference: the lack of generator expressions will make Go more function oriented. <code>slices.ContainsFunc</code> is the equivalent of <code>any</code>; similarly the equivalent of <code>all</code> would likely embed the predicate.</p>
-<div class="cell" id="cell-4">
-<div class="sourceCode cell-code" id="cb2" style="background: #f1f3f5;"><pre class="sourceCode python code-with-copy"><code class="sourceCode python"><span id="cb2-1">func AllFunc[E <span class="bu" style="color: null; background-color: null; font-style: inherit;">any</span>](seq <span class="bu" style="color: null; background-color: null; font-style: inherit;">iter</span>.Seq[E], f func(E) <span class="bu" style="color: null; background-color: null; font-style: inherit;">bool</span>) <span class="bu" style="color: null; background-color: null; font-style: inherit;">bool</span> {</span>
-<span id="cb2-2">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">for</span> value <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">:=</span> <span class="bu" style="color: null; background-color: null; font-style: inherit;">range</span> seq {</span>
-<span id="cb2-3">        <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">if</span> <span class="op" style="color: #5E5E5E; background-color: null; font-style: inherit;">!</span>f(value) {</span>
-<span id="cb2-4">            <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> false</span>
-<span id="cb2-5">        }</span>
-<span id="cb2-6">    }</span>
-<span id="cb2-7">    <span class="cf" style="color: #003B4F; background-color: null; font-weight: bold; font-style: inherit;">return</span> true</span>
-<span id="cb2-8">}</span></code></pre></div>
-</div>
-<p>The big question is whether <code>MapFunc</code> and <code>FilterFunc</code> become standard. They have not been added to the <code>slices</code> package - presumably because iterators were coming - though <code>DeleteFunc</code> already managed to sneak in. Just imagine Python without comprehensions; <code>map</code> and <code>filter</code> would be ubiquitous.</p>
-<section class="level2" id="sort-keys">
-<h2 class="anchored">Sort keys</h2>
-<p>A related area of convergence is comparison functions. Go uses ternary <a href="https://pkg.go.dev/cmp">cmp</a> functions, and Python <a href="https://docs.python.org/3/library/functools.html#functools.cmp_to_key">used to</a>. Collective Python experience has shown that while more general, a ternary comparison is rarely needed. Even more so with the ability to reverse and stably sort.</p>
-<p>Go does not have the equivalent of Python’s orderable tuples, so a ternary <code>cmp</code> will always have its place. Still, sorting by scalars is extremely common, and Go could add <a href="https://github.com/golang/go/issues/71238">key-based</a> ordering, with iterator support.</p>
-<p>Note bound and unbound methods are also first class functions. So models with a standard ordering or identifier could add methods for each. Then pass <code>(*Type).Compare</code> as a <code>cmp</code> function, and <code>(*Type).Key</code> as a key function. The readability of function parameters is even better when referenced by name instead of a <code>lambda</code>.</p>
-<p>The key function approach is also simpler and more efficient for <code>comparable</code> use cases. Utilities like <code>slices.CompareFunc</code> could be <code>iter.CompareBy</code> and not repeat logic.</p>
-</section>
-<section class="level2" id="sets">
-<h2 class="anchored">Sets</h2>
-<p>Go does not have a built-in <code>set</code> type. The options are to use a <code>map</code> explicitly, or via a library which wraps a <code>map</code> and ignores the values. The author’s <a href="https://pkg.go.dev/github.com/coady/iterset">iterset</a> package demonstrates that a Pythonic approach is now possible. Set operations require either O(1) lookup - which maps already support - or mere iteration. So a custom <code>map</code> type is useful for efficiency, but its methods can support <code>iter.Seq</code> instead, just as Python methods do. This is both more flexible and efficient in most cases.</p>
-<p>Take <code>IsSubset</code> as an example. The four interface choices have usage and performance trade-offs.</p>
-<ol type="1">
-<li><code>IsSubset(iter.Seq[K], iter.Seq[K])</code>: most flexible, has to convert right argument to #2</li>
-<li><code>IsSubset(iter.Seq[K], map[K]V))</code>: fast, zero-copy, and flexible</li>
-<li><code>IsSubset(map[K]V), iter.Seq[K]</code>: similar to #1, but converting the right argument may exit early and use less space</li>
-<li><code>IsSubset(map[K]V1), map[K]V2)</code>: similar to #2, but could exit early with a size check</li>
-</ol>
-<p>Without function overloads, designing the interface for all use cases is a challenge. But in no case is forcing the caller to convert both arguments to <code>map[K]struct{}</code> first an improvement.</p>
-</section>
-<section class="level2" id="conclusion">
-<h2 class="anchored">Conclusion</h2>
-<p>Go has just started to include iterator utilities like <code>slices.Sorted{Func}</code>. Iterators are going to have a transformative effect on readability.</p>
-
-
-</section>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 30, 2025 12:00 AM UTC by
-            <a href="https://coady.github.io/index.xml" class="link link-hover text-primary"
-              >Pythonicity</a
-            >
-          </div>
-          <a
-            href="https://coady.github.io/posts/go-iterators.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/bytesio-reduce-memory-usage/" class="hover:underline"
-              >The surprising way to save memory with BytesIO</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you need a file-like object that stores bytes in memory in Python, chances are you you’re using Pytho’s built-in <code class="language-plaintext highlighter-rouge">io.BytesIO()</code>.
-And since you’re already using an in-memory object, if your data is big enough you probably should try to save memory when reading that data back out.
-After all, it’s better not to have two copies of all the data in memory when only one will suffice.</p>
-
-<p>In this article we’ll cover:</p>
-
-<ul>
-  <li>A quick intro to <code class="language-plaintext highlighter-rouge">BytesIO</code>.</li>
-  <li>The memory usage impacts of <code class="language-plaintext highlighter-rouge">BytesIO.read()</code>.</li>
-  <li>The two alternatives for accessing <code class="language-plaintext highlighter-rouge">BytesIO</code> data efficiently, and the tradeoffs between them.</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/bytesio-reduce-memory-usage/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 30, 2025 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/bytesio-reduce-memory-usage/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2025/01/the-hatchery-program-at-pycon-us-2025.html" class="hover:underline"
-              >The Hatchery Program at PyCon US 2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>&nbsp;<span style="font-family: inherit;">We are pleased to announce the return of the Hatchery program in PyCon US 2025.</span></p><h2>What is the Hatchery program?</h2><p>This program offers the pathways for PyCon US attendees to introduce new tracks, activities, summits, demos, etc., at PyCon US—activities that all share and fulfill the&nbsp;<a href="https://www.python.org/psf/mission/" target="_blank">Python Software Foundation’s mission</a>&nbsp;within the PyCon US schedule.</p><p>The program began as a trial led by Ee Durbin and Naomi Ceder in 2018, resulting in the creation of several new tracks that are now staples of PyCon US, for example: PyCon US Charlas, Mentored Sprints, and Maintainer’s Summit.</p><p>With the Hatchery program, we want to provide the opportunity for you, the Python community members, to take active participation and lead new activities and events at PyCon US. We want to provide a transparent process for this, and we also want to ensure that every attendee, whether they are new to the community, or have been at the conference for the 10th time, have the equal opportunity to propose ideas for PyCon US.</p><h2 style="text-align: left;">What belongs in a Hatchery program</h2><p>PyCon US offers a wide range of events for the attendees to engage with the community during the conference. In addition to the talks, Charlas, keynotes, tutorials, posters, and lightning talks, at PyCon US we further support the Python community by hosting summits (e.g. The Python Language Summit, Education Summit), Sprints, and Open Spaces: one-hour meet ups in dedicated rooms throughout the conference. PyCon US also hosts other events like the PyLadies Luncheon, Members Lunch, and PyLadies Auction. We also offer community booths and Startup Row alongside the Sponsor Booths in the expo hall.</p><p>Despite all of the above, as conference organizers we still receive great, creative suggestions and ideas from the community for more things that they’d like to see at PyCon US. This is where the Hatchery program comes in.</p><p>If you have an idea for new and different kinds of events, activities, summits, or tracks at PyCon US, or things that do not fit in any of the existing talks, charlas, tutorials, and posters tracks, please propose that as a Hatchery.</p><p>A few examples of topics that have been accepted for the program (not a complete list, creativity is expressly encouraged):</p><p></p><ul><li><a href="https://us.pycon.org/2023/events/maintainers-summit/" target="_blank">Maintainers' Summit</a></li><li><a href="https://us.pycon.org/2020/hatchery/artofpython/" target="_blank">The Art of Python</a></li><li>Foreign language talk track (see the&nbsp;<a href="https://us.pycon.org/2020/speaking/charlas/" target="_blank">PyCon US Charlas</a>, the first track created in the hatchery, and now a part of PyCon US).</li><li>Scientific data summit</li><li><a href="https://us.pycon.org/2023/events/mentored-sprints/" target="_blank">Mentored Sprints</a></li></ul><p></p><p>See the <a href="http://us.pycon.org/2025/events/hatchery/" target="_blank">full guidelines and criteria</a> for proposals.</p><h2>Available spaces and time for the Hatchery Program</h2>We have allocated one room at the conference venue for Hatchery, and this room is available during the main conference days:&nbsp;<b>May 16th-18th</b>. The room will be configured in rounds with a capacity for<b>&nbsp;70 people and a projector.</b><br /><br />Each Hatchery session will have a time allotment of a half day (between 2-4 hours) so that two Hatchery Programs can take place each day. Your program does not have to fill the whole time allotment, however, If you do not believe that your program can take place within the time please tell us why when submitting your application.<p style="text-align: left;">You might also want to consider running all or part of your activity as an Open Space (no approval or advance application required) instead of a Hatchery event.</p><h2 style="text-align: left;">One-off events are still encouraged!</h2><p>We still want to focus on the experimental aspect of the hatchery program. There is no obligation to continue running your program going forward if you no longer have the bandwidth for it.</p><h2 style="text-align: left;">Rolling admission</h2><p>Proposal submissions for the&nbsp;<a href="http://us.pycon.org/2025/events/hatchery/">Hatchery Program</a>&nbsp;are open until&nbsp;<b>April 17, 2025, or until all the spaces have been filled.</b></p><p>We will be reviewing your ideas and proposals as they come in, and we will do our best to support and accommodate your request. We aim to give you a decision within 2 weeks, depending on the nature of your proposal. (i.e. if your proposal requires a more complicated room set up, we may need extra time to figure out the feasibility for that).</p><h2 style="text-align: left;">Graduation Criteria</h2>Due to limited spaces at PyCon US, accepted programs are not guaranteed a spot to return in the following years. We will evaluate the program based on the post-event report and attendee feedback.<br /><br />Previously accepted Hatchery organizers are requested to re-submit their program to the CFP so that we have up to date information about this year's organizing team and in case there is any changes to your program.<br /><h2>How to submit your Hatchery proposal?</h2><p>Please visit the&nbsp;<a href="http://us.pycon.org/2025/events/hatchery/" target="_blank">PyCon US 2025 Hatchery page</a>. Submissions are open through the&nbsp;<a href="https://pretalx.com/pycon-us-2025-hatchery-program/">PyCon US 2025 Hatchery CFP on Pretalx here</a>. Please note that Pretalx accounts used for the main conference PyCon US 2025 CFP will not be carried over; all submitters will be required to create a new account for the PyCon US 2025 Hatchery CFP.</p><p>Thank you. If you have any questions about the Hatchery, please get in touch with us,&nbsp;<a href="mailto:pycon-hatchery@python.org">pycon-hatchery@python.org</a>. The PyCon US Hatchery Committee members are: Elaine Wong, Jon Banafato, Mariatta Wijaya, and Naomi Ceder.</p><p><br /></p><p><br /></p><p><br /></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 29, 2025 07:30 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2025/01/the-hatchery-program-at-pycon-us-2025.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://ironpython-urls.blogspot.com/2025/01/in-memory-michael-foord-1974-2025.html" class="hover:underline"
-              >In memory: Michael Foord 1974-2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            I never met Michael in person, but we communicated online about all things Python. He was one of the most prolific contributors to this blog during the heyday of IronPython. If you use Python, chances are you've benefited from something Michael contributed to the ecosystem. I will miss you, "Fuzzyman."<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg6JEHaPgMH-va8UBJ6TkgVxqyQ9i90DYzDc92PL_BXglHVTUm1B6g2bE49Cfuk2bOYoB9bh2s5V6CELq5DFW0zBzNTK6uFsW3kIo4-w_0uRcaFWYeDqHw2jCKrLn-EA8zzg78HnvNHgwUeO21eac-FZzbS-ROn5H7o8fDU9X7d5kqjRDa3FPfEb__GMnA/s460/127179.jpg" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg6JEHaPgMH-va8UBJ6TkgVxqyQ9i90DYzDc92PL_BXglHVTUm1B6g2bE49Cfuk2bOYoB9bh2s5V6CELq5DFW0zBzNTK6uFsW3kIo4-w_0uRcaFWYeDqHw2jCKrLn-EA8zzg78HnvNHgwUeO21eac-FZzbS-ROn5H7o8fDU9X7d5kqjRDa3FPfEb__GMnA/s320/127179.jpg" width="320" /></a></div>
-<a href="https://discuss.python.org/t/in-memoriam-michael-foord-1974-2025/78317">In memoriam: Michael Foord</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 29, 2025 06:00 AM UTC by
-            <a href="http://ironpython-urls.blogspot.com/feeds/posts/default" class="link link-hover text-primary"
-              >IronPython-URLs</a
-            >
-          </div>
-          <a
-            href="http://ironpython-urls.blogspot.com/2025/01/in-memory-michael-foord-1974-2025.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/create-scalable-flask-web-app/" class="hover:underline"
-              >Creating a Scalable Flask Web Application From Scratch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this video course, you'll explore the process of creating a boilerplate for a Flask web project. It's a great starting point for any scalable Flask web app that you wish to develop in the future, from basic web pages to complex web applications.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 28, 2025 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/create-scalable-flask-web-app/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2025/01/startup-row-applications-open-2025.html" class="hover:underline"
-              >Applications for Free Booth Space on Startup Row at PyCon US 2025 Are Now Open</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Calling all startup founders and aspiring entrepreneurs: did you know that <a href="https://us.pycon.org/2025"><b>PyCon US</b></a> has been giving away free booth space to early-stage tech companies since 2011? Did you know that, since then, over 150 companies have gotten the opportunity to show off the cool stuff they’re building with Python? Would you have guessed that some of the most popular open source Python packages — Pandas, Plotly, and more — were developed by or spun out from companies that presented on Startup Row at PyCon US.<div><br /><div>Good news: <a href="https://us.pycon.org/2025/attend/startup-row/">Startup Row</a> applications are now open! But if you’re the action-oriented type who wants to skip all this reading and get straight to the point, here’s the <a href="https://us.pycon.org/2025/applications/apply/startup-row/">direct link to the application</a>. Applications close on March 14th, so don’t delay.</div><div><br /></div><div>That’s right. As you might have guessed from the name, Startup Row is its own corner of the PyCon US expo hall offering free booth space to early-stage tech companies. The objective of this program is to give startups the best of what PyCon US has to offer:<br /><ul style="text-align: left;"><li>Booth space on Startup Row in the Expo Hall on the evening of May 15th for the Opening Reception and on the main exhibit days May 16th and 17th, 2025.</li><li>Two conference passes (you’re welcome to stay for the post-conference sprints too); discounted passes for additional team members are available</li><li>Optional access to the PyCon US Job Fair on Sunday, May 18, 2025</li><li>Exclusive placement on the PyCon US website</li><li>Coverage on the PyCon US blog when we announce this year’s Startup Row batch</li><li>Eternal glory</li></ul></div><div>The only catch? To discourage no-shows, PyCon US organizers require a fully refundable $400 deposit to secure your spot, and teams must cover their own transportation, lodging, and booth decorations (banners, swag, table coverings, etc). Startup Row organizers will work closely with your team to ensure logistics run smoothly. After the conference, PyCon US organizers issue refunds of those deposits to all companies that attended.</div><div><br /></div><div>If your company is building something cool with Python, there’s likely no better place to share and connect with the Python software community than at PyCon US. Startup Row is where some companies first launch themselves to the public, where others have found their first customers and contributors, and where curious PyCon US attendees have found exciting, impactful job opportunities.</div><div><br /></div><div>To help you figure out if your company is a good fit for Startup Row, we’ve put together a quick set of FAQs.</div></div><h2 style="text-align: left;">Does my startup qualify?</h2>The goal of Startup Row is to give seed and early-stage companies access to the Python community. Here are the qualification criteria:<br /><ul style="text-align: left;"><li>Somewhat obviously: Python is used somewhere in your tech or business stack, the more of it the better!</li><li>Your startup is roughly 2.5 years or less at the time of applying. (If you had a major pivot or took awhile to get a product in the market, measure from there.)</li><li>You have 25 or fewer folks on the team, including founders, employees, and contractors.</li><li>You or your company will fund travel and accommodation to PyCon US 2025 in Pittsburgh, Pennsylvania. (There’s a helpful page on the PyCon US website <a href="https://us.pycon.org/2025/venue/hotels/">with venue and hotel information</a>.)</li><li>You haven’t already presented on Startup Row or sponsored a previous PyCon US. (If you applied before but weren’t accepted, or if you’re a Startup Row alumni founder working on something new, please do apply again!)</li></ul>There is a little bit of wiggle room. If your startup is more of a <i>fuzzy</i> rather than an exact match for these criteria, still consider applying.<br /><div><h2 style="text-align: left;">How do I apply?</h2>Assuming you’ve already <a href="https://us.pycon.org/2025/accounts/signup/">created a user account</a> on the PyCon US website, applying for Startup Row is easy.<br /><ol style="text-align: left;"><li>Make sure you’re <a href="https://us.pycon.org/2025/accounts/login/">logged in</a> on the PyCon US website.</li><li>Go to the Startup Row <a href="https://us.pycon.org/2025/applications/apply/startup-row/">application page</a> and submit your application by March 14th. (Note: It might be helpful to draft your answers in a separate document; the application form does not auto-save.)</li><li>Wait to hear back! Our goal is to notify folks about their application decision toward the end of March.</li></ol>Again, the application deadline is March 14, 2025 at 11:59 PM Eastern. Applications submitted after that deadline may not be considered.</div><h2 style="text-align: left;">Can I learn more about Startup Row?</h2>Absolutely. Check out the <a href="https://us.pycon.org/2025/attend/startup-row/">Startup Row page</a> for more details and testimonials from prior Startup Row participants. (There’s a link to the application there, too!)<br /><h2 style="text-align: left;">What kinds of companies get a spot on Startup Row?</h2>All sorts of companies have been featured on Startup Row over the years: software and hardware, consumer and enterprise, both open-source and entirely proprietary codebases, and representing a dizzying array of industries ranging from “usual suspects” like developer tooling and machine learning frameworks to foundation model developers and even more offbeat offerings like an e-ink portable typewriter with cloud sync or an online wedding-planning platform.<div><br /></div><div>To get a better idea of what a few of our recent batches looked like, check out announcements on the PyCon US blog from <a href="https://pycon.blogspot.com/2024/05/startup-row-pycon-us-2024.html">2024</a>, <a href="https://pycon.blogspot.com/2023/04/welcoming-7-companies-to-startup-row-at.html">2023</a>, and <a href="https://pycon.blogspot.com/2022/04/startup-row-2022-lineup-announcement.html">2022</a>.<br /><br />Members of the Startup Row selection committee are encouraged to consider the following factors when doing their scoring:<br /><ul style="text-align: left;"><li>The commercial opportunity of the venture. Can it be big?</li><li>The suitability of the company’s product or service to address the problem they’re aiming to solve</li><li>Credibility and capability of the founding team.</li><li>The “X factor”: How much could this venture benefit from being on Startup Row? Will being on Startup Row significantly “move the needle” for the company or the Python community?</li></ul>Startup Row’s success hinges on the quality of its applicant pool, and over the past 5 years especially, Startup Row batches have been particularly strong.<br /><ul style="text-align: left;"><li>Out of the 40 companies featured on SR since 2020, two of them are now valued at over $1 billion</li><li>This same population of companies, in the time after appearing on Startup Row, have raised at least $950M in venture capital funding (at time of writing)</li><li>Out of those 40 companies, 4 have been acquired by the likes of Databricks, Snowflake, Confluent, and Greylog.</li><li>Besides US-based companies, Startup Row participants have flown in from Mexico, Canada, Germany, and the United Kingdom, among other places</li></ul>Although many Startup Row companies are self-funded or barely out of an accelerator program like Y Combinator, many go on to raise capital from leading venture capital firms like Sequoia Capital, NEA, General Catalyst, True Ventures, and many, many others.<br /><br />We’re excited to keep up this momentum in 2025.<br /><h2 style="text-align: left;">Who do I contact with questions about Startup Row?</h2>First off, if you have questions about PyCon US in general, you can send an email to the PyCon US organizing team at pycon-reg@python.org. We’re always happy to help.<br /><br />For specific Startup Row-related questions, reach out to co-chair Jason D. Rowley via email at jdr [at] omg [dot] lol, or find some time in his calendar at calendly [dot] com [slash] jdr.<br /><h2 style="text-align: left;">Wait, what's that deadline again?</h2>Again, the application deadline is March 14, 2025 at 11:59PM Eastern.<br /><br />Good luck! We look forward to reviewing your application!</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 27, 2025 05:54 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2025/01/startup-row-applications-open-2025.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/418/im-a-tea-pot" class="hover:underline"
-              >#418 I'm a tea pot</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include In memoriam: Michael Foord 1974-2025, Valkey Replacement), 30 best practices for software development and testing, and mimetype.io.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 27, 2025 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/418/im-a-tea-pot"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/network-packet-broker-automation-python.html" class="hover:underline"
-              >Network packet brokers and automation in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/network-packet-broker-automation-python.html">Network packet brokers and automation in Python</a>
-</h1>
-<div class="article-meta">
-  2025-01-27, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p><img alt="What is a network packet broker and what does it do?" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/img/articles/network-packet-broker/what-is-a-network-packet-broker.png" /></p>
-<p>Packet brokers are crucial for network engineers, providing a clear, detailed view of network traffic,
-aiding in efficient issue identification and resolution.</p>
-<p>But what is a network packet broker (NBP) really? Why are they needed? And how to automate one in Python?</p>
-<p><strong>➤ Read this article about <a href="https://zato.io/articles/network-packet-broker.html">network packet brokers</a></strong> and their automation in Python to find out more.</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ <a href="https://zato.io/en/industry/telecom/index.html">Click here</a> to read more about using Python and Zato in telecommunications
-<br />
-➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 27, 2025 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/network-packet-broker-automation-python.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/236/" class="hover:underline"
-              >The Real Python Podcast – Episode #236: Simon Willison: Using LLMs for Python Development</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            What are the current large language model (LLM) tools you can use to develop Python? What prompting techniques and strategies produce better results? This week on the show, we speak with Simon Willison about his LLM research and his exploration of writing Python code with these rapidly evolving tools.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 24, 2025 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/236/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://lucumr.pocoo.org/2025/1/24/build-it-yourself" class="hover:underline"
-              >Build It Yourself</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Another day, another <a class="reference external" href="http://lucumr.pocoo.org/2016/3/24/open-source-trust-scaling/">rant</a>
-<a class="reference external" href="http://lucumr.pocoo.org/2022/1/10/dependency-risk-and-funding/">about</a> <a class="reference external" href="http://lucumr.pocoo.org/2024/3/26/rust-cdo/">dependencies</a>. from me.  This time I will ask you that we
-start and support a vibe shift when it comes to dependencies.</p>
-<p>You're probably familiar with the concept of “dependency churn.”  It's that
-never-ending treadmill of updates, patches, audits, and transitive
-dependencies that we as developers love to casually install in the name of
-productivity.  Who doesn't enjoy waiting for yet another <cite>cargo upgrade</cite>
-just so you can get that fix for a bug you don't even have?</p>
-<p>It's a plague in most ecosystems with good packaging solutions.
-JavaScript and Rust are particularly badly affected by that.  A brand new
-Tokio project drags in 28 crates, a new Rocket project balloons that to
-172, and a little template engine like MiniJinja can exist with just a
-single dependency — while its CLI variant slurps up 142.</p>
-<p>If that doesn't sound like a big deal, let's consider <a class="reference external" href="https://crates.io/crates/terminal_size">terminal_size</a>.  It is a crate that does
-exactly what its name suggests: it figures out your terminal dimensions.
-The underlying APIs it uses have effectively been stable since the earliest days of computing
-terminals—what, 50 years or so? And yet, for one function, terminal-size
-manages to introduce three or four additional crates, depending on your
-operating system.  That triggers a whole chain reaction, so you end up
-compiling thousands of other functions just to figure out if your terminal
-is 80x25 or 120x40.  That crate had 26 releases.  My own version of that
-that I have stuck away in a project from 10 years ago still works without
-a single update.  Because shocker: nothing about figuring out terminal
-sizes has changed.  <a class="footnote-reference" href="http://lucumr.pocoo.org/feed.atom#footnote-1" id="footnote-reference-1">[1]</a></p>
-<p>So why does <cite>terminal-size</cite> have so many updates if it's so stable?
-Because it's build on top of platform abstraction libraries that
-constantly churn, so it needs to update to avoid code duplication and
-blowing up compile times even more.</p>
-<p>But “big supply chain” will tell you that you must do it this way.  Don't
-you dare to copy paste that function into your library.  Or don't you date
-to use “unsafe” yourself.  You're not qualified enough to write unsafe
-code, let the platform abstraction architects do that.  Otherwise someone
-<a class="reference external" href="https://github.com/geiger-rs/cargo-geiger">will slap you</a>.  There are
-entire companies who are making a living of supplying you with the tools
-needed to deal with your dependency mess.  In the name of security, we're
-pushed to having dependencies and keeping them up to date, despite most of
-those dependencies being the primary source of security problems.</p>
-<p>The goal of code in many ways should be to be written in a way that it
-does not need updates.  It should eventually achieve some level of
-stability.  In the Rust ecosystem stable code is punished.  If you have a
-perfectly working dependency but you have a somewhat inactive bug tracker,
-RUSTSEC will come by and <a class="reference external" href="http://lucumr.pocoo.org/2024/3/26/rust-cdo/">give you a chunk rating</a>.</p>
-<p>But there <em>is</em> a simpler path.  You write code yourself.  Sure, it's more
-work up front, but once it's written, it's done. No new crates, no waiting
-for upsteam authors to fix that edge case.  If it's broken for you, you
-fix it yourself.  Code that works doesn't necessarily need the
-maintenance treadmill.  Your code has a corner case?  Who cares.  This is
-that vibe shift we need in the Rust world: celebrating fewer dependencies
-rather than more.</p>
-<p>We're at a point in the most ecosystems where pulling in libraries is not
-just the default action, it's seen positively: “Look how modular and
-composable my code is!”  Actually, it might just be a symptom of never
-wanting to type out more than a few lines.</p>
-<p>Now one will make the argument that it takes so much time to write all of
-this.  It's 2025 and it's faster for me to have ChatGPT or Cursor whip up
-a dependency free implementation of these common functions, than it is for
-me to start figuring out a dependency.  And it makes sense as for many
-such small functions the maintenance overhead is tiny and much lower than
-actually dealing with constant upgrading of dependencies.  The code is just
-a few lines and you also get the benefit of no longer need to compile
-thousands of lines of other people's code for a single function.</p>
-<p>But let's face it: corporate code review culture has also has infected
-Open Source software.  Companies are more likely to reward engineers than
-scold them for pulling in that new “shiny library” that solves the problem
-they never actually had.  That creates problems, so dependabot and friends
-were born.  Today I just dread getting dependabot pull requests but on
-projects but I have to accept it.  I'm part of an ecosystem with my stuff
-and that ecosystem is all about churn, churn, churn.  In companies you can
-also keep entire internal engineering teams busy with vendoring
-dependencies, internal audits and upgrading things throughout the company.</p>
-<p>Fighting this fight is incredibly hard!  Every new hire has been trained
-on the idea that dependencies are great, that code reuse is great.  That
-having old code sitting around is a sign of bad engineering culture.</p>
-<p>It's also hard to fight this in Open Source.  Years ago I wrote <a class="reference external" href="https://crates.io/crates/sha1_smol">sha1-smol</a> which originally was just called
-<cite>sha1</cite>.  It became the standard crate to calculate SHA1 hashes.
-Eventually I was pressured to donate that package name to rust-crypto and
-to depend on the rest of the crypto ecosystem as it was so established.
-If you want to use the new sha1 crate, you get to enjoy 10 dependencies.
-But there was just no way around it, because that name in the registry is
-precious and people also wanted to have trait compatibility.  It feels
-tiring to be the only person in a conversation pushing to keep the churn
-down and dependencies low.</p>
-<p>It's time to have a new perspective: we should give kudos to engineers who
-write a small function themselves instead of hooking in a transitive web
-of crates.  We should be suspicious of big crate graphs.  Celebrated are
-the minimal dependencies, the humble function that just quietly does the
-job, the code that doesn't need to be touched for years because it was
-done right once.</p>
-<p>And sure, it's not black and white.  There are the important libraries
-that solve hard problems.  Graphics libraries that abstract over complex
-drivers, implementations of protocols like HTTP and QUIC.  I won't be able
-to get rid of tokio and I have no desire to.  But when you end up using
-one function, but you compile hundreds, some alarm bell should go off.</p>
-<p>We need that vibe shift.  To celebrate building it yourself when it's
-appropriate to do so.  To give credit to library authors who build low to
-no-dependency Open Source libraries.</p>
-<p>For instance minijinja celebrates it in the readme:</p>
-<pre class="literal-block">
-$ cargo tree
-minimal v0.1.0 (examples/minimal)
-└── minijinja v2.6.0 (minijinja)
-    └── serde v1.0.144
-</pre>
-<p>And it has a PR to eventually <a class="reference external" href="https://github.com/mitsuhiko/minijinja/pull/539">get rid of the last dependency</a>.  And sometime this
-year I will make it my goal to go ahead proudly and trim down all that fat
-in my projects.</p>
-<table class="docutils footnote" frame="void" id="footnote-1" rules="none">
-<colgroup><col class="label" /><col /></colgroup>
-<tbody valign="top">
-<tr><td class="label"><a class="fn-backref" href="http://lucumr.pocoo.org/feed.atom#footnote-reference-1">[1]</a></td><td>Disclaimer: you will need one dependency for UNIX: <cite>libc</cite>.  That's
-because Rust does not expose the platform's libc constants to you, and
-they are not standarized.  That however is such a common and
-lightweight dependency that you won't be able to avoid it anyways.</td></tr>
-</tbody>
-</table>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 24, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="http://lucumr.pocoo.org/2025/1/24/build-it-yourself"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://labs.quansight.org/blog/libsf-error-state" class="hover:underline"
-              >libsf_error_state: SciPy's first shared library</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            The story of the first shared library to make it into the world of low level code that lies beneath SciPy's surface.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 24, 2025 12:00 AM UTC by
-            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
-              >Quansight Labs Blog</a
-            >
-          </div>
-          <a
-            href="https://labs.quansight.org/blog/libsf-error-state"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://testandcode.com/episodes/pytest-cov" class="hover:underline"
               >pytest-cov : The pytest plugin for measuring coverage</a
             >
@@ -808,6 +161,46 @@ lightweight dependency that you won't be able to avoid it anyways.</td></tr>
           </div>
           <a
             href="https://meejah.ca/blog/sending-a-file"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-time-series/" class="hover:underline"
+              >Anomaly Detection in Time Series</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            How do you identify unusual patterns in data that might reveal critical issues or hidden opportunities? Anomaly detection helps identify data that deviates significantly from the norm. Time series data, which consists of data collected over time, often includes trends and seasonal patterns. Anomalies in time series data occur when these patterns are disrupted, making [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 22, 2025 12:14 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-time-series/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1752,6 +1145,491 @@ frameworks, making it more accessible and convenient for everyone.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html" class="hover:underline"
+              >Dealing with egl_bad_alloc error for webkit</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <!--
+.. title: Dealing with egl_bad_alloc error for webkit
+.. slug: dealing-with-egl-bad-alloc-error-for-webkit
+.. date: 2025-01-18T08:43:01+01:00
+.. tags: Fedora, Python, WebKit, Gnome, GTK, Toga
+.. link:
+.. description:
+.. type: text
+-->
+<p>I was trying out some <a href="https://toga.readthedocs.io/en/stable/">Toga</a> examples,
+and for the webview I kept getting the following error and a blank screen.</p>
+<pre><code>Could not create EGL surfaceless context: EGL_BAD_ALLOC.
+</code></pre>
+<p>After many hours of searching I reduced the reproducer to a simple Python Gtk code.</p>
+<pre><code class="language-Python">import gi
+
+gi.require_version('Gtk', '3.0')
+gi.require_version('WebKit2', '4.0')
+
+from gi.repository import Gtk, WebKit2
+
+window = Gtk.Window()
+window.set_default_size(800, 600)
+window.connect(&quot;destroy&quot;, Gtk.main_quit)
+
+scrolled_window = Gtk.ScrolledWindow()
+webview = WebKit2.WebView()
+webview.load_uri(&quot;https://getfedora.org&quot;)
+scrolled_window.add(webview)
+
+window.add(scrolled_window)
+window.show_all()
+Gtk.main()
+</code></pre>
+<p>Finally I asked for help in #fedora IRC channel, within seconds <code>Khaytsus</code> gave me the fix:</p>
+<pre><code>WEBKIT_DISABLE_COMPOSITING_MODE=1 python g.py
+</code></pre>
+<p><img alt="working webview" src="https://kushaldas.in/images/fedora_webview.png" /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 18, 2025 07:43 AM UTC by
+            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
+              >Kushal Das</a
+            >
+          </div>
+          <a
+            href="https://kushaldas.in/posts/dealing-with-egl-bad-alloc-error-for-webkit.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html" class="hover:underline"
+              >Using (or really misusing) Path.resolve() in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&nbsp;</p><p>I just stumbled upon a code in Python that uses a simple `<b>Path(...).resolve()</b>`
+ after receiving a path in an API and suddenly reminded myself on the 
+many the bugs I've tripped over due to it, so, decided to share&nbsp; why I 
+hope at some point this function stops being so pervasive as it's 
+usually the wrong thing to call.. (maybe because when <b>Python </b>went from <b>os.path</b> to <b>pathlib </b>they added no real replacement and now you need to use both).</p><p>The main reason of bugs for that is that when you call <b>Path.resolve()</b> it'll actually resolve <b>symlinks </b>(and <b>substs on Windows</b>).<br /></p><p></p><p>This means that if the user crafted some structure as</p><p></p><blockquote><p>/myproject</p><p>/myproject/package.json</p><p>/myproject/src -&gt; symlink to sources in /allmysources/temp</p></blockquote><p></p><p>&nbsp;If you resolve `<b>/myproject/src/myfile.py</b>` to `<b>/allmysources/temp/myfile.py</b>` and actually want to get to the `<b>package.json</b>`, it'll never be found!</p><p>&nbsp;I was even looking at the python docs and found this nugget when talking about `<b>Path.parent</b>`:</p><p></p><p></p><blockquote><p>If you want to walk an arbitrary filesystem path upwards, it is
+recommended to first call <a class="reference internal" href="https://docs.python.org/3/library/pathlib.html#pathlib.Path.resolve" title="pathlib.Path.resolve"><code class="xref py py-meth docutils literal notranslate"><span class="pre">Path.resolve()</span></code></a> so as to resolve
+symlinks and eliminate <code class="docutils literal notranslate"><span class="pre">".."</span></code> components.</p></blockquote><p></p><p></p><p>And that's completely <b>why you shouldn't use it</b> because if you do, then the parents will be completely off!</p><p>So, what should you do?</p><p>Unfortunately <b>pathlib </b>is not your friend here, you need to use `<b>os.path.normpath(os.path.abspath(...))</b>` to remove `<b>..</b>` occurrences from the string and make it absolute (and then after, sure, use <b>pathlib </b>for
+ the remainder of your program) -- possibly you even want to get the 
+real case in the filesystem if you're on Windows (which is very annoying
+ as then you end up needing to do a bunch of <b>listdir()</b> calls to get the case stored in the filesystem).</p><p>&nbsp;--
+ but also, keep in mind you usually just need to do that on boundaries 
+(i.e.: when you receive a relative path as an argument in the command 
+line for instance, not when you receive an API call from another program
+ -- chances are, the <b>cwd </b>of that program and your own are different and thus <b>calls to `absolute()` or `resolve()` are actually bugs</b>).</p><p></p><p>But isn't there any use-case for `<b>Path.resolve()</b>`?</p><p>As
+ far as I know, the only case where it's valid is if you do want to 
+create a cache of sorts where any representation of that file is 
+considered the same (i.e.: you really want the canonical representation 
+of the file).&nbsp;</p><p>Say, in an IDE you opened your `<b>subst</b>` in `<b>x:</b>` and then you have `<b>c:\project\foo.py</b>` and `<b>x:\foo.py</b>`
+ in a debugger and you want to always show the version that's opened 
+under your IDE, you need to build that mapping so that regardless of the
+ version that's accessed you will open the version that's being seen in 
+your IDE (and oh my god, I've seen so many IDEs get that wrong and the 
+effect is usually you'll have the same file opened under different names
+ in the IDE -- I know that in the <b>pydevd debugger</b> this is especially tricky because the name of the file is gotten from a <b>.pyc</b>
+ file, which depends on how it was generated and the cached version may 
+not match the version that the user is currently seeing -- the&nbsp; debugger
+ goes through great lengths to have an internal canonical representation
+ and a different version which should be what the user sees, but it's 
+not perfect and IDEs which actually open the file afterwards don't make 
+the due diligence to try to do the proper mapping afterwards -- even 
+worse when they fail because the path is the same but the drive is 
+uppercase and internally the path they have has the drive in lowercase).</p><p>Maybe even then it'd be better to use the inode of the file for a reference (gotten from `<b>Path.stat()</b>`)...</p><p>Anyways, to sum up, in its current format, I'd just recommend to <b>ALMOST NEVER </b>use `<b>resolve()</b>` as it's usually just the source of bugs, keep to <b>`Path(os.path.normpath(os.path.abspath(...)))` </b>on
+ program boundaries as that's just saner in general (and when you want 
+to pass files among APIs, make sure paths are already absolute and 
+normalized and fail if they aren't).<b><br /></b></p><p>p.s.: just as a 
+disclaimer, I've also seen a very minor subset of users on Linux (just 
+one so far really, but maybe there are others that want that behavior 
+out there) that say they want the symlinks resolved as the created 
+structure they have is always final and the symlinks are just a 
+commodity to avoid having to cd into that structure so that they can 
+freely cd into symlinks (and as such they don't want to affect the 
+structure when they created symlinks), but I don't think this is the 
+most common behavior (and if it is, then programs probably need to have a
+ flag determining on whether to use it or not (for instance, I know vite
+ from javascript has a <span class="kY2IgmnCmOGjharHErah"><span><b>resolve.preserveSymlinks </b>setting
+ so that the user can decide if they want it or not) -- although it's 
+also true that most users don't even care, because they don't put their 
+source code in a symlink or Windows subst 😊<br /></span></span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 08:43 PM UTC by
+            <a href="http://pydev.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Fabio Zadrozny</a
+            >
+          </div>
+          <a
+            href="http://pydev.blogspot.com/2025/01/using-or-really-misusing-pathresolve-in.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/235/" class="hover:underline"
+              >The Real Python Podcast – Episode #235: Principles for Considering Your Python Tooling</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What are the principles you should consider when making decisions about which Python tools to use? What anti-patterns get in the way of making the right choices for your team? Christopher Trudeau is back on the show this week, bringing another batch of PyCoder's Weekly articles and projects.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/235/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/videos/building-saas-with-python-and-django-212/" class="hover:underline"
+              >Building SaaS with Python and Django #212.2</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, we continued on the sign up workflow simplification. The focus of this stream was on adding the background task that will send the magic link email to allow sign in. This is the second half of the stream because my internet cut out.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/videos/building-saas-with-python-and-django-212/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/videos/signin-email-building-saas-212/" class="hover:underline"
+              >Signin Email - Building SaaS #212.1</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, we continued on the sign up workflow simplification. The focus of this stream was on adding the background task that will send the magic link email to allow sign in.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 17, 2025 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/videos/signin-email-building-saas-212/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-machine-learning/" class="hover:underline"
+              >Anomaly Detection in Machine Learning Using Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In recent years, many of our applications have been driven by the high volume of data that we are able to collect and process. Some may refer to us being in the age of data. One of the essential aspects of handling such a large amount of data is anomaly detection – processes that enable [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 16, 2025 10:08 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/01/anomaly-detection-in-machine-learning/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testdriven.io/blog/django-db-indexing/" class="hover:underline"
+              >Database Indexing in Django</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This article explores the basics of database indexing, its advantages and disadvantages, and how to apply it in a Django application.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 15, 2025 10:28 PM UTC by
+            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
+              >TestDriven.io</a
+            >
+          </div>
+          <a
+            href="https://testdriven.io/blog/django-db-indexing/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://holdenweb.blogspot.com/2025/01/i-want-toang-some-heads-together.html" class="hover:underline"
+              >I want to bang some heads together!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&nbsp;It's frustrating when useful tools refuse to work together nicely. In the past I've experienced conflicts between <span style="font-family: courier;">black</span> and <span style="font-family: courier;">flake8</span> that made it impossible to commit via my default commit hooks. Now I'm seeing the same behaviour with <span style="font-family: courier;">black</span> and <span style="font-family: courier;">reorder-python-imports</span>.</p><p>In short, almost a year ago now github user <b>maxwell-k</b>&nbsp;<a href="https://github.com/psf/black/issues/4175" target="_blank">reported</a> that <span style="font-family: courier;">black</span> release 24.1.0 had introduced an incompatibility with&nbsp;<span style="font-family: courier;">reorder-python-imports</span>&nbsp;by starting to require a blank line after a module docstring. In the discussion on the bug report the <span style="font-family: courier;">black</span> crew make the reasonable-seeming point that it's <span style="font-family: courier;">black</span>'s job to determine the disposition of whitespace, and that <span style="font-family: courier;">reorder-python-imports</span> should do what its name implies and nothing more. This would respect the long-standing Unix tradition that each tool should as far as possible perform a single function.</p><p>Unfortunately, when <b>elagil</b>&nbsp;raised the same issue with the&nbsp;<span style="font-family: courier;">reorder-python-imports</span>&nbsp;developers, with a request to make their project usable with black (ably supported by <b>maxwell-k</b>), they received a <a href="https://github.com/asottile/reorder-python-imports/issues/366#issuecomment-1912219570">response</a> which I can only (avoiding the use of expletives) describe as disappointing:</p><blockquote><p><span style="background-color: white; color: #1f2328; font-size: 14px;"><span style="font-family: courier;">anything is possible. will it happen here: no</span></span></p></blockquote><p>In my opinion this uncompromising attitude displays the worst kind of arrogance from a developer, and I frankly fail to see who benefits from this refusal to bend (except perhaps a developer unwilling to work further on a project or set it free). The net consequence from my own point of view is that I'll no longer be using reorder-python-imports, nor recommending it.</p><p>The situation remains unchanged. Life's too short to persuade donkeys to move. On the plus side, research into solving this irritation led me to start working with <span style="font-family: courier;">ruff</span>, which provides the functionality of both utilities in a single rather faster tool. It's an ill wind that blows nobody any good. Goodbye, donkeys!</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 15, 2025 08:22 PM UTC by
+            <a href="http://holdenweb.blogspot.com/feeds/posts/default/-/python" class="link link-hover text-primary"
+              >Steve Holden</a
+            >
+          </div>
+          <a
+            href="http://holdenweb.blogspot.com/2025/01/i-want-toang-some-heads-together.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonshow.com/p/52-pytorch-and-llms-with-daniel-voigt" class="hover:underline"
+              >52 - PyTorch and LLMs with Daniel Voigt Godoy</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In today&#8217;s podcast, we welcome Daniel Voigt Godoy to the show.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 15, 2025 05:23 PM UTC by
+            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
+              >The Python Show</a
+            >
+          </div>
+          <a
+            href="https://www.pythonshow.com/p/52-pytorch-and-llms-with-daniel-voigt"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.glyph.im/2025/01/small-pinpal-update.html" class="hover:underline"
+              >Small PINPal Update</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I made a new release of PINPal today and that made me want to remind
+you all about it.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 15, 2025 12:54 AM UTC by
+            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
+              >Glyph Lefkowitz</a
+            >
+          </div>
+          <a
+            href="https://blog.glyph.im/2025/01/small-pinpal-update.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1763,8 +1641,8 @@ frameworks, making it more accessible and convenient for everyone.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9022</a></li>
-    <li><a>Unique Feeds: 421</a></li>
+    <li><a>Total Entries: 8969</a></li>
+    <li><a>Unique Feeds: 419</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
