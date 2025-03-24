@@ -93,6 +93,140 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://lucumr.pocoo.org/2025/3/23/from-string" class="hover:underline"
+              >Bridging the Efficiency Gap Between FromStr and String</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Sometimes in Rust, you need to convert a string into a value of a specific
+type (for example, converting a string to an integer).</p>
+<p>For this, the standard library provides the rather useful <a class="reference external" href="https://doc.rust-lang.org/std/str/trait.FromStr.html">FromStr</a> trait.  In
+short, <cite>FromStr</cite> can convert from a <cite>&amp;str</cite> into a value of any compatible
+type.  If the conversion fails, an error value is returned.  It's
+unfortunately not guaranteed that this value is an actual <a class="reference external" href="https://doc.rust-lang.org/std/error/trait.Error.html">Error</a> type, but
+overall, the trait is pretty useful.</p>
+<p>It has however a drawback: it takes a <cite>&amp;str</cite> and not a
+<cite>String</cite> which makes it wasteful in situations where your input is a
+<cite>String</cite>.  This means that you will end up with a useless clone if do not
+actually need the conversion.  Why would you do that?  Well consider this
+type of API:</p>
+<div class="highlight"><pre><span></span><span class="kd">let</span><span class="w"> </span><span class="n">arg1</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="n">parser</span><span class="p">.</span><span class="n">next_value</span><span class="p">()</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+<span class="kd">let</span><span class="w"> </span><span class="n">arg2</span>: <span class="nb">String</span> <span class="o">=</span><span class="w"> </span><span class="n">parser</span><span class="p">.</span><span class="n">next_value</span><span class="p">()</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+<p>In such cases, having a conversion that works directly with <cite>String</cite> values
+would be helpful.  To solve this, we can introduce a new trait: <cite>FromString</cite>,
+which does the following:</p>
+<ul class="simple">
+<li>Converts from <cite>String</cite> to the target type.</li>
+<li>If converting from <cite>String</cite> to <cite>String</cite>, bypass the regular logic and make it a no-op.</li>
+<li>Implement this trait for all uses of <cite>FromStr</cite> that return a error that
+can be converted into <cite>Box&lt;dyn Error&gt;</cite> upon failure.</li>
+</ul>
+<p>We start by defining a type alias for our error:</p>
+<div class="highlight"><pre><span></span><span class="k">pub</span><span class="w"> </span><span class="k">type</span> <span class="nc">Error</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Send</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">Sync</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="o">&gt;</span><span class="p">;</span><span class="w"></span>
+</pre></div>
+<p>You can be more creative here if you want.  The benefit of using this
+directly is that a lot of types can be converted into that error, even if
+they are not errors themselves.  For instance a <cite>FromStr</cite> that returns a
+bare <cite>String</cite> as error can leverage the standard library's blanket
+conversion implementation to <cite>Error</cite>.</p>
+<p>Then we define the <cite>FromString</cite> trait:</p>
+<div class="highlight"><pre><span></span><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">FromString</span>: <span class="nb">Sized</span> <span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="k">fn</span> <span class="nf">from_string</span><span class="p">(</span><span class="n">s</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;</span><span class="p">;</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+<p>To implement it, we provide a blanket implementation for all types that
+implement <cite>FromStr</cite>, where the error can be converted into our boxed
+error.  As mentioned before, this even works for <cite>FromStr</cite> where <cite>Err:
+String</cite>.  We also add a special case for when the input and output types
+are both <cite>String</cite>, using <cite>transmute_copy</cite> to avoid a clone:</p>
+<div class="highlight"><pre><span></span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">any</span>::<span class="n">TypeId</span><span class="p">;</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">mem</span>::<span class="p">{</span><span class="n">ManuallyDrop</span><span class="p">,</span><span class="w"> </span><span class="n">transmute_copy</span><span class="p">};</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="kt">str</span>::<span class="n">FromStr</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">impl</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="w"> </span><span class="n">FromString</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">T</span><span class="w"></span>
+<span class="k">where</span><span class="w"></span>
+<span class="w">    </span><span class="n">T</span>: <span class="nc">FromStr</span><span class="o">&lt;</span><span class="nb">Err</span>: <span class="nb">Into</span><span class="o">&lt;</span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="o">'</span><span class="nb">static</span><span class="p">,</span><span class="w"></span>
+<span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="k">fn</span> <span class="nf">from_string</span><span class="p">(</span><span class="n">s</span>: <span class="nb">String</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="bp">Self</span><span class="p">,</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">TypeId</span>::<span class="n">of</span>::<span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="n">TypeId</span>::<span class="n">of</span>::<span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="nb">Ok</span><span class="p">(</span><span class="k">unsafe</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">transmute_copy</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ManuallyDrop</span>::<span class="n">new</span><span class="p">(</span><span class="n">s</span><span class="p">))</span><span class="w"> </span><span class="p">})</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="n">T</span>::<span class="n">from_str</span><span class="p">(</span><span class="o">&amp;</span><span class="n">s</span><span class="p">).</span><span class="n">map_err</span><span class="p">(</span><span class="nb">Into</span>::<span class="n">into</span><span class="p">)</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+<p>Why <a class="reference external" href="https://doc.rust-lang.org/std/mem/fn.transmute_copy.html">transmute_copy</a>?  We use it
+instead of the regular <a class="reference external" href="https://doc.rust-lang.org/std/mem/fn.transmute.html">transmute</a>?  because Rust
+requires both types to have a known size at compile time for transmute to
+work.  Due to limitations a generic <cite>T</cite> has an unknown size which would
+cause a hypothetical <cite>transmute</cite> call to fail with a compile time error.
+There is nightly-only <a class="reference external" href="https://doc.rust-lang.org/std/intrinsics/fn.transmute_unchecked.html">transmute_unchecked</a>
+which does not have that issue, but sadly we cannot use it.  Another, even
+nicer solution, would be to have specialization, but sadly that is not
+stable either.  It would avoid the use of <cite>unsafe</cite> though.</p>
+<p>We can also add a helper function to make calling this trait easier:</p>
+<div class="highlight"><pre><span></span><span class="k">pub</span><span class="w"> </span><span class="k">fn</span> <span class="nf">from_string</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">S</span><span class="o">&gt;</span><span class="p">(</span><span class="n">s</span>: <span class="nc">S</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;</span><span class="w"></span>
+<span class="k">where</span><span class="w"></span>
+<span class="w">    </span><span class="n">T</span>: <span class="nc">FromString</span><span class="p">,</span><span class="w"></span>
+<span class="w">    </span><span class="n">S</span>: <span class="nb">Into</span><span class="o">&lt;</span><span class="nb">String</span><span class="o">&gt;</span><span class="p">,</span><span class="w"></span>
+<span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="n">FromString</span>::<span class="n">from_string</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">into</span><span class="p">())</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</pre></div>
+<p>The <cite>Into</cite> might be a bit ridiculous here (isn't the whole point not to
+clone?), but it makes it easy to test this with static string literals.</p>
+<p>Finally here is an example of how to use this:</p>
+<div class="highlight"><pre><span></span><span class="kd">let</span><span class="w"> </span><span class="n">s</span>: <span class="nb">String</span> <span class="o">=</span><span class="w"> </span><span class="n">from_string</span><span class="p">(</span><span class="s">&quot;Hello World&quot;</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+<span class="kd">let</span><span class="w"> </span><span class="n">i</span>: <span class="kt">i64</span> <span class="o">=</span><span class="w"> </span><span class="n">from_string</span><span class="p">(</span><span class="s">&quot;42&quot;</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+</pre></div>
+<p>Hopefully, this utility is useful in your own codebase when wanting to
+abstract over string conversions.</p>
+<p>If you need it exactly as implemented, I also published it as a <a class="reference external" href="https://crates.io/crates/from-string">simple
+crate</a>.</p>
+<hr class="docutils" />
+<p><strong>Postscriptum:</strong></p>
+<p>A big thank-you goes to David Tolnay and a few others who <a class="reference external" href="https://x.com/davidtolnay/status/1903888625802322195">pointed out</a> that this can be
+done with <cite>transmute_copy</cite>.</p>
+<p>Another note: <cite>TypeId::of</cite> call requires <cite>V</cite> to be <cite>'static</cite>.  This is
+okay for this use, but there are some hypothetical cases where this is not
+helpful.  In that case there is the excellent <a class="reference external" href="https://crates.io/crates/typeid">typeid</a> crate which provides a <cite>ConstTypeId</cite>,
+which is like <cite>TypeId</cite> but is constructible in const in stable Rust.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2025 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="http://lucumr.pocoo.org/2025/3/23/from-string"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://eli.thegreenplace.net/2025/understanding-numpys-einsum/" class="hover:underline"
               >Understanding Numpy's einsum</a
             >
@@ -1463,46 +1597,6 @@ on when I have the time and motivation.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/langgraph-python/" class="hover:underline"
-              >Quiz: LangGraph: Build Stateful AI Agents in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Take this quiz to test your understanding of LangGraph, a Python library designed for stateful, cyclic, and multi-actor Large Language Model (LLM) applications. By working through this quiz, you'll revisit how to build LLM workflows and agents in LangGraph.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 17, 2025 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/langgraph-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1514,8 +1608,8 @@ on when I have the time and motivation.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8951</a></li>
-    <li><a>Unique Feeds: 419</a></li>
+    <li><a>Total Entries: 8995</a></li>
+    <li><a>Unique Feeds: 422</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
