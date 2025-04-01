@@ -53,6 +53,611 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/tutorials/multithreading-pyside6-applications-qthreadpool/" class="hover:underline"
+              >Multithreading PySide6 applications with QThreadPool — Run background tasks concurrently without impacting your UI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>A common problem when building Python GUI applications is the interface "locking up" when attempting to perform long-running background tasks. In this tutorial, we'll cover quick ways to achieve concurrent execution in PySide6.</p>
+<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  If you'd like to run external programs (such as command-line utilities) from your applications, check out the <a href="/qprocess-external-programs">Using <code>QProcess</code> to run external programs</a> tutorial.</p>
+<div class="toc"><span class="toctitle">Table of Contents</span><ul>
+<li><a href="#background-the-frozen-gui-issue">Background: The frozen GUI issue</a></li>
+<li><a href="#preparation-a-minimal-stub-app">Preparation: A minimal stub app</a></li>
+<li><a href="#the-wrong-approach">The wrong approach</a></li>
+<li><a href="#use-threads-and-processes">Use threads and processes</a><ul>
+<li><a href="#qrunnable-and-the-qthreadpool">QRunnable and the QThreadPool</a></li>
+<li><a href="#improved-qrunnable">Improved QRunnable</a></li>
+</ul>
+</li>
+<li><a href="#thread-inputoutput">Thread Input/Output</a></li>
+<li><a href="#the-complete-code">The complete code</a></li>
+<li><a href="#caveats">Caveats</a></li>
+</ul>
+</div>
+<h2 id="background-the-frozen-gui-issue">Background: The frozen GUI issue</h2>
+<p>Applications based on Qt (like most GUI applications) are based on <em>events</em>. This means that execution is driven in response to user interaction, signals, and timers. In an event-driven application, clicking a button creates an <em>event</em> that your application subsequently <em>handles</em> to produce some expected output. Events are pushed onto and taken off an event queue and processed sequentially.</p>
+<p>In PySide6, we create an app with the following code:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">app = QApplication([])
+window = MainWindow()
+app.exec()
+</code></pre>
+</div>
+<p>The event loop starts when you call <code>.exec()</code> on the <code>QApplication</code> object and runs within the same thread as your Python code. The thread that runs this event loop &mdash; commonly referred to as the <em>GUI thread</em> &mdash; also handles all window communication with the host operating system.</p>
+<p>By default, any execution triggered by the event loop will also run synchronously within this thread. In practice, this means that the time your PySide6 application spends <em>doing something</em>, the communication with the window and the interaction with the GUI are frozen.</p>
+<p>If what you're doing is simple, and it returns control to the GUI loop quickly, the GUI freeze will be imperceptible to the user. However, if you need to perform <em>longer-running tasks</em>, for example, opening and writing a large file, downloading some data, or rendering a high-resolution image, there are going to be problems.</p>
+<p>To your user, the application will appear to be unresponsive (because it is). Because your app is no longer communicating with the OS, on macOS, if you click on your app, you will see the spinning wheel of death. And, <em>nobody</em> wants that.</p>
+<p>The solution is to move your long-running tasks out of the GUI thread into another thread. PySide6 provides a straightforward interface for this.</p>
+<h2 id="preparation-a-minimal-stub-app">Preparation: A minimal stub app</h2>
+<p>To demonstrate multi-threaded execution, we need an application to work with. Below is a minimal stub application for PySide6 that will allow us to demonstrate multithreading and see the outcome in action. Simply copy and paste this into a new file and save it with an appropriate filename, like <code>multithread.py</code>. The remainder of the code will be added to this file. There is also a complete working example at the bottom if you're impatient:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import time
+
+from PySide6.QtCore import (
+    QTimer,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+class MainWindow(QMainWindow):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter = 0
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Start")
+        button = QPushButton("DANGER!")
+        button.pressed.connect(self.oh_no)
+
+        layout.addWidget(self.label)
+        layout.addWidget(button)
+
+        w = QWidget()
+        w.setLayout(layout)
+        self.setCentralWidget(w)
+
+        self.show()
+
+        self.timer = QTimer()
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.recurring_timer)
+        self.timer.start()
+
+    def oh_no(self):
+        time.sleep(5)
+
+    def recurring_timer(self):
+        self.counter += 1
+        self.label.setText(f"Counter: {self.counter}")
+
+app = QApplication([])
+window = MainWindow()
+app.exec()
+</code></pre>
+</div>
+<p>Run the app as for any other Python application:</p>
+<div class="code-block">
+<span class="code-block-language code-block-sh">sh</span>
+<pre><code class="sh">$ python multithread.py
+</code></pre>
+</div>
+<p>You will see a demonstration window with a number counting upwards. This count is generated by a simple recurring timer, firing once per second. Think of this as our <em>event loop indicator</em> (or <em>GUI thread indicator</em>), a simple way to let us know that our application is ticking over normally. There is also a button with the word <em>"DANGER!</em>. Push it.</p>
+<p>
+<video height="500" loop="" preload="none" width="700">
+<source src="https://i.imgur.com/V87xUAo.mp4" type="video/mp4" />
+<source src="https://i.imgur.com/V87xUAo.webm" type="video/webm" />
+</video>
+</p>
+<p>You'll notice that each time you push the button, the counter stops ticking, and your application freezes entirely. On Windows, you may see the window turn pale, indicating it is not responding, while on macOS, you'll get the spinning wheel of death.</p>
+<h2 id="the-wrong-approach">The <em>wrong</em> approach</h2>
+<p class="admonition admonition-warning"><span class="admonition-kind"><i class="fas fa-exclamation-circle"></i></span>  Avoid doing this in your code.</p>
+<p>What appears as a <em>frozen</em> interface is the main Qt event loop being blocked from processing (and responding to) window events. Your clicks on the window are still registered by the host OS and sent to your application, but because it's sat in your big ol' lump of code (calling <code>time.sleep()</code>), it can't accept or react to them. They have to wait until your code passes control back to Qt.</p>
+<p>The quickest and perhaps most logical way to get around this issue is to accept events from within your code. This allows Qt to continue to respond to the host OS and your application will stay responsive. You can do this easily by using the static <code>processEvents()</code> method on the <code>QApplication</code> class.</p>
+<p>For example, our <em>long-running</em> code <code>time.sleep()</code> could be broken down into five 1-second sleeps and
+insert the <code>processEvents()</code> in between. The code for this would be:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def oh_no(self):
+    for n in range(5):
+        QApplication.processEvents()
+        time.sleep(1)
+</code></pre>
+</div>
+<p>Now, when you push the <em>DANGER!</em> button, your app runs as before. However, now <code>QApplication.processEvents()</code> intermittently passes control back to Qt, and allows it to respond to events as normal. Qt will then accept events <em>and handle them</em> before returning to run the remainder of your code.</p>
+<p>This approach works, but it's horrible for a few reasons, including the following:</p>
+<ol>
+<li>
+<p>When you pass control back to Qt, your code is no longer running. This means that whatever long-running task you're trying to do will take <em>longer</em>. That is definitely not what you want.</p>
+</li>
+<li>
+<p>When you have multiple long-running tasks within your application, with each calling <code>QApplication.processEvents()</code> to keep things ticking, your application's behavior can be unpredictable.</p>
+</li>
+<li>
+<p>Processing events outside the main event loop (<code>app.exec()</code>) causes your application to branch off into handling code (e.g. for triggered slots or events) while within your loop. If your code depends on or responds to an external state, then this can cause undefined behavior.</p>
+</li>
+</ol>
+<p>The code below demonstrates the last point in action:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import time
+
+from PySide6.QtCore import (
+    QTimer,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+class MainWindow(QMainWindow):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter = 0
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Start")
+        button = QPushButton("DANGER!")
+        button.pressed.connect(self.oh_no)
+
+        c = QPushButton("?")
+        c.pressed.connect(self.change_message)
+
+        layout.addWidget(self.label)
+        layout.addWidget(button)
+        layout.addWidget(c)
+
+        w = QWidget()
+        w.setLayout(layout)
+        self.setCentralWidget(w)
+
+        self.show()
+
+        self.timer = QTimer()
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.recurring_timer)
+        self.timer.start()
+
+    def change_message(self):
+        self.message = "OH NO"
+
+    def oh_no(self):
+        self.message = "Pressed"
+
+        for n in range(100):
+            time.sleep(0.1)
+            self.label.setText(self.message)
+            QApplication.processEvents()
+
+    def recurring_timer(self):
+        self.counter += 1
+        self.label.setText(f"Counter: {self.counter}")
+
+app = QApplication([])
+window = MainWindow()
+app.exec()
+</code></pre>
+</div>
+<p>If you run this code you'll see the counter as before. Pressing <em>DANGER!</em> will change the displayed text to <code>"Pressed"</code>, as defined at the entry point to the <code>oh_no()</code> method. However, if you press the <em>"?"</em> button while <code>oh_no()</code> is still running, you'll see that the message changes. The state is being changed from outside your event loop.</p>
+<h2 id="use-threads-and-processes">Use threads and processes</h2>
+<p>If you take a step back and think about what you want to happen in your application, then you can probably sum it up with "stuff to happen at the same time as other stuff happens".</p>
+<p>There are two main approaches to running independent tasks within a PySide6 application:</p>
+<ol>
+<li>Threads</li>
+<li>Processes</li>
+</ol>
+<p><strong>Threads</strong> share the same memory space, so they are quick to start up and consume minimal resources. The shared memory makes it trivial to pass data between threads. However, reading or writing memory from different threads can lead to race conditions or segfaults.</p>
+<p>In Python, there is the added issue that multiple threads are bound by the Global Interpreter Lock (GIL) &mdash; meaning non-GIL-releasing Python code can only execute in one thread at a time. However, this is not a major issue with PySide6, where most of the time is spent outside of Python.</p>
+<p><strong>Processes</strong> use separate memory space and an entirely separate Python interpreter. They sidestep any potential problems with Python's GIL but at the cost of slower start-up times, larger memory overhead, and complexity in sending and receiving data.</p>
+<p>Processes in Qt are well suited to running and communicating with external programs. However, for simplicity's sake, threads are usually the best choice unless you have a good reason to use processes (see <a href="#caveats">caveats</a> later).</p>
+<p>There is nothing stopping you from using pure Python threading or process-based approaches within your PySide6 application. In the following sections, though, you'll rely on Qt's threading classes.</p>
+<h3 id="qrunnable-and-the-qthreadpool"><code>QRunnable</code> and the <code>QThreadPool</code></h3>
+<p class="admonition admonition-tip"><span class="admonition-kind"><i class="fas fa-lightbulb"></i></span>  Favor this approach in your code.</p>
+<p>Qt provides a straightforward interface for running jobs or tasks in other threads, which is nicely supported in PySide6. This interface is built around two classes:</p>
+<ol>
+<li><code>QRunnable</code>: The container for the work you want to perform.</li>
+<li><code>QThreadPool</code>: The method by which you pass that work to alternate threads.</li>
+</ol>
+<p>The neat thing about using <code>QThreadPool</code> is that it handles queuing and executing workers for you. Other than queuing up jobs and retrieving the results, there is not much to do.</p>
+<p>To define a custom <code>QRunnable</code>, you can subclass the base <code>QRunnable</code> class. Then, place the code you wish you execute within the <code>run()</code> method. The following is an implementation of our long-running <code>time.sleep()</code> job as a <code>QRunnable</code>.</p>
+<p>Go ahead and add the following code to <code>multithread.py</code>, above the <code>MainWindow</code> class definition, and don't forget to import <code>QRunnable</code> and <code>Slot</code> from <code>PySide6.QtCore</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class Worker(QRunnable):
+    """Worker thread."""
+
+    @Slot()
+    def run(self):
+        """Your long-running job goes in this method."""
+        print("Thread start")
+        time.sleep(5)
+        print("Thread complete")
+</code></pre>
+</div>
+<p>Executing our long-running job in another thread is simply a matter of creating an instance of the <code>Worker</code> and passing it to our <code>QThreadPool</code> instance. It will be executed automatically.</p>
+<p>Next, import <code>QThreadPool</code> from <code>PySide6.QtCore</code> and add the following code to the <code>__init__()</code> method to set up our thread pool:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">self.threadpool = QThreadPool()
+thread_count = self.threadpool.maxThreadCount()
+print(f"Multithreading with maximum {thread_count} threads")
+</code></pre>
+</div>
+<p>Finally, update the <code>oh_no()</code> method as follows:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def oh_no(self):
+    worker = Worker()
+    self.threadpool.start(worker)
+</code></pre>
+</div>
+<p>Now, clicking the <em>DANGER!</em> button will create a worker to handle the (long-running) job and spin that off into another thread via thread pool. If there are not enough threads available to process incoming workers, they'll be queued and executed in order at a later time.</p>
+<p>Try it out, and you'll see that your application now handles you bashing the button with no problems.</p>
+<p>Check what happens if you hit the button multiple times. You should see your threads executed immediately <em>up to</em> the number reported by <code>maxThreadCount()</code>. If you press the button again after there are already this number of active workers, then the subsequent workers will be queued until a thread becomes available.</p>
+<h3 id="improved-qrunnable">Improved <code>QRunnable</code></h3>
+<p>If you want to pass custom data into the runner function, you can do so via <code>__init__()</code>, and then have access to the data via <code>self</code> from within the <code>run()</code> slot:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class Worker(QRunnable):
+    """Worker thread.
+
+    :param args: Arguments to make available to the run code
+    :param kwargs: Keywords arguments to make available to the run code
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.args = args
+        self.kwargs = kwargs
+
+    @Slot()
+    def run(self):
+        """Initialise the runner function with passed self.args, self.kwargs."""
+        print(self.args, self.kwargs)
+</code></pre>
+</div>
+<p>We can take advantage of the fact that Python functions are objects and pass in the function to execute rather than subclassing <code>QRunnable</code> for each runner function. In the following construction, we only require a single <code>Worker</code> class to handle all of our jobs:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class Worker(QRunnable):
+    """Worker thread.
+
+    Inherits from QRunnable to handler worker thread setup, signals and wrap-up.
+
+    :param callback: The function callback to run on this worker thread.
+                     Supplied args and kwargs will be passed through to the runner.
+    :type callback: function
+    :param args: Arguments to pass to the callback function
+    :param kwargs: Keywords to pass to the callback function
+    """
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    @Slot()
+    def run(self):
+        """Initialise the runner function with passed args, kwargs."""
+        self.fn(*self.args, **self.kwargs)
+</code></pre>
+</div>
+<p>You can now pass in any Python function and have it executed in a separate thread. Go ahead and update <code>MainWindow</code> with the following code:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def execute_this_fn(self):
+    print("Hello!")
+
+def oh_no(self):
+    # Pass the function to execute
+    worker = Worker(
+        self.execute_this_fn
+    )  # Any other args, kwargs are passed to the run function
+    # Execute
+    self.threadpool.start(worker)
+</code></pre>
+</div>
+<p>Now, when you click <em>DANGER!</em>, the app will print <code>Hello!</code> to your terminal without affecting the counter.</p>
+<h2 id="thread-inputoutput">Thread Input/Output</h2>
+<p>Sometimes, it's helpful to be able to pass back <em>state</em> and <em>data</em> from running workers. This could include the outcome of calculations, raised exceptions, or ongoing progress (maybe for progress bars). Qt provides the <em>signals and slots</em> framework to allow you to do just that. Qt's signals and slots are thread-safe, allowing safe communication directly from running threads to your GUI thread.</p>
+<p><em>Signals</em> allow you to emit values, which are then picked up elsewhere in your code by <em>slot</em> functions that have been linked with the <code>connect()</code> method.</p>
+<p>Below is a custom <code>WorkerSignals</code> class defined to contain a number of example signals. Note that custom signals can only be defined on objects derived from <code>QObject</code>. Since <code>QRunnable</code> is not derived from <code>QObject</code> we can't define the signals there directly. A custom <code>QObject</code> to hold the signals is a quick solution:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class WorkerSignals(QObject):
+    """Signals from a running worker thread.
+
+    finished
+        No data
+
+    error
+        tuple (exctype, value, traceback.format_exc())
+
+    result
+        object data returned from processing, anything
+    """
+
+    finished = Signal()
+    error = Signal(tuple)
+    result = Signal(object)
+</code></pre>
+</div>
+<p>In this code, we've defined three custom signals:</p>
+<ol>
+<li><code>finished</code>, which receives no data and is aimed to indicate when the task is complete.</li>
+<li><code>error</code>, which receives a <code>tuple</code> of <code>Exception</code> type, <code>Exception</code> value, and formatted traceback.</li>
+<li><code>result</code>, which receives any <code>object</code> type from the executed function.</li>
+</ol>
+<p>You may not find a need for all of these signals, but they are included to give an indication of what is possible. In the following code, we're going to implement a long-running task that makes use of these signals to provide useful information to the user:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class Worker(QRunnable):
+    """Worker thread.
+
+    Inherits from QRunnable to handler worker thread setup, signals and wrap-up.
+
+    :param callback: The function callback to run on this worker thread.
+                     Supplied args and
+                     kwargs will be passed through to the runner.
+    :type callback: function
+    :param args: Arguments to pass to the callback function
+    :param kwargs: Keywords to pass to the callback function
+    """
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+
+    @Slot()
+    def run(self):
+        """Initialise the runner function with passed args, kwargs."""
+
+        # Retrieve args/kwargs here; and fire processing using them
+        try:
+            result = self.fn(*self.args, **self.kwargs)
+        except Exception:
+            traceback.print_exc()
+            exctype, value = sys.exc_info()[:2]
+            self.signals.error.emit((exctype, value, traceback.format_exc()))
+        else:
+            self.signals.result.emit(result)  # Return the result of the processing
+        finally:
+            self.signals.finished.emit()  # Done
+</code></pre>
+</div>
+<p>You can connect your own handler functions to the signals to receive notification of completion (or the result) of threads:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def execute_this_fn(self):
+    for n in range(0, 5):
+        time.sleep(1)
+    return "Done."
+
+def print_output(self, s):
+    print(s)
+
+def thread_complete(self):
+    print("THREAD COMPLETE!")
+
+def oh_no(self):
+    # Pass the function to execute
+    worker = Worker(
+        self.execute_this_fn
+    ) # Any other args, kwargs are passed to the run function
+    worker.signals.result.connect(self.print_output)
+    worker.signals.finished.connect(self.thread_complete)
+    # Execute
+    self.threadpool.start(worker)
+</code></pre>
+</div>
+<p>You also often want to receive status information from long-running threads. This can be done by passing in <em>callbacks</em> to which your running code can send the information. You have two options here:</p>
+<ol>
+<li>Define new signals, allowing the handling to be performed using the event loop</li>
+<li>Use a regular Python function</li>
+</ol>
+<p>In both cases, you'll need to pass these callbacks into your target function to be able to use them. The signal-based approach is used in the completed code below, where we pass a <code>float</code> back as an indicator of the thread's % progress.</p>
+<h2 id="the-complete-code">The complete code</h2>
+<p>A complete working example is given below, showcasing the custom <code>QRunnable</code> worker together with the worker and progress signals. You should be able to easily adapt this code to any multithreaded application you develop:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+import traceback
+
+from PySide6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    QTimer,
+    Signal,
+    Slot,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+class WorkerSignals(QObject):
+    """Signals from a running worker thread.
+
+    finished
+        No data
+
+    error
+        tuple (exctype, value, traceback.format_exc())
+
+    result
+        object data returned from processing, anything
+
+    progress
+        float indicating % progress
+    """
+
+    finished = Signal()
+    error = Signal(tuple)
+    result = Signal(object)
+    progress = Signal(float)
+
+class Worker(QRunnable):
+    """Worker thread.
+
+    Inherits from QRunnable to handler worker thread setup, signals and wrap-up.
+
+    :param callback: The function callback to run on this worker thread.
+                     Supplied args and
+                     kwargs will be passed through to the runner.
+    :type callback: function
+    :param args: Arguments to pass to the callback function
+    :param kwargs: Keywords to pass to the callback function
+    """
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+        # Add the callback to our kwargs
+        self.kwargs["progress_callback"] = self.signals.progress
+
+    @Slot()
+    def run(self):
+        try:
+            result = self.fn(*self.args, **self.kwargs)
+        except Exception:
+            traceback.print_exc()
+            exctype, value = sys.exc_info()[:2]
+            self.signals.error.emit((exctype, value, traceback.format_exc()))
+        else:
+            self.signals.result.emit(result)
+        finally:
+            self.signals.finished.emit()
+
+class MainWindow(QMainWindow):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.counter = 0
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Start")
+        button = QPushButton("DANGER!")
+        button.pressed.connect(self.oh_no)
+
+        layout.addWidget(self.label)
+        layout.addWidget(button)
+
+        w = QWidget()
+        w.setLayout(layout)
+        self.setCentralWidget(w)
+
+        self.show()
+
+        self.threadpool = QThreadPool()
+        thread_count = self.threadpool.maxThreadCount()
+        print(f"Multithreading with maximum {thread_count} threads")
+
+        self.timer = QTimer()
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.recurring_timer)
+        self.timer.start()
+
+    def progress_fn(self, n):
+        print(f"{n:.1f}% done")
+
+    def execute_this_fn(self, progress_callback):
+        for n in range(0, 5):
+            time.sleep(1)
+            progress_callback.emit(n * 100 / 4)
+
+        return "Done."
+
+    def print_output(self, s):
+        print(s)
+
+    def thread_complete(self):
+        print("THREAD COMPLETE!")
+
+    def oh_no(self):
+        # Pass the function to execute
+        worker = Worker(
+            self.execute_this_fn
+        )  # Any other args, kwargs are passed to the run function
+        worker.signals.result.connect(self.print_output)
+        worker.signals.finished.connect(self.thread_complete)
+        worker.signals.progress.connect(self.progress_fn)
+        # Execute
+        self.threadpool.start(worker)
+
+    def recurring_timer(self):
+        self.counter += 1
+        self.label.setText(f"Counter: {self.counter}")
+
+app = QApplication([])
+window = MainWindow()
+app.exec()
+</code></pre>
+</div>
+<h2 id="caveats">Caveats</h2>
+<p>You may have spotted a slight flaw in this master plan&mdash;we are still using the event loop (and the GUI thread) to process our workers' output.</p>
+<p>This isn't a problem when we're simply tracking progress, completion, or returning metadata. However, if you have workers that return large amounts of data &mdash; e.g. loading large files, performing complex analysis and needing (large) results, or querying databases &mdash; passing this data back through the GUI thread may cause performance problems and is best avoided.</p>
+<p>Similarly, if your application uses a large number of threads and Python result handlers, you may come up against the limitations of the GIL. As mentioned previously, when using threads execution of Python code is limited to a single thread at a time. The Python code that handles signals from your threads can be blocked by your workers and the other way around. Since blocking your slot functions blocks the event loop, this can directly impact GUI responsiveness.</p>
+<p>In these cases, it is often better to investigate using a pure Python thread pool (e.g. concurrent futures) to keep your processing and thread-event handling further isolated from your GUI. However, note that <em>any</em> Python GUI code can block other Python code unless it's in a separate process.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 26, 2025 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/tutorials/multithreading-pyside6-applications-qthreadpool/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/674" class="hover:underline"
               >Issue #674: LangGraph, Marimo, Django Template Components, and More (March 25, 2025)</a
             >
@@ -964,379 +1569,6 @@ and use cases common in ML papers …</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://anarc.at/blog/2025-03-21-another-home-outage/" class="hover:underline"
-              >Minor outage at Teksavvy business</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This morning, internet was down at home. The last time I had such an
-issue was in <a href="https://anarc.at/blog/2023-02-08-major-outage/">February 2023</a>, when my
-provider was Oricom. Now I'm with a business service at Teksavvy
-Internet (TSI), in which I pay 100$ per month for a 250/50 mbps
-business package, with a static IP address, on which I run, well,
-everything: email services, this website, etc.</p>
-
-<h1 id="mitigation">Mitigation</h1>
-
-<h2 id="email">Email</h2>
-
-<p>The main problem when the service goes down like this for prolonged
-outages is email. Mail is pretty resilient to failures like this but
-after some delay (which varies according to the other end), mail
-starts to drop. I am actually not sure what the various settings are
-among different providers, but I would assume mail is typically kept
-for about 24h, so that's our mark.</p>
-
-<p>Last time, I setup VMs at Linode and Digital Ocean to deal better with
-this. I have actually kept those VMs running as DNS servers until now,
-so that part is already done.</p>
-
-<p>I had fantasized about Puppetizing the mail server configuration so
-that I could quickly spin up mail exchangers on those machines. But
-now I am realizing that my Puppet server is one of the service that's
-down, so this would not work, at least not unless the manifests can be
-applied without a Puppet server (say with <code>puppet apply</code>).</p>
-
-<p>Thankfully, my colleague groente did amazing work to refactor our
-Postfix configuration in Puppet at Tor, and that gave me the
-motivation to reproduce the setup in the lab. So I have finally
-Puppetized part of my mail setup at home. That used to be hand-crafted
-experimental stuff documented in a couple of pages in this wiki, but
-is now being deployed by Puppet.</p>
-
-<p>It's not complete yet: spam filtering (including DKIM checks and
-graylisting) are not implemented yet, but that's the next step,
-presumably to do during the next outage. The setup <em>should</em> be
-deployable with <code>puppet apply</code>, however, and I have refined that
-mechanism a little bit, with the <code>run</code> script.</p>
-
-<p>Heck, it's not even <em>deployed</em> yet. But the hard part / grunt work is
-done.</p>
-
-<h2 id="other">Other</h2>
-
-<p>The outage was "short" enough (5 hours) that I didn't take time to
-deploy the other mitigations I had deployed in the previous incident.</p>
-
-<p>But I'm starting to seriously consider deploying a web (and caching)
-reverse proxy so that I endure such problems more gracefully.</p>
-
-<h1 id="side-note-on-proper-servics">Side note on proper servics</h1>
-
-<p>Typically, I tend to think of a properly functioning service as having
-four things:</p>
-
-<ol>
-<li>backups</li>
-<li>documentation</li>
-<li>monitoring</li>
-<li>automation</li>
-<li>high availability</li>
-</ol>
-
-
-<p>Yes, I miscounted. This is why you have high availability.</p>
-
-<h2 id="backups">Backups</h2>
-
-<p>Duh. If data is maliciously or accidentally destroyed, you need a copy
-somewhere. Preferably in a way that malicious joe can't get to.</p>
-
-<p>This is harder than you think.</p>
-
-<h2 id="documentation">Documentation</h2>
-
-<p>I have an entire <a href="https://gitlab.torproject.org/tpo/tpa/wiki-replica/-/raw/master/service/template.md?ref_type=heads">template</a> for this. Essentially, it boils down to
-using <a href="https://diataxis.fr/">https://diataxis.fr/</a> and <a href="https://bluesock.org/~willkg/blog/dev/auditing_projects.html">this "audit" guide</a>. For me, the
-most important parts are:</p>
-
-<ul>
-<li>disaster recovery (includes backups, probably)</li>
-<li>playbook</li>
-<li>install/upgrade procedures (see automation)</li>
-</ul>
-
-
-<p>You probably know this is hard, and this is why you're not doing
-it. Do it anyways, you'll think it sucks, but you'll be really
-grateful for whatever scraps you wrote when you're in trouble.</p>
-
-<h2 id="monitoring">Monitoring</h2>
-
-<p>If you don't have monitoring, you'll know it fails too late, and you
-won't know it recovers. Consider high availability, work hard to
-reduce noise, and don't have machine wake people up, that's literally
-torture and is against the Geneva convention.</p>
-
-<p>Consider predictive algorithm to prevent failures, like "add storage
-within 2 weeks before this disk fills up".</p>
-
-<p>This is harder than you think.</p>
-
-<h2 id="automation">Automation</h2>
-
-<p>Make it easy to redeploy the service elsewhere.</p>
-
-<p>Yes, I know you have backups. That is not enough: that typically
-restores data and while it can also include configuration, you're
-going to need to change things when you restore, which is what
-automation (or call it "configuration management" if you will) will do
-for you anyways.</p>
-
-<p>This also means you can do unit tests on your configuration, otherwise
-you're building legacy.</p>
-
-<p>This is probably as hard as you think.</p>
-
-<h2 id="high-availability">High availability</h2>
-
-<p>Make it not fail when one part goes down.</p>
-
-<p>Eliminate single points of failures.</p>
-
-<p>This is easier than you think, except for storage and DNS (which, I
-guess, means it's harder than you think too).</p>
-
-<h2 id="assessment">Assessment</h2>
-
-<p>In the above 5 items, I check two:</p>
-
-<ol>
-<li>backups</li>
-<li>documentation</li>
-</ol>
-
-
-<p>And barely: I'm not happy about the offsite backups, and my
-documentation is much better at work than at home (and even there, I
-have a 15 year backlog to catchup on).</p>
-
-<p>I barely have monitoring: Prometheus is scraping parts of the infra,
-but I don't have any sort of alerting -- by which I don't mean
-"electrocute myself when something goes wrong", I mean "there's a set
-of thresholds and conditions that define an outage and I can look at
-it".</p>
-
-<p>Automation is wildly incomplete. My home server is a random collection
-of old experiments and technologies, ranging from Apache with Perl and
-CGI scripts to Docker containers running Golang applications. Most of
-it is not Puppetized (but the ratio is growing). Puppet itself
-introduces a huge attack vector with kind of catastrophic lateral
-movement if the Puppet server gets compromised.</p>
-
-<p>And, fundamentally, I am not sure I can provide high availability in
-the lab. I'm just this one guy running my home network, and I'm
-growing older. I'm thinking more about winding things down than
-building things now, and that's just really sad, because I feel
-<a href="https://anarc.at/blog/2025-03-21-losing-war-internet/">we're losing</a> (well that escalated
-quickly).</p>
-
-<h1 id="resolution">Resolution</h1>
-
-<p>In the end, I didn't need any mitigation and the problem fixed
-itself. I did do quite a bit of cleanup so that feels somewhat good,
-although I despaired quite a bit at the amount of technical debt I've
-accumulated in the lab.</p>
-
-<h1 id="timeline">Timeline</h1>
-
-<p>Times are in UTC-4.</p>
-
-<ul>
-<li>6:52: IRC bouncer goes offline</li>
-<li>9:20: called TSI support, waited on the line 15 minutes then was
-told I'd get a call back</li>
-<li>9:54: outage apparently detected by TSI</li>
-<li>11:00: no response, tried calling back support again</li>
-<li>11:10: confirmed bonding router outage, no official ETA but "today",
-source of the 9:54 timestamp above</li>
-<li>12:08: TPA monitoring notices service restored</li>
-<li>12:34: call back from TSI; service restored, problem was with the
-"bonder" configuration on their end, which was "fighting between
-Montréal and Toronto"</li>
-</ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 22, 2025 04:25 AM UTC by
-            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
-              >Anarcat</a
-            >
-          </div>
-          <a
-            href="https://anarc.at/blog/2025-03-21-another-home-outage/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://anarc.at/blog/2025-03-21-losing-war-internet/" class="hover:underline"
-              >Losing the war for the free internet</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Warning: this is a long ramble I wrote after an outage of my home
-internet. You'll get your regular scheduled programming shortly.</p>
-
-<p>I didn't realize this until relatively recently, but we're at war.</p>
-
-<p>Fascists and capitalists are trying to take over the world, and it's
-bringing utter chaos.</p>
-
-<p>We're more numerous than them, of course: this is only a handful of
-people screwing everyone else over, but they've accumulated so much
-wealth and media control that it's getting really, really hard to move
-around.</p>
-
-<p>Everything is surveilled: people are carrying tracking and recording
-devices in their pockets at all time, or they drive around in
-surveillance machines. Payments are all turning digital. There's
-cameras everywhere, including in cars. Personal data leaks are so
-common people kind of assume their personal address, email address,
-and other personal information <em>has</em> already been leaked.</p>
-
-<p>The internet itself is collapsing: most people are using the network
-only as a channel to reach a "small" set of "<a href="https://en.wikipedia.org/wiki/Hyperscale_computing">hyperscalers</a>":
-mind-boggingly large datacenters that don't really operate like the
-old internet. Once you reach the local endpoint, you're not on the
-internet anymore. Netflix, Google, Facebook (Instagram, Whatsapp,
-Messenger), Apple, Amazon, Microsoft (Outlook, Hotmail, etc), all
-those things are not really the internet anymore.</p>
-
-<p>Those companies operate over the "<a href="https://en.wikipedia.org/wiki/Internet">internet</a>" (as in the
-<a href="https://en.wikipedia.org/wiki/Internet_protocol_suite">TCP/IP</a> network), but they are not an "interconnected network" as
-much as their own, gigantic silos so much bigger than everything else
-that they essentially dictate how the network operates, regardless of
-standards. You access it over "the <a href="https://en.wikipedia.org/wiki/World_Wide_Web">web</a>" (as in "<a href="https://en.wikipedia.org/wiki/HTTP">HTTP</a>") but
-the fabric is not made of interconnected links that cross sites: all
-those sites are trying really hard to keep you captive on their
-platforms.</p>
-
-<p>Besides, you <em>think</em> you're writing an email to the state department,
-for example, but you're really writing to Microsoft Outlook. That app
-your university or border agency tells you to install, the backend is
-not hosted by those institutions, it's on Amazon. Heck, even Netflix
-is on Amazon.</p>
-
-<p>Meanwhile I've been operating my own mail server first under my bed
-(yes, really) and then in a cupboard or the basement for almost three
-decades now. And what for?</p>
-
-<p>So I can tell people I can? Maybe!</p>
-
-<p>I guess the reason I'm doing this is the same reason people are
-suddenly asking me about <a href="https://wiki.reseaulibre.ca/">the (dead) mesh</a> again. People are
-worried and scared that the world has been taken over, and they're
-right: we have gotten seriously screwed.</p>
-
-<p>It's the same reason I keep doing radio, minimally know how to grow
-food, ride a bike, build a shed, paddle a canoe, archive and document
-things, talk with people, host an assembly. Because, when push comes
-to shove, there's no one else who's going to do it for you, at least
-not the way that benefits the people.</p>
-
-<p>The Internet is one of humanity's greatest accomplishments. Obviously,
-oligarchs and fascists are trying to destroy it. I just didn't expect
-the tech bros to be flipping to that side so easily. I thought we were
-friends, but I guess we are, after all, enemies.</p>
-
-<p>That said, that old internet is still around. It's getting harder to
-host your own stuff at home, but it's not impossible. Mail is tricky
-because of reputation, but it's also tricky in the cloud (don't get
-fooled!), so it's not that much easier (or cheaper) there.</p>
-
-<p>So there's things you can do, if you're into tech.</p>
-
-<p>Share your wifi with your neighbours.</p>
-
-<p>Build a LAN. Throw a wire over to your neighbour too, it works better
-than wireless.</p>
-
-<p>Use <a href="https://www.torproject.org/">Tor</a>. <a href="https://community.torproject.org/relay/">Run a relay</a>, a <a href="https://snowflake.torproject.org/">snowflake</a>, a <a href="https://blog.torproject.org/call-for-webtunnel-bridges/">webtunnel</a>.</p>
-
-<p>Host a web server. Build a site with a static site generator and throw
-it in the wind.</p>
-
-<p>Download and share <a href="https://en.wikipedia.org/wiki/BitTorrent">torrents</a>, and why not a <a href="https://en.wikipedia.org/wiki/BitTorrent_tracker">tracker</a>.</p>
-
-<p>Run an <a href="https://en.wikipedia.org/wiki/IRC">IRC</a> server (or <a href="https://anarc.at/blog/2022-06-17-matrix-notes/">Matrix</a>, if
-you want to federate and lose high availability).</p>
-
-<p>At least use <a href="https://signal.org/">Signal</a>, not Whatsapp or Messenger.</p>
-
-<p>And yes, why not, run a mail server, join a mesh.</p>
-
-<p>Don't write new software, there's plenty of that around already.</p>
-
-<p>(Just kidding, you can write code, <a href="https://en.wikipedia.org/wiki/Cypherpunk">cypherpunk</a>.)</p>
-
-<p>You can do <em>many</em> of those things just by setting up a <a href="https://www.freedombox.org/">FreedomBox</a>.</p>
-
-<p>That is, after all, the internet: people doing their own thing for
-their own people.</p>
-
-<p>Otherwise, it's just like sitting in front of the television and
-watching the ads. Opium of the people, like the good old time.</p>
-
-<p>Let a billion droplets build the biggest multitude of clouds that will
-storm over this world and rip apart this fascist conspiracy.</p>
-
-<p>Disobey. Revolt. Build.</p>
-
-<p>We are more than them.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 22, 2025 04:25 AM UTC by
-            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
-              >Anarcat</a
-            >
-          </div>
-          <a
-            href="https://anarc.at/blog/2025-03-21-losing-war-internet/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/244/" class="hover:underline"
               >The Real Python Podcast – Episode #244: A Decade of Automating the Boring Stuff With Python</a
             >
@@ -1591,6 +1823,46 @@ get compensated for damages.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/langgraph-python/" class="hover:underline"
+              >LangGraph: Build Stateful AI Agents in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            LangGraph is a versatile Python library designed for stateful, cyclic, and multi-actor Large Language Model (LLM) applications. This tutorial will give you an overview of LangGraph fundamentals through hands-on examples, and the tools needed to build your own LLM workflows and agents in LangGraph.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 19, 2025 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/langgraph-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1602,7 +1874,7 @@ get compensated for damages.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8977</a></li>
+    <li><a>Total Entries: 8999</a></li>
     <li><a>Unique Feeds: 421</a></li>
     
 
