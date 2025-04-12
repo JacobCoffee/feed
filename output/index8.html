@@ -53,6 +53,238 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://lucumr.pocoo.org/2025/2/20/ugly-code" class="hover:underline"
+              >Ugly Code and Dumb Things</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This week I had a conversation with one of our engineers about “shitty
+code” which lead me to sharing with him one of my more unusual
+inspirations: <a class="reference external" href="https://github.com/exflickr/flamework/">Flamework</a>, a
+pseudo framework created at Flickr.</p>
+<div class="section" id="two-passions-two-approaches">
+<h2>Two Passions, Two Approaches</h2>
+<p>There are two driving passions in my work.  One is the love of creating
+beautiful, elegant code — making Open Source libraries and APIs that focus
+on clear design and reusability.  The other passion is building quick,
+pragmatic solutions for real users (who may not even be developers).  The
+latter usually in a setting of building a product, where the product is
+not the code.  Here, speed and iteration matter more than beautiful code
+or reusability, because success hinges on shipping something people want.</p>
+<p>Flamework is in service of the latter, and in crass violation of the
+former.</p>
+<p>Early on, I realized that creating reusable code and directly solving
+problems for users are often at odds.  My first clue came when I helped
+run the German
+<a class="reference external" href="https://www.ubuntuusers.de/">ubuntuusers</a> website.  It was powered by
+a heavily modified version of phpBB, which despite how messy it was,
+scaled to a large user base when patched properly.  It was messy, but easy
+to adjust.  The abstractions were one layer deep.</p>
+<p>Back then, me and a friend tried to replace it by writing my own bulletin
+board software, <a class="reference external" href="https://web.archive.org/web/20070502223619/http://flying.circus.pocoo.org/">Pocoo</a>.
+Working in isolation, without users, led me down a path of
+over-engineering.  While we learned a lot and ended up creating popular
+Open Source libraries (like Jinja, Werkzeug and Pygments), Pocoo never
+became a solid product.  Later, my collaborators and I <a class="reference external" href="https://github.com/inyokaproject/inyoka/">rebuilt
+ubuntuusers</a>, without the
+goal of making it into a reusable product.  That rewrite shipped
+successfully and it lives to this very day.</p>
+<p>But it took me years to fully realize what was happening here: reusability
+is not that important when you’re building an application, but it’s
+crucial when you’re building a library or framework.</p>
+</div>
+<div class="section" id="the-flickr-philosophy">
+<h2>The Flickr Philosophy</h2>
+<p>If you are unfamiliar with Flamework you should watch a talk that Cal
+Henderson gave in 2008 at DjangoCon (<a class="reference external" href="https://www.youtube.com/watch?v=i6Fr65PFqfk">Why I hate Django</a>).  He talked about scale
+and how Django didn't solve for it.  He enumerated all the things
+important to him: sharding, using custom sequences for primary keys,
+forgoing joins and foreign keys, supporting database replication setups,
+denormalizing data to the extreme.  This is also were I first learned
+about the possibility of putting all session data into cookies via
+signing.  It was a memorable talk for me because it showed me that there
+are shortcomings.  Django (which I used for ubuntuusers) had beautiful
+APIs but at the time solved for little of that Cal needed.  The talk
+really stuck with me.</p>
+<p>At the time of the talk, Flamework did not really exist.  It was more of
+an idea and principles of engineering at Flickr.</p>
+<p>A few years later, Flamework appeared on GitHub, not as an open-sourced
+piece of Flickr code but as a reimplementation of those same ideas.  You
+can explore its repository and see code like this:</p>
+<div class="highlight"><pre><span></span><span class="k">function</span> <span class="nf">_db_update</span><span class="p">(</span><span class="nv">$tbl</span><span class="p">,</span> <span class="nv">$hash</span><span class="p">,</span> <span class="nv">$where</span><span class="p">,</span> <span class="nv">$cluster</span><span class="p">,</span> <span class="nv">$shard</span><span class="p">){</span>
+    <span class="nv">$bits</span> <span class="o">=</span> <span class="k">array</span><span class="p">();</span>
+    <span class="k">foreach</span><span class="p">(</span><span class="nb">array_keys</span><span class="p">(</span><span class="nv">$hash</span><span class="p">)</span> <span class="k">as</span> <span class="nv">$k</span><span class="p">){</span>
+        <span class="nv">$bits</span><span class="p">[]</span> <span class="o">=</span> <span class="s2">&quot;`</span><span class="si">$k</span><span class="s2">`='</span><span class="si">$hash[$k]</span><span class="s2">'&quot;</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="nx">_db_write</span><span class="p">(</span><span class="s2">&quot;UPDATE </span><span class="si">$tbl</span><span class="s2"> SET &quot;</span><span class="o">.</span><span class="nb">implode</span><span class="p">(</span><span class="s1">', '</span><span class="p">,</span><span class="nv">$bits</span><span class="p">)</span><span class="o">.</span><span class="s2">&quot; WHERE </span><span class="si">$where</span><span class="s2">&quot;</span><span class="p">,</span> <span class="nv">$cluster</span><span class="p">,</span> <span class="nv">$shard</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+<p>Instinctively it makes me cringe.  Is that a SQL injection?  Well you were
+supposed to use the PHP <a class="reference external" href="https://www.php.net/manual/en/function.addslashes.php">addslashes</a> function
+beforehand.  But notice how it caters to sharding and clustering directly
+in the query function.</p>
+</div>
+<div class="section" id="messy-but-effective">
+<h2>Messy but Effective</h2>
+<p>Code like this often triggers a visceral reaction, especially in engineers
+who prize clean design.</p>
+<p>How does something like that get created?  Cal Henderson described
+Flickr's principle as “doing the dumbest possible thing that will work.”
+Maybe “dumb” is too strong — “simple” might be more apt.  Yet simplicity
+can look messy to someone expecting a meticulously engineered codebase.
+This is not at all uncommon and I have seen it over and over.  The first
+large commercial project that got traction that I ever worked on (<a class="reference external" href="https://en.wikipedia.org/wiki/Plurk">Plurk</a>) was also pretty pragmatic and
+messy inside.  My former colleague Ben Vinegar also <a class="reference external" href="https://benv.ca/blog/posts/the-hardest-problem">recently shared</a> a story of early,
+messy FreshBooks code and how he came to terms with it.  Same story at
+<a class="reference external" href="https://sentry.io/welcome">Sentry</a>.  We moved fast, we made a mess.</p>
+<p>None of this is surprising in retrospective.  Perfect code doesn't
+guarantee success if you haven't solved a real problem for real people.
+Pursuing elegance in a vacuum leads to abandoned side projects or
+frameworks nobody uses.  By contrast, clunky but functional code often
+comes with just the right compromises for quick iteration.  And that in
+turn means a lot of messy code powers products that people love —
+something that's a far bigger challenge.</p>
+</div>
+<div class="section" id="a-rorschach-test">
+<h2>A Rorschach Test</h2>
+<p>I have shown Flamework's code to multiple engineers over the years and it
+usually creates such a visceral response.  It blind sights one by
+seemingly disregarding all rules of good software engineering.</p>
+<p>That makes Flamework serve as a fascinating Rorschach test for engineers.
+Are you <a class="reference external" href="https://github.com/exflickr/flamework">looking at it</a> with
+admiration for the focus on some critical issues like scale, the built-in
+observability and debugging tools.  Or are you judging it, and its
+creators, for manually constructing SQL queries, using global variables,
+not using classes and looking like messy PHP4 code?  Is it a pragmatic
+tool, intentionally designed to iterate quickly at scale, or is it a naive
+mess made by unskilled developers?</p>
+<p>Would I use Flamework?  Hello no.  But I appreciate the priorities behind
+it.  If these ugly choices help you move faster, attract users and
+validate the product, then a rewrite, or large refactorings later are a
+small price to pay.</p>
+</div>
+<div class="section" id="a-question-of-balance">
+<h2>A Question of Balance</h2>
+<p>At the end of the day, where you stand on “shitty code” depends on your
+primary goal:</p>
+<ul class="simple">
+<li>Are you shipping a product and racing to meet user needs?</li>
+<li>Or are you building a reusable library or framework meant to stand the
+test of time?</li>
+</ul>
+<p>Both mindsets are valid, but they rarely coexist harmoniously in a single
+codebase.  Flamework is a reminder that messy, simple solutions can be
+powerful if they solve real problems.  Eventually, when the time is right,
+you can clean it up or rebuild from the ground up.</p>
+<p>The real challenge is deciding which route to take — and when.  Even with
+experience, it is can be hard to know when to move from quick fixes to
+more robust foundations.  The principles behind Flamework are also
+reflected in <a class="reference external" href="https://develop.sentry.dev/getting-started/philosophy/">Sentry's development philosophy</a>.  One more
+poignant one being “Embrace the Duct Tape”.  Yet as Sentry matured, much
+of our duct tape didn't stand the test of time, and was re-applied at
+moments when the real solution would have been a solid foundation poured
+with concrete.</p>
+<p>That's because successful projects eventually grow up.  What let you
+iterate fast in the beginning might eventually turn into an unmaintainable
+mess and will be rebuilt from the inside out.</p>
+<p>I personally would never have built Flamework, it repulses me a bit.  At the
+same time, I have a enormous respect for the people who build it.  Their
+work and thinking has shaped how I solve problems and think of product
+engineering.</p>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 20, 2025 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="http://lucumr.pocoo.org/2025/2/20/ugly-code"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2025/feb/19/django-52-beta-1-released/" class="hover:underline"
+              >Django 5.2 beta 1 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Django 5.2 beta 1 is now available. It represents the second stage in the 5.2
+release cycle and is an opportunity for you to try out the changes coming in
+Django 5.2.</p>
+<p>Django 5.2 brings a composite of new features which you can read about in
+<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.2/">the in-development 5.2 release notes</a>.</p>
+<p>Only bugs in new features and regressions from earlier versions of Django will
+be fixed between now and the 5.2 final release. Translations will be updated
+following the &quot;string freeze&quot;, which occurs when the release candidate is
+issued. The <a class="reference external" href="https://code.djangoproject.com/wiki/Version5.2Roadmap#schedule">current release schedule</a> calls for a
+release candidate in a month from now, and a final release to follow about two
+weeks after that, scheduled for April 2nd.</p>
+<p>Early and frequent testing from the community will help minimize the number of
+bugs in the release. Updates on the release schedule are available <a class="reference external" href="https://forum.djangoproject.com/t/django-5-2-release-status-and-next-steps/37131">on the
+Django forum</a>.</p>
+<p>As with all alpha and beta packages, this is <strong>not</strong> for production use. But if
+you'd like to take some of the new features for a spin, or to help find and fix
+bugs (which should be reported to <a class="reference external" href="https://code.djangoproject.com/newticket">the issue tracker</a>), you can grab a copy of the beta
+package from <a class="reference external" href="https://www.djangoproject.com/download/">our downloads page</a> or
+on PyPI.</p>
+<p>The PGP key ID used for this release is Sarah Boyce: <a class="reference external" href="https://github.com/sarahboyce.gpg">3955B19851EA96EF</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 19, 2025 07:55 AM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2025/feb/19/django-52-beta-1-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.holoviz.org/posts/lumen_ai_announcement/" class="hover:underline"
               >Lumen AI Announcement</a
             >
@@ -1244,333 +1476,6 @@ git config --global tag.gpgsign true
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.grulic.org.ar/~mdione/glob/posts/replacing-an-orm-with-sqlite-and-dataclasses/" class="hover:underline"
-              >Replacing an ORM with SQLite and dataclasses</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I started using Mastodon almost, what, two, three years ago, and ever since, especially
-at the beginning.
-I started having issues adapting to how declines work and how you actually should use the platform.
-And I listed several things that I didn't like, and I always thought that at some point
-I would just sit down and write my own client.
-So this weekend looked like it would rain all weekend, even though, well, now it's kind
-of sunny.
-So I actually sat down and started writing it.
-And any project that uses a database, I usually go for an ORM.
-And when I usually go for an ORM, I usually go for a Sculide, which is the one I have
-used in three or four projects so far.
-One of them I think is dead, but I think I use one or two, like, every week.
-And basically the idea is that I wrote that code once and have never, ever touched it
-again.
-But it's not the same having code written once and never touched, especially if you're
-using a library that is very conscious about backwards compatibility.
-But when you sit down and write new code, especially with libraries that you don't use
-so often, like I said, you just write it once and you completely forget about it, you have
-to read the documentation again.
-And it seems like SQLite, no, SQL Alchemy has had a big update.
-There's a new version 2.0, which has a very different, from my perspective, interface.
-The old version, what you used to do was, for instance, if you wanted to fetch an instance
-from the database, an instance from a class, that means just fetch a row from the table,
-you started doing a query starting from the table, from the class.
-So you did something like, for instance, you could do something like, for row in class,
-fetch them all, or something like that, and you would get all the objects in the database.
-But with the new version, they are using, like a re-implementation of the SQL language.
-So you take your session, and you do a select, and you add a where, and you add another by,
-and things like that.
-It's like writing SQL in Python, right?
-And in some ways, it makes a lot of sense, because one of the things people usually complain
-about our ends is that, at some point, because they can't really, when you're using the database,
-you are still thinking in SQL terms, it's just that way, okay?
-And when you try to make expressions in, let's say, the pattern language, in this case, Python,
-that will end up being complex selects in the database, complex queries in the database,
-you do a lot of effort trying to mimic that way of manipulating data in the SQL level,
-at the higher level, at the Python level.
-And at some point, they become really just very ugly.
-It's like you are bending yourself backwards just to try to kind of scratch your left ear
-using your right arms, but under your left and behind your bus.
-Well, at the end, it's just like, no, this is not the way.
-So, putting a slight veneer of Python on top of SQL kind of makes sense, and I like that
-someone has explored that idea to the point that it has become the new way of doing things.
-And with that, I mean, I guess the old API still works, again, all the code I had within
-so far still works, and I still use it still works, but the new way looks better.
-But then another thing that over and sometimes too, and in particular, SQL actually seems
-to do too, is to have two levels of data returned.
-You may have, you may get objects, which is basically you go and fetch stuff from the
-database and you get objects in return, and it's the objects you are thinking of in terms
-of your application model and not in terms of your tables and other stuff, which is amazing
-because you can do one-to-end and end-to-end relationships, and it's just natural, because
-let's say a person has several addresses, you just say person.addresses.add, and you
-add an address there, and it just works.
-You don't have to think about anything there, you just add stuff and it will go in the database.
-Before you have an end-to-end relationship and you can go from photos to tags and from
-tags to photos, and it just works, right?
-You just get, you fetch a tag and say, give me all the photos, and it just gives you the
-photos and you completely forget about the intermediary table, and that's just amazing.
-It just works and it's fantastic.
-Then there's the other API where you don't get objects, you just get data from the database.
-You get roles, you get tuples with data inside, which has no structure and anything else.
-After writing this Friday night, what I did in Friday night was mostly to look at the
-responses from a mastern, servers, see what they look like, and try to make data model
-based on that.
-I am not going to complete the model accounts or toots, because they have way more information
-than I want to, to display in my client, but that's all I did on Friday night.
-So the morning I started writing the model in SQL Alchemy, and it was just fine, just
-mapping JSON fields to tables and columns, and then to classes and objects and attributes.
-I started writing all the code and it was just fine, everything was kind of obvious in that
-sense.
-But at some point I hit a wall where I was going to, I was fetching all the, I was fetching
-accounts based on an ID, and instead of returning me objects, it was returning me tuples.
-So when I wanted to say, okay, I have a new toot, and this toot was tooted by this, toot
-or this account, if I don't know the account, I create a new one and then I create a toot
-with this new account, and I just push it to that list.
-But in the case of the account already existing and me getting a tuple instead of an object,
-when I was trying to say, okay, toot.author is this object, I was not putting an object,
-I was putting just a string of the ID, because that's all I had, that's all what the ORM
-was giving me.
-And of course later the ORM says, no, this doesn't work because I expect an object and
-you'll give me just an ID.
-And I spent like 24 hours on that, I mean, from Saturday afternoon to this morning, okay,
-not 24 hours, maybe like 10 hours on it.
-And asking everywhere and I didn't get a very good answer.
-So I just switched to SQLite 3.
-I just had to do it.
-So before my workflow was, if I needed to add a new column to a table, I only had to
-add a new attribute to the class and then destroy the database and create it again.
-One of the good decisions I did at the beginning was to store all the original information
-in raw, just getting the JSON and storing it in the database.
-So that means that if I make any changes to the data structure that I will use later,
-I can just read everything back from the database, create the new objects and save them in the
-database again.
-And this is something I could use to replace database structure migrations.
-I just nuke all the secondary tables and just create all the data again from scratch,
-yeah, from the original data.
-So I can do these migrations very easily now.
-So with SQL Alchemy, I could just drop the tables, create everything again and just
-feed, create all the objects again and that worked.
-But now I don't have that anymore.
-So what do I do?
-Well, my workflow now includes SQLite browser, which is a GUI application for creating, for
-manipulating SQLite files, right?
-And I just had to add a new column to the Tooth table, so I did just that in the GUI.
-And what I'm going to do at some point is to make a dump of the structure and keep it
-in a SQL file.
-So if I ever have to do this migration again, which I have to do at some point, I will just
-take that file, just executed it from scratch when I have to create the tables again and
-that's it.
-I will just do it that way.
-I really wish our, in this case, SQLite, SQL Alchemy would have been just transparent
-for me.
-But I guess that's exactly the kind of things people say about ORAMS, the type of criticism
-that ORAMS usually get, that 90% of the work is really transparent, but then at some point
-it is no longer so transparent and you start doing weird shit just to accomplish what you
-want.
-So what I'm going to do in the future, I'm not really sure.
-I will see how this raw SQLite works.
-This project is rather simple.
-I have very few tables, like I have two tables for the original raw content, one
-not 24 hours, maybe like 10 hours on it.
-And asking everywhere and I didn't get a very good answer.
-So I just switched to SQLite 3.
-I just had to do it.
-So before my workflow was, if I needed to add a new column to a table, I only had to
-add a new attribute to the class and then destroy the database and create it again.
-One of the good decisions I did at the beginning was to store all the original information
-in raw, just getting the JSON and storing it in the database.
-So that means that if I make any changes to the data structure that I will use later,
-I can just read everything back from the database, create the new objects and save them in the
-database again.
-And this is something I could use to replace database structure migrations.
-I just nuke all the secondary tables and just create all the data again from scratch,
-yeah, from the original data.
-So I can do these migrations very easily now.
-So with SQL Alchemy, I could just drop the tables, create everything again and just
-feed, create all the objects again and that worked.
-But now I don't have that anymore.
-So what do I do?
-Well, my workflow now includes SQLite browser, which is a GUI application for creating, for
-manipulating SQLite files, right?
-And I just had to add a new column to the Tooth table, so I did just that in the GUI.
-And what I'm going to do at some point is to make a dump of the structure and keep it
-in a SQL file.
-So if I ever have to do this migration again, which I have to do at some point, I will just
-take that file, just executed it from scratch when I have to create the tables again and
-that's it.
-I will just do it that way.
-I really wish our, in this case, SQLite, SQL Alchemy would have been just transparent
-for me.
-But I guess that's exactly the kind of things people say about ORAMS, the type of criticism
-that ORAMS usually get, that 90% of the work is really transparent, but then at some point
-it is no longer so transparent and you start doing weird shit just to accomplish what you
-want.
-So what I'm going to do in the future, I'm not really sure.
-I will see how this raw SQLite works.
-This project is rather simple.
-I have very few tables, like I have two tables for the original raw content, one for the
-actual raw content and one for the raw toot content.
-One of the things is when you boost another toot, you basically generate a toot that has
-a toot nested into it.
-So the original raw content includes all that information, but to me, for my client, the
-most important thing is the original toot itself.
-So I have another table that only has the original toots, not the boosters, and the
-client will just work from that.
-And then I have toots, tooters, and tacks so far.
-I'm not really sure if I will do a table with bookmarks and filters and all that shit, because
-those things usually stay on the server in your instance, and I should just query them
-all the time.
-Press also think of having an offline version where you can do stuff, and if you cannot
-send them immediately to the instance, you just queue them for later, for when you have
-a connection, or when you want to use a connection.
-So that's it.
-It's very, very simple data model.
-If this goes right, but later I have a more complex data model, I might try other over
-ends, especially simpler over ends that are less magic, a little bit more transparent,
-but yeah, we'll see when the time comes.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 10, 2025 10:08 PM UTC by
-            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
-              >Marcos Dione</a
-            >
-          </div>
-          <a
-            href="https://www.grulic.org.ar/~mdione/glob/posts/replacing-an-orm-with-sqlite-and-dataclasses/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/" class="hover:underline"
-              >Newlines and escape sequences in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Python allows us to represent newlines in strings using the <code>\n</code> "escape sequence" and Python uses line ending normalization when reading and writing with files.</p>
-
-
-<div>
-  
-    <a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F1977087207-0c74471d1dbc86bcf57a09f6e904a1675d7e8d9f7d286f62f34276e569301211-d_1920x1080&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#newline-characters" target="_blank">Newline characters</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#escape-sequences-in-python" target="_blank">Escape sequences in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#using-escape-sequences-to-avoid-syntax-errors" target="_blank">Using escape sequences to avoid syntax errors</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#whitespace-characters-in-python" target="_blank">Whitespace characters in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#carriage-returns" target="_blank">Carriage returns</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#the-history-of-line-endings" target="_blank">The history of line endings</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#newline-normalization-in-python" target="_blank">Newline normalization in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#writing-files-with-custom-line-endings" target="_blank">Writing files with custom line endings</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/#python-uses-n-to-represent-newline-characters" target="_blank">Python uses <code>\n</code> to represent newline characters</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Newline characters</h2>
-    
-      
-        <p>This string contains a newline character:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">text</span> <span class="o">=</span> <span class="s2">"Hello</span><span class="se">\n</span><span class="s2">world"</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">text</span>
-<span class="go">'Hello\nworld'</span>
-</code></pre></div>
-
-
-      
-        <p>That's what <code>\n</code> represents: a newline character.</p>
-
-      
-        <p>If we print this string, we'll see that <code>\n</code> becomes an <em>actual</em> newline:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="nb">print</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
-<span class="go">Hello</span>
-<span class="go">world</span>
-</code></pre></div>
-
-
-      
-        <p>Why does Python represent a newline as <code>\n</code>?</p>
-
-      
-    
-  
-    <h2>Escape sequences in Python</h2>
-    
-      <p>Every character in a Python …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/newlines-and-escape-sequences/" target="_blank">Read the full article: https://www.pythonmorsels.com/newlines-and-escape-sequences/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 10, 2025 03:17 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/newlines-and-escape-sequences/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1582,12 +1487,12 @@ but yeah, we'll see when the time comes.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9087</a></li>
-    <li><a>Unique Feeds: 423</a></li>
+    <li><a>Total Entries: 8724</a></li>
+    <li><a>Unique Feeds: 421</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://testandcode.com/rss">Talk Python to Me (499)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (427)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://testandcode.com/rss">Matt Layman (327)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (230)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://testandcode.com/rss">Talk Python to Me (499)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (427)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (424)</a></li><li><a href="http://testandcode.com/rss">Test and Code (230)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (212)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
