@@ -63,23 +63,23 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>So, you're doing some I‍/‍O bound stuff, in parallel, many times.</p>
-<p>Maybe you're scraping some websites – a lot of websites.</p>
-<p>Maybe you're deleting tens of millions of DynamoDB items.</p>
+            <p>So, you're doing some I‍/‍O bound stuff, in parallel.</p>
+<p>Maybe you're scraping some websites – a <em>lot</em> of websites.</p>
+<p>Maybe you're deleting many millions of DynamoDB items.</p>
 <p>You've got your <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor">ThreadPoolExecutor</a>,
-you've increased the number of threads and connections...
+you've increased the number of threads and tuned connection limits...
 but after some point, <strong>it's just not getting any faster</strong>.
-You look at your Python process with <a class="external" href="https://linux.die.net/man/1/top">top</a>,
-and you see CPU utilization hovers around 100%.</p>
+You look at your Python process,
+and you see CPU utilization hovers above 100%.</p>
 <p>You <em>could</em> split the your work into batches
 and pass them to a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">ProcessPoolExecutor</a>,
-which in turn runs your original code in separate processes.
-But that requires extra code, which is no fun.
-And maybe your input is hard to split into batches.</p>
-<p>If only there was an executor that
-<strong>transparently spread the work across processes and threads</strong>.
-Well, you're in luck, since that's exactly what we're building today!</p>
-<p>And you're even luckier, since in a couple years you won't even need it anymore.</p>
+which then runs your code in separate processes.
+But that requires yet more code, and a bunch of changes, which is no fun.
+And maybe your input is not that easy to split into batches.</p>
+<p>If only we had an executor that
+<strong>works seamlessly across processes and threads</strong>.</p>
+<p>Well, you're in luck, since that's exactly what we're building today!</p>
+<p>And even better, in a couple years you won't even need it anymore.</p>
 <section class="toc">
 <ul>
 <li><a href="https://death.andgravity.com/ptpe#establishing-a-baseline">Establishing a baseline</a>
@@ -102,8 +102,8 @@ Well, you're in luck, since that's exactly what we're building today!</p>
 </ul>
 </section>
 <h2 id="establishing-a-baseline">Establishing a baseline<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#establishing-a-baseline" title="permalink">#</a></span></h2>
-<p>To measure the problem,
-we'll use a client that pretends to do <a class="external" href="https://en.wikipedia.org/wiki/I/O_bound">mostly I‍/‍O</a>,
+<p>To measure things,
+we'll use a mock that pretends to do <a class="external" href="https://en.wikipedia.org/wiki/I/O_bound">mostly I‍/‍O</a>,
 with a sprinkling of <a class="external" href="https://en.wikipedia.org/wiki/CPU-bound">CPU-bound</a> work thrown in
 – a stand-in for something like a database connection,
 a Requests <a class="external" href="https://requests.readthedocs.io/en/latest/user/advanced/#session-objects">session</a>, or a <a class="external" href="https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/dynamodb.html#DynamoDB.Client">DynamoDB client</a>.</p>
@@ -124,20 +124,19 @@ a Requests <a class="external" href="https://requests.readthedocs.io/en/latest/u
 </code></pre></div>
 
 <p>We <a class="external" href="https://docs.python.org/3/library/time.html#time.sleep">sleep()</a> for the I‍/‍O,
-and do some math in a loop for the CPU stuff.
-It doesn't exactly matter how long each takes,
-as long as time spent doing I‍/‍O dominates.</p>
-<p>Real clients meant to be shared between threads
-are usually backed by a connection pool
-to allow connection reuse;
+and do some math in a loop for the CPU stuff;
+it doesn't matter exactly how long each takes,
+as long I‍/‍O time dominates.</p>
+<p>Real multi-threaded clients
+are usually backed by a connection pool;
 we could simulate one using a <a class="external" href="https://docs.python.org/3/library/threading.html#semaphore-objects">semaphore</a>,
 but it's not relevant here
 – we're assuming the connection pool is effectively unbounded.</p>
-<p>Since we'll use this from multiple processes,
-we set up a global client and a global function that uses it;
-<code>init_client()</code> is meant to be used as
-an <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">executor</a>'s <code>initializer</code>,
-which also allows us to pass arguments to the client
+<p>Since we'll use our client from multiple processes,
+we set up a global instance and a function that uses it;
+we can then pass <code>init_client()</code> as 
+an <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">executor</a> initializer,
+which also allows us passing arguments to the client
 when creating it.</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="n">client</span> <span class="o">=</span> <span class="kc">None</span>
 
@@ -149,7 +148,7 @@ when creating it.</p>
     <span class="k">return</span> <span class="n">client</span><span class="o">.</span><span class="n">method</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
 </code></pre></div>
 
-<p>Finally, we make a timing context manager:</p>
+<p>Finally, we make a simple timing context manager:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="nd">@contextmanager</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">timer</span><span class="p">():</span>
     <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
@@ -159,7 +158,8 @@ when creating it.</p>
 </code></pre></div>
 
 <p>...and put everything together in a function
-that uses the client a bunch of times in parallel
+that measures how long it takes 
+to do a bunch of work
 using a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html">concurrent.futures</a> executor:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">benchmark</span><span class="p">(</span><span class="n">executor</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="mi">10_000</span><span class="p">,</span> <span class="n">timer</span><span class="o">=</span><span class="n">timer</span><span class="p">,</span> <span class="n">chunksize</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
     <span class="k">with</span> <span class="n">executor</span><span class="p">:</span>
@@ -187,16 +187,16 @@ since we're mostly doing I‍/‍O, right?</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>
 <span class="go">elapsed: 12.405</span>
 </code></pre></div>
-<p>Good, twice as fast. More!</p>
+<p>Twice the threads, twice as fast. More!</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">30</span><span class="p">))</span>
 <span class="go">elapsed: 8.718</span>
 </code></pre></div>
-<p>Good, three times as fast. MORE!</p>
+<p>Good, it's still scaling linearly. MORE!</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">40</span><span class="p">))</span>
 <span class="go">elapsed: 8.638</span>
 </code></pre></div>
 <p><img alt="confused cat with question marks around its head" class="img-responsive" src="https://death.andgravity.com/_file/ptpe/confused.jpg" /></p>
-<p>... more?</p>
+<p>...more?</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">50</span><span class="p">))</span>
 <span class="go">elapsed: 8.458</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">60</span><span class="p">))</span>
@@ -214,7 +214,7 @@ since we're mostly doing I‍/‍O, right?</p>
 <h3 id="problem-cpu-becomes-a-bottleneck">Problem: CPU becomes a bottleneck<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#problem-cpu-becomes-a-bottleneck" title="permalink">#</a></span></h3>
 <p>It's time we take a closer look at what our process is doing.</p>
 <p>I'd normally use the <a class="external" href="https://linux.die.net/man/1/top">top</a> command for this,
-but since both the flags and the output vary with the operating system,
+but since the flags and output vary with the operating system,
 we'll implement our own using the excellent <a class="external" href="https://psutil.readthedocs.io/">psutil</a> library.</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="nd">@contextmanager</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">top</span><span class="p">():</span>
@@ -243,7 +243,7 @@ we'll implement our own using the excellent <a class="external" href="https://ps
         <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">pid</span><span class="si">:</span><span class="s2">&gt;7</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">rss</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2">m </span><span class="si">{</span><span class="n">uss</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2">m </span><span class="si">{</span><span class="n">cpu</span><span class="si">:</span><span class="s2">7.1f</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">nth</span><span class="si">:</span><span class="s2">&gt;7</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 
-<p>Because it's a context manager, we can use it as a timer ;)</p>
+<p>And because it's a context manager, we can use it as a timer:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">init_client</span><span class="p">()</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">10</span><span class="p">),</span> <span class="n">timer</span><span class="o">=</span><span class="n">top</span><span class="p">)</span>
 <span class="go">    PID     RES     USS    %CPU     nTH</span>
@@ -260,12 +260,10 @@ we'll implement our own using the excellent <a class="external" href="https://ps
 <span class="go">    PID     RES     USS    %CPU     nTH</span>
 <span class="go">  13912   17.3m   13.7m   100.9      41</span>
 </code></pre></div>
-<p>It looks like the more threads we have,
-the more the compute part of our I/O bound workload increases,
+<p>With more threads, the compute part of our I‍/‍O bound workload increases,
 eventually becoming high enough to saturate one CPU
 – and due to the <a class="external" href="https://docs.python.org/3/glossary.html#term-global-interpreter-lock">global interpreter lock</a>,
-we can use <em>at most one CPU</em> for pure-Python code,
-regardless of the number of threads.</p>
+<em>one CPU is all we can use</em>, regardless of the number of threads.<sup class="footnote-ref" id="fnref-1"><a href="https://death.andgravity.com/ptpe#fn-1">1</a></sup></p>
 <h3 id="processes">Processes?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#processes" title="permalink">#</a></span></h3>
 <p>I know, let's use a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">ProcessPoolExecutor</a> instead!</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">))</span>
@@ -284,16 +282,16 @@ regardless of the number of threads.</p>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">))</span>
 <span class="go">elapsed: 3.824</span>
 </code></pre></div>
-<p>OK, it's faster, but with diminishing returns
-– after 80 processes, there's no more improvement;
-and even then, it's only 2.2x faster than the best time with threads,
-when, in theory, it can now use all 4 CPUs.</p>
-<p>Also, we're not making the best use of connection pooling
+<p>OK, it's better, but with diminishing returns
+– there's no improvement after 80 processes,
+and even then, it's only <strong>2.2x</strong> faster than the best time with threads,
+when, in theory, it should be able to make full use of all 4 CPUs.</p>
+<p>Also, we're not making best use of connection pooling
 (relevant if the client connects to many different hosts,
-since we now have 80 distinct connection pools),
-or multiplexing
+since we now have 80 pools),
+nor multiplexing
 (relevant with protocols like HTTP/2 or newer,
-since we now have 80 distinct connections).</p>
+since we now have 80 connections).</p>
 <h3 id="problem-processes-use-more-memory">Problem: processes use more memory<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#problem-processes-use-more-memory" title="permalink">#</a></span></h3>
 <p>But it gets worse!</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">80</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">),</span> <span class="n">timer</span><span class="o">=</span><span class="n">top</span><span class="p">)</span>
@@ -306,20 +304,19 @@ since we now have 80 distinct connections).</p>
 </code></pre></div>
 <p>13.8 MiB * 80 ~= 1 GiB ... that is <em>a lot</em> of memory.</p>
 <p><strong>Now, there's some nuance to be had here.</strong></p>
-<p>First, on most operating systems that use virtual memory,
-<a class="external" href="https://en.wikipedia.org/wiki/Code_segment">code segment</a> pages are usually shared between processes
-(there's no point in having 80 separate copies
-of the Python interpreter in memory).</p>
+<p>First, on most operating systems that have virtual memory,
+<a class="external" href="https://en.wikipedia.org/wiki/Code_segment">code segment</a> pages are shared between processes
+– there's no point in having 80 copies
+of libc or the Python interpreter in memory.</p>
 <p>The <a class="external" href="https://en.wikipedia.org/wiki/Unique_set_size">unique set size</a> is probably a better measurement
 than the <a class="external" href="https://en.wikipedia.org/wiki/Resident_set_size">resident set size</a>,
-since it excludes memory shared between processes.<sup class="footnote-ref" id="fnref-1"><a href="https://death.andgravity.com/ptpe#fn-1">1</a></sup>
-So, for the macOS<sup class="footnote-ref" id="fnref-2"><a href="https://death.andgravity.com/ptpe#fn-2">2</a></sup> output above,
+since it excludes memory shared between processes.<sup class="footnote-ref" id="fnref-2"><a href="https://death.andgravity.com/ptpe#fn-2">2</a></sup>
+So, for the macOS output above,<sup class="footnote-ref" id="fnref-3"><a href="https://death.andgravity.com/ptpe#fn-3">3</a></sup>
 the actual usage is more like 8.5 MiB * 80 = 680 MiB.</p>
 <p>Second, if you use the <em>fork</em> or <em>forkserver</em> <a class="external" href="https://docs.python.org/3.14/library/multiprocessing.html#contexts-and-start-methods">start methods</a>,
 processes also share memory allocated before the <a class="external" href="https://en.wikipedia.org/wiki/Fork_(system_call)">fork()</a> via <a class="external" href="https://en.wikipedia.org/wiki/Copy-on-write#In_virtual_memory_management">copy-on-write</a>;
-for Python, this includes module code and (global) variables.</p>
-<p>On Linux, for example,
-the actual usage is 1.7 MiB * 80 = 136 MiB:</p>
+for Python, this includes module code and variables.
+On Linux, the actual usage is 1.7 MiB * 80 = 136 MiB:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">80</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">),</span> <span class="n">timer</span><span class="o">=</span><span class="n">top</span><span class="p">)</span>
 <span class="go">    PID     RES     USS    %CPU     nTH</span>
 <span class="go"> 329801   17.0m    6.6m     5.1       3</span>
@@ -327,9 +324,9 @@ the actual usage is 1.7 MiB * 80 = 136 MiB:</p>
 <span class="go">  ... 78 more lines ...</span>
 <span class="go"> 329881   13.3m    1.7m     2.0       1</span>
 </code></pre></div>
-<p>However,  that's just a lower bound;
-memory allocated after the <a class="external" href="https://en.wikipedia.org/wiki/Fork_(system_call)">fork()</a> is not shared,
-and that's unavoidable if you're doing actual work.</p>
+<p>However, it's important to note that's just a lower bound;
+memory allocated after <a class="external" href="https://en.wikipedia.org/wiki/Fork_(system_call)">fork()</a> is not shared,
+and most real work will unavoidably allocate more memory.</p>
 
 
 
@@ -347,20 +344,20 @@ and that's unavoidable if you're doing actual work.</p>
 <p>One reasonable way of dealing with this
 would be to split the input into batches,
 one per CPU, and pass them to a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">ProcessPoolExecutor</a>,
-which in turn runs the items in a batch in a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor">ThreadPoolExecutor</a>.<sup class="footnote-ref" id="fnref-3"><a href="https://death.andgravity.com/ptpe#fn-3">3</a></sup></p>
-<p>But that would mean we need to change our code, and that's no fun;
-if only there was an executor that
-<em>transparently spread the work across processes and threads</em>.</p>
+which in turn runs the batch items using a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor">ThreadPoolExecutor</a>.<sup class="footnote-ref" id="fnref-4"><a href="https://death.andgravity.com/ptpe#fn-4">4</a></sup></p>
+<p>But that would mean we need to change our code, and that's no fun.
+If only there was an executor that
+<em>works seamlessly across processes and threads</em>.</p>
 <h3 id="a-minimal-plausible-solution">A minimal plausible solution<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#a-minimal-plausible-solution" title="permalink">#</a></span></h3>
-<p>In keeping with what I hope has
+<p>In keeping with what has
 <a class="internal" href="https://death.andgravity.com/pwned#a-minimal-plausible-solution">become</a>
 <a class="internal" href="https://death.andgravity.com/lru-cache#a-minimal-plausible-solution">tradition</a>
 by now,
-we'll take an iterative, <a class="external" href="https://hintjens.gitbooks.io/scalable-c/content/chapter1.html#problem-what-do-we-do-next">problem-solution</a> approach to this;
+we'll take an iterative, <a class="external" href="https://hintjens.gitbooks.io/scalable-c/content/chapter1.html#problem-what-do-we-do-next">problem-solution</a> approach;
 since we're <em>not sure what to do yet</em>,
 we start with <a class="external" href="https://wiki.c2.com/?DoTheSimplestThingThatCouldPossiblyWork">the simplest thing that could possibly work</a>.</p>
 <p>We know we want a process pool executor
-that starts one thread pool executor in each process,
+that starts one thread pool executor per process,
 so let's deal with that first.</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ProcessThreadPoolExecutor</span><span class="p">(</span><span class="n">concurrent</span><span class="o">.</span><span class="n">futures</span><span class="o">.</span><span class="n">ProcessPoolExecutor</span><span class="p">):</span>
 
@@ -371,13 +368,13 @@ so let's deal with that first.</p>
         <span class="p">)</span>
 </code></pre></div>
 
-<p>Subclassing ProcessPoolExecutor gets us the <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.map">map()</a> implementation for free.
-By not passing any <code>max_workers</code> to <code>super().__init__()</code>,
-we get the default of one process per CPU (which is what we want).
-The rest of the arguments we can add later.</p>
-<p>We pass the user-defined (process) initializer and arguments
-to our own, custom initializer,
-so we can set up a global <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#threadpoolexecutor">ThreadPoolExecutor</a> first:</p>
+<p>By subclassing ProcessPoolExecutor, we get the <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.map">map()</a> implementation for free.
+By going with the default <code>max_workers</code>,
+we get one process per CPU (which is what we want);
+we can add more arguments later if needed.</p>
+<p>In our custom process initializer,
+we set up a global thread pool executor,
+and then call the initializer provided by the user:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="n">_executor</span> <span class="o">=</span> <span class="kc">None</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">_init_process</span><span class="p">(</span><span class="n">max_threads</span><span class="p">,</span> <span class="n">initializer</span><span class="p">,</span> <span class="n">initargs</span><span class="p">):</span>
@@ -390,10 +387,8 @@ so we can set up a global <a class="external" href="https://docs.python.org/3/li
         <span class="n">initializer</span><span class="p">(</span><span class="o">*</span><span class="n">initargs</span><span class="p">)</span>
 </code></pre></div>
 
-<p>Like the <code>__init__</code> arguments,
-we pass the <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit">submit()</a> arguments
-to a custom function that submits the work
-to the ThreadPoolExecutor instead:</p>
+<p>Likewise, <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit">submit()</a> passes the work along
+to the thread pool executor:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">ProcessThreadPoolExecutor</span><span class="p">(</span><span class="n">concurrent</span><span class="o">.</span><span class="n">futures</span><span class="o">.</span><span class="n">ProcessPoolExecutor</span><span class="p">):</span>
     <span class="c1"># ...</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
@@ -415,7 +410,6 @@ let's use it and see if it works:</p>
         <span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">_do_stuff</span><span class="p">,</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">])))</span>
 </code></pre></div>
 
-<p>Here goes:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp"> $ </span>python<span class="w"> </span>ptpe.py
 <span class="go">doing: 0</span>
 <span class="go">doing: 1</span>
@@ -435,10 +429,11 @@ let's use it and see if it works:</p>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">),</span> <span class="n">n</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
 <span class="go">elapsed: 6.067</span>
 </code></pre></div>
-<p>Ah, <code>_submit()</code> waits for <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Future.result">result()</a> in the worker process main thread,
-making this just a ProcessPoolExecutor with extra steps.</p>
+<p>Ah, because <code>_submit()</code> waits for the <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Future.result">result()</a>
+in the main thread of the worker process,
+this is just a ProcessPoolExecutor with extra steps.</p>
 <hr />
-<p>What if we send back the future instead?</p>
+<p>But what if we send back the future instead?</p>
 <div class="highlight code-container"><pre class="code"><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">submit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
         <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">_submit</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
 </code></pre></div>
@@ -473,15 +468,15 @@ making this just a ProcessPoolExecutor with extra steps.</p>
 <span class="gr">TypeError</span>: <span class="n">cannot pickle '_thread.RLock' object</span>
 </code></pre></div>
 <p>It may not seem like it, but this is a partial success:
-the <code>doing: ...</code> lines confirm that the work happens,
-we just can't get anything back because
-the future returned by the thread pool executorcan't be pickled.</p>
-<p>To be honest, that's not surprising, it couldn't have been <em>that</em> easy.</p>
+the work happens,
+we just can't get anything back.
+Not surprising, to be honest, it couldn't have been <em>that</em> easy.</p>
 <h3 id="getting-results">Getting results<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#getting-results" title="permalink">#</a></span></h3>
-<p>If you look carefully at the traceback above,
-you can find a hint of how to get results back
-– <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">ProcessPoolExecutor</a> seems to be using a result queue;
-the <a class="external" href="https://github.com/python/cpython/blob/3.13/Lib/concurrent/futures/process.py">module docstring</a> even has a neat data flow diagram:</p>
+<p>If you look carefully at the traceback,
+you'll find a hint of how <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#processpoolexecutor">ProcessPoolExecutor</a> 
+gets its own results back from workers
+– a queue;
+the <a class="external" href="https://github.com/python/cpython/blob/3.13/Lib/concurrent/futures/process.py">module docstring</a> even has a neat data-flow diagram:</p>
 <p><a name="data-flow"></a></p>
 <pre class="code code-container"><code>|======================= In-process =====================|== Out-of-process ==|
 
@@ -502,8 +497,8 @@ the <a class="external" href="https://github.com/python/cpython/blob/3.13/Lib/co
 |          |     | ...        |     |        |     | 3, except |    |         |
 +----------+     +------------+     +--------+     +-----------+    +---------+
 </code></pre>
-<p>Now, we could probably use that result queue somehow,
-but it would involve touching a lot of (private) internals.<sup class="footnote-ref" id="fnref-4"><a href="https://death.andgravity.com/ptpe#fn-4">4</a></sup>
+<p>Now, we could probably use the same queue somehow,
+but it would involve touching a lot of (private) internals.<sup class="footnote-ref" id="fnref-5"><a href="https://death.andgravity.com/ptpe#fn-5">5</a></sup>
 Instead, let's use a separate queue:</p>
 <!--
 this is one of the rare cases where
@@ -518,7 +513,7 @@ otherwise we'll clobber the original `_result_queue` attribute.
         <span class="p">)</span>
 </code></pre></div>
 
-<p>On the worker side, we make the it globally accessible:</p>
+<p>On the worker side, we make it globally accessible:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="n">_executor</span> <span class="o">=</span> <span class="kc">None</span>
 <span class="n">_result_queue</span> <span class="o">=</span> <span class="kc">None</span>
 
@@ -535,7 +530,7 @@ otherwise we'll clobber the original `_result_queue` attribute.
         <span class="n">initializer</span><span class="p">(</span><span class="o">*</span><span class="n">initargs</span><span class="p">)</span>
 </code></pre></div>
 
-<p>...so we can use it from a callback registered in <code>_submit()</code>:</p>
+<p>...so we can use it from a task callback registered by <code>_submit()</code>:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_submit</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
     <span class="n">task</span> <span class="o">=</span> <span class="n">_executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
     <span class="n">task</span><span class="o">.</span><span class="n">add_done_callback</span><span class="p">(</span><span class="n">_put_result</span><span class="p">)</span>
@@ -547,20 +542,19 @@ otherwise we'll clobber the original `_result_queue` attribute.
         <span class="n">_result_queue</span><span class="o">.</span><span class="n">put</span><span class="p">((</span><span class="kc">True</span><span class="p">,</span> <span class="n">task</span><span class="o">.</span><span class="n">result</span><span class="p">()))</span>
 </code></pre></div>
 
-<p>Back in the main process, we need a thread to handle the results.</p>
+<p>Back in the main process, we handle the results in a thread:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_threads</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">initargs</span><span class="o">=</span><span class="p">()):</span>
         <span class="c1"># ...</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">__result_handler</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">__handle_results</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">__result_handler</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
 </code></pre></div>
 
-<p>For now, we can just print them:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">__handle_results</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">for</span> <span class="n">ok</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="nb">iter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">__result_queue</span><span class="o">.</span><span class="n">get</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
             <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">'ok'</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">ok</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">'error'</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 
-<p>To stop the thread,
+<p>Finally, to stop the handler,
 we use None as a <a class="internal" href="https://death.andgravity.com/sentinels#what-s-a-sentinel-and-why-do-i-need-one">sentinel</a>
 on executor shutdown:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="nf">shutdown</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
@@ -593,12 +587,11 @@ on executor shutdown:</p>
 <span class="w">  </span><span class="c">...</span>
 <span class="gr">AttributeError</span>: <span class="n">'NoneType' object has no attribute 'cancel'</span>
 </code></pre></div>
-<p>Yay, the results are making it to the handler thread!
-The error is because instead of returning a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#future-objects">Future</a>,
+<p>Yay, the results are making it to the handler!</p>
+<p>The error happens because instead of returning a <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#future-objects">Future</a>,
 our <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit">submit()</a> returns the result of <code>_submit()</code>, which is always None.</p>
-<!-- ## Making our own futures -->
 <h3 id="fine-we-ll-make-our-own-futures">Fine, we'll make our own futures<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#fine-we-ll-make-our-own-futures" title="permalink">#</a></span></h3>
-<p>Fine, we'll make our own futures:</p>
+<p>But <a class="external" href="https://docs.python.org/3/library/concurrent.futures.html#concurrent.futures.Executor.submit">submit()</a> must return a future, so we make our own:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_threads</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">initargs</span><span class="o">=</span><span class="p">()):</span>
         <span class="c1"># ...</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">__tasks</span> <span class="o">=</span> <span class="p">{}</span>
@@ -615,14 +608,13 @@ our <a class="external" href="https://docs.python.org/3/library/concurrent.futur
         <span class="k">return</span> <span class="n">outer</span>
 </code></pre></div>
 
-<p>In order to map each result back to its future,
-we need some sort of unique identifier;
+<p>In order to map results to their futures,
+we need an unique identifier;
 the <a class="external" href="https://docs.python.org/3/library/functions.html#id">id()</a> of the outer future should do,
-since it's unique during the future's lifetime.</p>
-<p>The id gets passed to <code>_submit()</code>,
-which passes it to <code>_put_result()</code>
-as an attribute on the thread pool executor future,
-so it can go in the queue with the result:</p>
+since it is unique for the object's lifetime.</p>
+<p>We pass the id to <code>_submit()</code>,
+then to <code>_put_result()</code> as an attribute on the future,
+and finally back in the queue with the result:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">_submit</span><span class="p">(</span><span class="n">task_id</span><span class="p">,</span> <span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
     <span class="n">task</span> <span class="o">=</span> <span class="n">_executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
     <span class="n">task</span><span class="o">.</span><span class="n">task_id</span> <span class="o">=</span> <span class="n">task_id</span>
@@ -654,7 +646,7 @@ and set the result accordingly:</p>
 <span class="go">doing: 2</span>
 <span class="go">[0, 1, 4]</span>
 </code></pre></div>
-<p>It <em>really</em> works:</p>
+<p>I mean, it <em>really</em> works:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessThreadPoolExecutor</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">))</span>
 <span class="go">elapsed: 6.220</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">benchmark</span><span class="p">(</span><span class="n">ProcessThreadPoolExecutor</span><span class="p">(</span><span class="mi">20</span><span class="p">,</span> <span class="n">initializer</span><span class="o">=</span><span class="n">init_client</span><span class="p">))</span>
@@ -668,7 +660,7 @@ and set the result accordingly:</p>
 but it's pretty close,
 and much better than the 2.2x we got from processes alone.</p>
 <h3 id="death-becomes-a-problem">Death becomes a problem<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/ptpe#death-becomes-a-problem" title="permalink">#</a></span></h3>
-<p>I wonder what happens if we kill a worker process.</p>
+<p>I wonder what happens when a worker process dies.</p>
 <p>For example, the initializer can fail:</p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">executor</span> <span class="o">=</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="n">initializer</span><span class="o">=</span><span class="nb">divmod</span><span class="p">,</span> <span class="n">initargs</span><span class="o">=</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
 <span class="gp">&gt;&gt;&gt; </span><span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
@@ -680,8 +672,8 @@ and much better than the 2.2x we got from processes alone.</p>
 <span class="w">  </span><span class="c">...</span>
 <span class="gr">concurrent.futures.process.BrokenProcessPool</span>: <span class="n">A process in the process pool was terminated abruptly while the future was running or pending.</span>
 </code></pre></div>
-<p>...or a worker can die later,
-which we can help with a custom <code>timer</code>:<sup class="footnote-ref" id="fnref-5"><a href="https://death.andgravity.com/ptpe#fn-5">5</a></sup></p>
+<p>...or it can die some time later,
+which we can help with a custom <code>timer</code>:<sup class="footnote-ref" id="fnref-6"><a href="https://death.andgravity.com/ptpe#fn-6">6</a></sup></p>
 <div class="highlight code-container"><pre class="code"><span></span><code><span class="nd">@contextmanager</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">terminate_child</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
     <span class="n">threading</span><span class="o">.</span><span class="n">Timer</span><span class="p">(</span><span class="n">interval</span><span class="p">,</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Process</span><span class="p">()</span><span class="o">.</span><span class="n">children</span><span class="p">()[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">terminate</span><span class="p">)</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
@@ -855,19 +847,22 @@ with none of the shenanigans we've been up to!</p>
 </div>
 <section class="footnotes">
 <ol>
-<li id="fn-1"><p>The psutil documentation for <a class="external" href="https://psutil.readthedocs.io/en/latest/#psutil.Process.memory_full_info">memory_full_info()</a>
+<li id="fn-1"><p>At least, all we can use for pure-Python code.
+I‍/‍O always releases the <a class="external" href="https://docs.python.org/3/glossary.html#term-global-interpreter-lock">global interpreter lock</a>,
+and so do some extension modules. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-1"><sup>[return]</sup></a></p></li>
+<li id="fn-2"><p>The psutil documentation for <a class="external" href="https://psutil.readthedocs.io/en/latest/#psutil.Process.memory_full_info">memory_full_info()</a>
 explains the difference quite nicely and links to further resources,
-because <a class="internal" href="https://death.andgravity.com/output#good-libraries-educate">good libraries educate</a>. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-1"><sup>[return]</sup></a></p></li>
-<li id="fn-2"><p>You may have to run Python as root to get the USS of child processes. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-2"><sup>[return]</sup></a></p></li>
-<li id="fn-3"><p>And no, <a class="external" href="https://docs.python.org/3/library/asyncio.html">asyncio</a> is not a solution,
+because <a class="internal" href="https://death.andgravity.com/output#good-libraries-educate">good libraries educate</a>. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-2"><sup>[return]</sup></a></p></li>
+<li id="fn-3"><p>You may have to run Python as root to get the USS of child processes. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-3"><sup>[return]</sup></a></p></li>
+<li id="fn-4"><p>And no, <a class="external" href="https://docs.python.org/3/library/asyncio.html">asyncio</a> is not a solution,
 since the event loop runs in a single thread,
-so you'd  still need to run one event loop per CPU in dedicated processes. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-3"><sup>[return]</sup></a></p></li>
-<li id="fn-4"><p>Check out
+so you'd  still need to run one event loop per CPU in dedicated processes. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-4"><sup>[return]</sup></a></p></li>
+<li id="fn-5"><p>Check out
 <a class="external" href="https://github.com/nilp0inter/threadedprocess">nilp0inter/threadedprocess</a>
-for an idea of what that looks like. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-4"><sup>[return]</sup></a></p></li>
-<li id="fn-5"><p><code>pkill -fn '[Pp]ython'</code> would do it too,
-but it gets tedious after the first few times,
-and won't work on Windows. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-5"><sup>[return]</sup></a></p></li>
+for an idea of what that looks like. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-5"><sup>[return]</sup></a></p></li>
+<li id="fn-6"><p><code>pkill -fn '[Pp]ython'</code> would've done it too,
+but it gets tedious if you do it a lot,
+and it's a different command on Windows. <a class="footnote" href="https://death.andgravity.com/ptpe#fnref-6"><sup>[return]</sup></a></p></li>
 </ol>
 </section>
           </p>
@@ -883,6 +878,278 @@ and won't work on Windows. <a class="footnote" href="https://death.andgravity.co
           </div>
           <a
             href="https://death.andgravity.com/ptpe"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202504/regex_affordances.html" class="hover:underline"
+              >Regex affordances</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python regexes have a number of features that bring new power to text
+manipulation.  I&#8217;m not talking about fancy matching features like negative
+look-behinds, but ways you can construct and use regexes.  As a demonstration,
+I&#8217;ll show you some real code from a real project.</p><p>Coverage.py will expand environment variables in values read from its
+configuration files.  It does this with a function called
+<code>substitute_variables</code>:</p><blockquote class="code"><pre class="python"><div class="source"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">substitute_variables</span><span class="p">(</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">text</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">,</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">variables</span><span class="p">:</span>&#xa0;<span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span>&#xa0;<span class="nb">str</span><span class="p">],</span>
+<br /><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">str</span><span class="p">:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;Substitute&#xa0;``${VAR}``&#xa0;variables&#xa0;in&#xa0;`text`.</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;Variables&#xa0;in&#xa0;the&#xa0;text&#xa0;can&#xa0;take&#xa0;a&#xa0;number&#xa0;of</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;shell-inspired&#xa0;forms::</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;$VAR</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;${VAR}</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;${VAR?}&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;strict:&#xa0;an&#xa0;error&#xa0;if&#xa0;no&#xa0;VAR.</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;${VAR-miss}&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;defaulted:&#xa0;&quot;miss&quot;&#xa0;if&#xa0;no&#xa0;VAR.</span>
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;$$&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;just&#xa0;a&#xa0;dollar&#xa0;sign.</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;`variables`&#xa0;is&#xa0;a&#xa0;dictionary&#xa0;of&#xa0;variable&#xa0;values.</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;Returns&#xa0;the&#xa0;resulting&#xa0;text&#xa0;with&#xa0;values&#xa0;substituted.</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&quot;&quot;&quot;</span>
+<br /></div>
+</pre></blockquote><p>Call it with a string and a dictionary, and it makes the substitutions:</p><blockquote class="code"><pre class="python"><div class="source"><span class="o">&gt;&gt;&gt;</span>&#xa0;<span class="n">substitute_variables</span><span class="p">(</span>
+<br /><span class="o">...</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">text</span><span class="o">=</span><span class="s2">&quot;Look:&#xa0;$FOO&#xa0;${BAR-default}&#xa0;$$&quot;</span><span class="p">,</span>
+<br /><span class="o">...</span>&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">variables</span><span class="o">=</span><span class="p">{</span><span class="s1">'FOO'</span><span class="p">:</span>&#xa0;<span class="s1">'Xyzzy'</span><span class="p">},</span>
+<br /><span class="o">...</span>&#xa0;<span class="p">)</span>
+<br />
+<br /><span class="s1">'Look:&#xa0;Xyzzy&#xa0;default&#xa0;$'</span>
+<br /></div>
+</pre></blockquote><p>We use a regex to pick apart the text:</p><blockquote class="code"><pre class="python"><div class="source"><span class="n">dollar_pattern</span>&#xa0;<span class="o">=</span>&#xa0;<span class="sa">r</span><span class="s2">&quot;&quot;&quot;(?x)&#xa0;&#xa0;&#xa0;#&#xa0;Verbose&#xa0;regex&#xa0;syntax</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;\$&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;A&#xa0;dollar&#xa0;sign,</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;(?:&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;then</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;(?P&lt;dollar&gt;&#xa0;\$&#xa0;)&#xa0;|&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;a&#xa0;dollar&#xa0;sign,&#xa0;or</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;(?P&lt;word1&gt;&#xa0;\w+&#xa0;)&#xa0;|&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;a&#xa0;plain&#xa0;word,&#xa0;or</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;\{&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;a&#xa0;{-wrapped</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;(?P&lt;word2&gt;&#xa0;\w+&#xa0;)&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;word,</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;(?:&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;either</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;(?P&lt;strict&gt;&#xa0;\?&#xa0;)&#xa0;|&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;strict&#xa0;or</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;-(?P&lt;defval&gt;&#xa0;[^}]*&#xa0;)&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;defaulted</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;)?&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;#&#xa0;maybe</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;}</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;)</span>
+<br /><span class="s2">&#xa0;&#xa0;&#xa0;&#xa0;&quot;&quot;&quot;</span>
+<br /></div>
+</pre></blockquote><p>This isn&#8217;t a super-fancy regex: it doesn&#8217;t use advanced pattern matching.
+But there are some useful regex features at work here:</p><ul>
+
+<li>The <code>(?x)</code> flag at the beginning turns on &#8220;verbose&#8221; regex syntax. In
+this mode, all white space is ignored so the regex can be multi-line and we can
+indent to help see the structure, and comments are allowed at the ends of
+lines.</li>
+
+<li>Named groups like <code>(?P&lt;word1&gt; … )</code> are used to capture parts of
+the text that we can retrieve later by name.</li>
+
+<li>There are also two groups used to get the precedence of operators right, but
+we don&#8217;t want to capture those values separately, so I use the non-capturing
+group syntax for them: <code>(?: … )</code>.  In this code, we only ever access groups
+by name, so I could have left them as regular capturing groups, but I think it&#8217;s
+clearer to indicate up-front that we won&#8217;t be using them.</li>
+
+</ul><p>The verbose syntax in particular makes it easier to understand the regex.
+Compare to what it would look like in one line:</p><blockquote class="code"><pre class="python"><div class="source"><span class="sa">r</span><span class="s2">&quot;\$(?:(?P&lt;dollar&gt;\$)|(?P&lt;word1&gt;\w+)|\{(?P&lt;word2&gt;\w+)(?:(?P&lt;strict&gt;\?)|-(?P&lt;defval&gt;[^}]*))?})&quot;</span>
+<br /></div>
+</pre></blockquote><p>Once we have the regex, we can use <code>re.sub()</code> to replace the variables
+with their values:</p><blockquote class="code"><pre class="python"><div class="source"><span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">dollar_pattern</span><span class="p">,</span>&#xa0;<span class="n">dollar_replace</span><span class="p">,</span>&#xa0;<span class="n">text</span><span class="p">)</span>
+<br /></div>
+</pre></blockquote><p>But we&#8217;re going to use another power feature of Python regexes:
+<code>dollar_replace</code> here isn&#8217;t a string, it&#8217;s a function! Each fragment the
+regex matches will be passed as a match object to our <code>dollar_replace</code>
+function.  It returns a string which re.sub() uses as the replacement in the
+text:</p><blockquote class="code"><pre class="python"><div class="source"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">dollar_replace</span><span class="p">(</span><span class="n">match</span><span class="p">:</span>&#xa0;<span class="n">re</span><span class="o">.</span><span class="n">Match</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">str</span><span class="p">:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;Called&#xa0;for&#xa0;each&#xa0;$replacement.&quot;&quot;&quot;</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;Get&#xa0;the&#xa0;one&#xa0;group&#xa0;that&#xa0;matched.</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">groups</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'dollar'</span><span class="p">,</span>&#xa0;<span class="s1">'word1'</span><span class="p">,</span>&#xa0;<span class="s1">'word2'</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">word</span>&#xa0;<span class="o">=</span>&#xa0;<span class="nb">next</span><span class="p">(</span><span class="n">g</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">g</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">groups</span>&#xa0;<span class="k">if</span>&#xa0;<span class="n">g</span><span class="p">)</span>
+<br />
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="n">word</span>&#xa0;<span class="o">==</span>&#xa0;<span class="s2">&quot;$&quot;</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="s2">&quot;$&quot;</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">elif</span>&#xa0;<span class="n">word</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">variables</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">variables</span><span class="p">[</span><span class="n">word</span><span class="p">]</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">elif</span>&#xa0;<span class="n">match</span><span class="p">[</span><span class="s2">&quot;strict&quot;</span><span class="p">]:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">msg</span>&#xa0;<span class="o">=</span>&#xa0;<span class="sa">f</span><span class="s2">&quot;Variable&#xa0;</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s2">&#xa0;is&#xa0;undefined:&#xa0;</span><span class="si">{</span><span class="n">text</span><span class="si">!r}</span><span class="s2">&quot;</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">raise</span>&#xa0;<span class="ne">NameError</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">else</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">match</span><span class="p">[</span><span class="s2">&quot;defval&quot;</span><span class="p">]</span>
+<br /></div>
+</pre></blockquote><p>First we use <code>match.group()</code>.  Called with a number of names, it returns
+a tuple of what those named groups matched. They could be the matched text, or
+None if the group didn&#8217;t match anything.</p><p>The way our regex is written only one of those three groups will match, so
+the tuple will have one string and two None&#8217;s.  To get the matched string, we
+use <code>next()</code> to find it. If the built-in <code>any()</code> returned the first
+true thing it found this code could be simpler, but it doesn&#8217;t so we have to do
+it this way.</p><p>Now we can check the value to decide on the replacement:</p><ul>
+<li>If the match was a dollar sign, we return a dollar sign.</li>
+
+<li>If the word is one of our defined variables, we return the value of the
+variable.</li>
+
+<li>Since the word isn&#8217;t a defined variable, we check if the &#8220;strict&#8221; marker was
+found, and if so, raise an exception.</li>
+
+<li>Otherwise we return the default value provided.</li>
+
+</ul><p>The final piece of the implementation is to use <code>re.sub()</code> and return
+the result:</p><blockquote class="code"><pre class="python"><div class="source"><span class="k">return</span>&#xa0;<span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">dollar_pattern</span><span class="p">,</span>&#xa0;<span class="n">dollar_replace</span><span class="p">,</span>&#xa0;<span class="n">text</span><span class="p">)</span>
+<br /></div>
+</pre></blockquote><p>Regexes are often criticized for being too opaque and esoteric.  But done
+right, they can be very powerful and don&#8217;t have to be a burden.  What we&#8217;ve done
+here is used simple pattern matching paired with useful API features to
+compactly write a useful transformation.</p><p>BTW, if you are interested, the <a href="https://github.com/nedbat/coveragepy/blob/master/coverage/misc.py#L228-L276" rel="external noopener">real code is in
+coverage.py</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 18, 2025 03:19 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202504/regex_affordances.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2025/apr/18/admin-theme-roundup/" class="hover:underline"
+              >Django Admin Theme Roundup 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>One of Django’s most appreciated features is the built-in admin functionality. In fact, it was ranked as the most useful contrib app in the <a href="https://lp.jetbrains.com/django-developer-survey-2023/">2023 Django developer survey</a>.</p>
+<p><img alt="A screenshot of the 2023 developer survey results showing the most used contrib apps. The Admin is first (77%), followed by auth (74%), and then postgres quite a long way back (47%)." src="https://media.djangoproject.com/blog/images/2025/04/survey-screenshot.png" /></p>
+<p>With a few lines of code, Django automatically generates an administrative interface to add, update, and edit objects in your database. While it's not meant to replace a full-featured frontend, the admin makes rapid prototyping possible and provides a lot of functionality out of the box.</p>
+<p>However, the admin’s focus is not on a flashy user interface and some people have found it to be a little plain – some have even called it ugly! But fortunately, like all Django applications, the admin’s CSS and HTML templates can be overridden and tweaked. Here are a few projects which have done that, and are recently updated as of early 2025.</p>
+<p>Chime in on the <a href="https://forum.djangoproject.com/t/django-admin-theme-roundup-2025/40494">Django forum thread here</a> with your favorite Django admin theme or if I missed any other options!</p>
+<p>Note that these packages are listed in the order of the “easiest” integration to the hardest. However, the later libraries also tend to provide more features.</p>
+<h4 id="s-dracula">Dracula</h4>
+<p>A dark (and light) theme for the Django Admin based on the very popular Dracula which has themes for 400+ applications. This library is a quick win to give the admin a bit of pizazz without requiring much setup or changing the default admin functionality.</p>
+<ul>
+<li><a href="https://draculatheme.com/django-admin">Dracula Homepage</a></li>
+<li><a href="https://github.com/dracula/django-admin">Dracula Code</a></li>
+</ul>
+<p><img alt="A screenshot of the Dracula admin theme." src="https://media.djangoproject.com/blog/images/2025/04/dracula-admin.png" /></p>
+<h4 id="s-django-daisy">Django Daisy</h4>
+<p><code>Django Daisy</code> is a responsive admin built with DaisyUI and TailwindCSS. Application icons can be added by utilizing Font Awesome. Very minimal (and completely optional!) configuration.</p>
+<ul>
+<li><a href="https://hypy13.github.io/django-daisy-docs/">Django Daisy Documentation</a></li>
+<li><a href="https://github.com/hypy13/django-daisy/">Django Daisy Code</a></li>
+<li><a href="https://hypy13-django-daisy.hf.space/en/admin/">Django Daisy Demo (demo/demo)</a></li>
+</ul>
+<p><img alt="A Daisy UI theme screenshot" src="https://media.djangoproject.com/blog/images/2025/04/django-daisy.png" /></p>
+<h4 id="s-django-jazzmin">django-jazzmin</h4>
+<p>A drop-in theme for the Django admin that utilises AdminLTE 3.2 &amp; Bootstrap 5. All of the configuration is optional which means the installation is very straight-forward. However, it also includes the ability to create custom menus, convert all pop-ups to modals, and a slick UI customizer. <code>django-jazzmin</code> also includes a wide selection of built-in themes.</p>
+<ul>
+<li><a href="https://django-jazzmin.readthedocs.io/">Django Jazzmin Documentation</a></li>
+<li><a href="https://github.com/farridav/django-jazzmin">Django Jazzmin Code</a></li>
+</ul>
+<p><img alt="A Django Jazzmin screenshot" src="https://media.djangoproject.com/blog/images/2025/04/django-jazzmin.png" /></p>
+<h4 id="s-django-admin-kubi">django-admin-kubi</h4>
+<p>Kubi applies a Bootstrap 5 facelift to the Django admin, but also adds Sass support for custom styling and Font Awesome icons. It includes a sidebar menu for easy navigation and support for some third-party packages, including <code>django-modeltranslation</code>, <code>django-modeltrans</code>, <code>django-import-export</code>, <code>django-two-factor-auth</code>, and <code>django-colorfield</code>.</p>
+<ul>
+<li><a href="https://github.com/dengunorg/django-admin-kubi">Kubi Code</a></li>
+</ul>
+<p><img alt="A gif of the django-admin-kubi theme" src="https://media.djangoproject.com/blog/images/2025/04/django-admin-kubi.gif" /></p>
+<h4 id="s-django-jet-reboot">django-jet-reboot</h4>
+<p>Modern template for the Django admin interface with improved functionality. It provides the ability to create a custom dashboard and modules. Also includes user-selectable themes through the UI.</p>
+<ul>
+<li><a href="https://django-jet-reboot.readthedocs.io/en/latest/">Django JET Reboot Documentation</a></li>
+<li><a href="https://github.com/assem-ch/django-jet-reboot">Django JET Reboot Code</a></li>
+</ul>
+<p><img alt="A django-jet-reboot screenshot" src="https://media.djangoproject.com/blog/images/2025/04/django-jet-reboot.png" /></p>
+<h4 id="s-django-semantic-admin">django-semantic-admin</h4>
+<p>A responsive Django admin theme based on Semantic UI. Includes JavaScript datepicker and timepicker components. Includes support for <code>django_filter</code> and <code>django-import-export</code>.</p>
+<ul>
+<li><a href="https://globophobe.github.io/django-semantic-admin/">Django Semantic UI Documentation</a></li>
+<li><a href="https://github.com/globophobe/django-semantic-admin">Django Semantic UI Code</a></li>
+<li><a href="https://semantic-admin.com/">Django Semantic UI Demo</a> (admin/semantic)</li>
+</ul>
+<p><img alt="A django-semantic-admin screenshot" src="https://media.djangoproject.com/blog/images/2025/04/django-semantic-admin.png" /></p>
+<h4 id="s-simple-ui">Simple UI</h4>
+<p>A modern theme based on vue + element-ui which comes with 28 different themes. The documentation is originally in Chinese, but there is a translation in English.</p>
+<ul>
+<li><a href="https://newpanjing.github.io/simpleui_docs/en/">Simple UI Documentation</a></li>
+<li><a href="https://github.com/newpanjing/simpleui">Simple UI Code</a></li>
+</ul>
+<p><img alt="A Simple UI admin theme screenshot" src="https://media.djangoproject.com/blog/images/2025/04/simpleui.png" /></p>
+<h4 id="s-grapelli">Grapelli</h4>
+<p>Grappelli is a grid-based alternative to the Django admin which provides a few nifty features such as a custom TinyMCE integration, customizable dashboard, and inline sortables which can be updated by drag and drop.</p>
+<ul>
+<li><a href="https://grappelliproject.com">Grappelli Homepage</a></li>
+<li><a href="https://django-grappelli.readthedocs.io/">Grappelli Documentation</a></li>
+<li><a href="https://github.com/sehmaschine/django-grappelli">Grappelli Code</a></li>
+</ul>
+<p><img alt="A Grapelli admin theme screenshot" src="https://media.djangoproject.com/blog/images/2025/04/grapelli.jpg" /></p>
+<h4 id="s-django-admin-interface">django-admin-interface</h4>
+<p>A modern responsive flat admin interface which comes with optional themes that can be installed for Bootstrap, Foundation, and U.S. Web Design Standards, and customizable by the admin itself. Other features include replacing admin pop-ups with modals, accordions in the navigation bar to collapse applications, sticky filters and buttons to prevent them from scrolling off the screen, and a language switcher. Also includes support for <code>django-ckeditor</code>, <code>django-dynamic-raw-id</code>, <code>django-json-widget</code>, <code>django-modeltranslation</code>, <code>django-rangefilter</code>, <code>django-streamfield</code>, <code>django-tabbed-admin</code>, and <code>sorl-thumbnail</code>.</p>
+<ul>
+<li><a href="https://github.com/fabiocaccamo/django-admin-interface">Django Admin Interface Code</a></li>
+</ul>
+<p><img alt="A gif of the django-admin-interface theme" src="https://media.djangoproject.com/blog/images/2025/04/django-admin-interface.gif" /></p>
+<h4 id="s-unfold">Unfold</h4>
+<p>Unfold transforms the Django admin and is built with TailwindCSS. It includes custom widgets, pages, and admin sites. Also provides a language selector, conditional fields, custom filters, tabs, and additional features for actions. There are a lot of available settings and it is extremely customizable.</p>
+<ul>
+<li><a href="https://unfoldadmin.com">Unfold Homepage</a></li>
+<li><a href="https://github.com/unfoldadmin/django-unfold">Unfold Code</a></li>
+</ul>
+<p><img alt="An Unfold admin theme screenshot" src="https://media.djangoproject.com/blog/images/2025/04/unfold.jpg" /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 18, 2025 02:19 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2025/apr/18/admin-theme-roundup/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2110,635 +2377,6 @@ and talks being presented at PyCon US 2025 and the Maintainers Summit:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/tutorials/pyside6-actions-toolbars-menus/" class="hover:underline"
-              >PySide6 Toolbars & Menus — QAction — Defining toolbars, menus, and keyboard shortcuts with QAction</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Next, we'll look at some of the common user interface elements you've probably seen in many other applications &mdash; toolbars and menus. We'll also explore the neat system Qt provides for minimizing the duplication between different UI areas &mdash; <code>QAction</code>.</p>
-<div class="toc"><span class="toctitle">Table of Contents</span><ul>
-<li><a href="#basic-app">Basic App</a></li>
-<li><a href="#toolbars">Toolbars</a></li>
-<li><a href="#adding-a-toolbar">Adding a Toolbar</a></li>
-<li><a href="#menus">Menus</a></li>
-<li><a href="#adding-a-menu">Adding a Menu</a></li>
-</ul>
-</div>
-<h2 id="basic-app">Basic App</h2>
-<p>We'll start this tutorial with a simple skeleton application, which we can customize. Save the following code in a file named <code>app.py</code> -- this code all the imports you'll need for the later steps:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QLabel,
-    QMainWindow,
-    QStatusBar,
-    QToolBar,
-)
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-app = QApplication([])
-window = MainWindow()
-window.show()
-app.exec()
-</code></pre>
-        </div>
-        
-<p>This file contains the imports and the basic code that you'll use to complete the examples in this tutorial.</p>
-<p class="admonition admonition-tip"><span class="admonition-kind"><i class="fas fa-lightbulb"></i></span>  If you're migrating to PySide6 from PySide2, notice that <code>QAction</code> is now available via the <code>QtGui</code> module.</p>
-<h2 id="toolbars">Toolbars</h2>
-<p>One of the most commonly seen user interface elements is the toolbar. Toolbars are bars of icons and/or text used to perform common tasks within an application, for which access via a menu would be cumbersome. They are one of the most common UI features seen in many applications. While some complex applications, particularly in the Microsoft Office suite, have migrated to contextual 'ribbon' interfaces, the standard toolbar is usually sufficient for the majority of applications you will create.</p>
-<p><img alt="Standard GUI elements" src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/toolbar.png" />
-<em>Standard GUI elements</em></p>
-<h2 id="adding-a-toolbar">Adding a Toolbar</h2>
-<p>Let's start by adding a toolbar to our application.</p>
-<p>In Qt, toolbars are created from the <code>QToolBar</code> class. To start, you create an instance of the class and then call <code>addToolbar</code> on the <code>QMainWindow</code>. Passing a string in as the first argument to <code>QToolBar</code> sets the toolbar's name, which will be used to identify the toolbar in the UI:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        self.addToolBar(toolbar)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> You'll see a thin grey bar at the top of the window. This is your toolbar. Right-click the name to trigger a context menu and toggle the bar off.</p>
-<p><img alt="A window with a toolbar." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/window-with-toolbar.png" />
-<em>A window with a toolbar.</em></p>
-<p class="admonition admonition-tip"><span class="admonition-kind"><i class="fas fa-lightbulb"></i></span> <strong>How can I get my toolbar back?</strong> Unfortunately, once you remove a toolbar, there is now no place to right-click to re-add it. So, as a general rule, you want to either keep one toolbar un-removeable, or provide an alternative interface in the menus to turn toolbars on and off.</p>
-<p>We should make the toolbar a bit more interesting. We could just add a <code>QButton</code> widget, but there is a better approach in Qt that gets you some additional features &mdash; and that is via <code>QAction</code>. <code>QAction</code> is a class that provides a way to describe abstract user interfaces. What this means in English is that you can define multiple interface elements within a single object, unified by the effect that interacting with that element has.</p>
-<p>For example, it is common to have functions that are represented in the toolbar but also the menu &mdash; think of something like <em>Edit-&gt;Cut</em>, which is present both in the <em>Edit</em> menu but also on the toolbar as a pair of scissors, and also through the keyboard shortcut <code>Ctrl-X</code> (<code>Cmd-X</code> on Mac).</p>
-<p>Without <code>QAction</code>, you would have to define this in multiple places. But with <code>QAction</code> you can define a single <code>QAction</code>, defining the triggered action, and then add this action to both the menu and the toolbar. Each <code>QAction</code> has names, status messages, icons, and signals that you can connect to (and much more).</p>
-<p>In the code below, you can see this first <code>QAction</code> added:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        self.addToolBar(toolbar)
-
-        button_action = QAction("Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        toolbar.addAction(button_action)
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p>To start with, we create the function that will accept the signal from the <code>QAction</code> so we can see if it is working. Next, we define the <code>QAction</code> itself. When creating the instance, we can pass a label for the action and/or an icon. You must also pass in any <code>QObject</code> to act as the parent for the action &mdash; here we're passing <code>self</code> as a reference to our main window. Strangely, for <code>QAction</code>, the parent element is passed in as the final argument.</p>
-<p>Next, we can opt to set a status tip &mdash; this text will be displayed on the status bar once we have one. Finally, we connect the <code>triggered</code> signal to the custom function. This signal will fire whenever the <code>QAction</code> is <em>triggered</em> (or activated).</p>
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> You should see your button with the label that you have defined. Click on it, and then our custom method will print "click" and the status of the button.</p>
-<p><img alt="Toolbar showing our QAction button." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/toolbar-with-qaction-button.png" />
-<em>Toolbar showing our <code>QAction</code> button.</em></p>
-<p class="admonition admonition-tip"><span class="admonition-kind"><i class="fas fa-lightbulb"></i></span> <strong>Why is the signal always false?</strong> The signal passed indicates whether the button is <em>checked</em>, and since our button is not checkable &mdash; just clickable &mdash; it is always false. We'll show how to make it checkable shortly.</p>
-<p>Next, we can add a status bar.</p>
-<p>We create a status bar object by calling <code>QStatusBar</code> to get a new status bar object and then passing this into <code>setStatusBar</code>. Since we don't need to change the status bar settings, we can also just pass it in as we create it, in a single line:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        self.addToolBar(toolbar)
-
-        button_action = QAction("Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        toolbar.addAction(button_action)
-
-        self.setStatusBar(QStatusBar(self))
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> Hover your mouse over the toolbar button, and you will see the status text in the status bar.</p>
-<p><img alt="Status bar text is updated as we hover our actions." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/statusbar-hover-action.png" />
-<em>Status bar text updated as we hover over the action.</em></p>
-<p>Next, we're going to turn our <code>QAction</code> toggleable &mdash; so clicking will turn it on, and clicking again will turn it off. To do this, we simply call <code>setCheckable(True)</code> on the <code>QAction</code> object:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        self.addToolBar(toolbar)
-
-        button_action = QAction("Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        self.setStatusBar(QStatusBar(self))
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> Click on the button to see it toggle from checked to unchecked state. Note that the custom slot method we create now alternates outputting <code>True</code> and <code>False</code>.</p>
-<p><img alt="The toolbar button toggled on." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/toolbar-button-toggled.png" />
-<em>The toolbar button toggled on.</em></p>
-<p class="admonition admonition-info"><span class="admonition-kind"><i class="fas fa-info"></i></span>  There is also a <code>toggled</code> signal, which only emits a signal when the button is toggled. But the effect is identical, so it is mostly pointless.</p>
-<p>Things look pretty shabby right now &mdash; so let's add an icon to our button. For this, I recommend you download the <a href="http://p.yusukekamiyamane.com/">fugue icon set</a> by designer Yusuke Kamiyamane. It's a great set of beautiful 16x16 icons that can give your apps a nice professional look. It is freely available with only attribution required when you distribute your application &mdash; although I am sure the designer would appreciate some cash too if you have some spare.</p>
-<p><img alt="Fugue Icon Set &mdash; Yusuke Kamiyamane" src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/fugue-icons.png" />
-<em>Fugue Icon Set &mdash;&nbsp;Yusuke Kamiyamane</em></p>
-<p>Select an image from the set (in the examples here, I've selected the file <code>bug.png</code>) and copy it into the same folder as your source code.</p>
-<p>We can create a <code>QIcon</code> object by passing the file name to the class, e.g. <code>QIcon("bug.png")</code> -- if you place the file in another folder, you will need a full relative or absolute path to it.</p>
-<p>Finally, to add the icon to the <code>QAction</code> (and therefore the button), we simply pass it in as the first argument when creating the <code>QAction</code>.</p>
-<p>You also need to let the toolbar know how large your icons are. Otherwise, your icon will be surrounded by a lot of padding. You can do this by calling <code>setIconSize()</code> with a <code>QSize</code> object:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        self.setStatusBar(QStatusBar(self))
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> The <code>QAction</code> is now represented by an icon. Everything should work exactly as it did before.</p>
-<p><img alt="Our action button with an icon." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/action-button-with-icon.png" />
-<em>Our action button with an icon.</em></p>
-<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  Note that Qt uses your operating system's default settings to determine whether to show an icon, text, or an icon and text in the toolbar. But you can override this by using <code>setToolButtonStyle()</code>. This slot accepts any of the following flags from the <code>Qt</code> namespace:</p>
-<table>
-<thead>
-<tr>
-<th>Flag</th>
-<th>Behavior</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>Qt.ToolButtonStyle.ToolButtonIconOnly</code></td>
-<td>Icon only, no text</td>
-</tr>
-<tr>
-<td><code>Qt.ToolButtonStyle.ToolButtonTextOnly</code></td>
-<td>Text only, no icon</td>
-</tr>
-<tr>
-<td><code>Qt.ToolButtonStyle.ToolButtonTextBesideIcon</code></td>
-<td>Icon and text, with text beside the icon</td>
-</tr>
-<tr>
-<td><code>Qt.ToolButtonStyle.ToolButtonTextUnderIcon</code></td>
-<td>Icon and text, with text under the icon</td>
-</tr>
-<tr>
-<td><code>Qt.ToolButtonStyle.ToolButtonFollowStyle</code></td>
-<td>Follow the host desktop style</td>
-</tr>
-</tbody>
-</table>
-<p>The default value is <code>Qt.ToolButtonStyle.ToolButtonFollowStyle</code>, meaning that your application will default to following the standard/global setting for the desktop on which the application runs. This is generally recommended to make your application feel as <em>native</em> as possible.</p>
-<p>Finally, we can add a few more bits and bobs to the toolbar. We'll add a second button and a checkbox widget. As mentioned, you can literally put any widget in here, so feel free to go crazy:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QLabel,
-    QMainWindow,
-    QStatusBar,
-    QToolBar,
-)
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "&amp;Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        toolbar.addSeparator()
-
-        button_action2 = QAction(QIcon("bug.png"), "Your &amp;button2", self)
-        button_action2.setStatusTip("This is your button2")
-        button_action2.triggered.connect(self.toolbar_button_clicked)
-        button_action2.setCheckable(True)
-        toolbar.addAction(button_action2)
-
-        toolbar.addWidget(QLabel("Hello"))
-        toolbar.addWidget(QCheckBox())
-
-        self.setStatusBar(QStatusBar(self))
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-
-app = QApplication([])
-window = MainWindow()
-window.show()
-app.exec()
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> Now you see multiple buttons and a checkbox.</p>
-<p><img alt="Toolbar with an action and two widgets." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/toolbar-action-widgets.png" />
-<em>Toolbar with an action and two widgets.</em></p>
-<h2 id="menus">Menus</h2>
-<p>Menus are another standard component of UIs. Typically, they are at the top of the window or the top of a screen on macOS. They allow you to access all standard application functions. A few standard menus exist &mdash; for example <em>File</em>, <em>Edit</em>, <em>Help</em>. Menus can be nested to create hierarchical trees of functions, and they often support and display keyboard shortcuts for fast access to their functions.</p>
-<p><img alt="Standard GUI elements - Menus" src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/menus.png" />
-<em>Standard GUI elements - Menus</em></p>
-<h2 id="adding-a-menu">Adding a Menu</h2>
-<p>To create a menu, we create a menubar we call <code>menuBar()</code> on the <code>QMainWindow</code>. We add a menu to our menu bar by calling <code>addMenu()</code>, passing in the name of the menu. I've called it <code>'&amp;File'</code>.  The ampersand defines a quick key to jump to this menu when pressing Alt.</p>
-<p class="admonition admonition-warning"><span class="admonition-kind"><i class="fas fa-exclamation-circle"></i></span>  This won't be visible on macOS. Note that this is different from a keyboard shortcut &mdash; we'll cover that shortly.</p>
-<p>This is where the power of actions comes into play. We can reuse the already existing QAction to add the same function to the menu. To add an action, you call <code>addAction()</code> passing in one of our defined actions:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "&amp;Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        toolbar.addSeparator()
-
-        button_action2 = QAction(QIcon("bug.png"), "Your &amp;button2", self)
-        button_action2.setStatusTip("This is your button2")
-        button_action2.triggered.connect(self.toolbar_button_clicked)
-        button_action2.setCheckable(True)
-        toolbar.addAction(button_action2)
-
-        toolbar.addWidget(QLabel("Hello"))
-        toolbar.addWidget(QCheckBox())
-
-        self.setStatusBar(QStatusBar(self))
-
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&amp;File")
-        file_menu.addAction(button_action)
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> Click the item in the menu, and you will notice that it is toggleable &mdash; it inherits the features of the <code>QAction</code>.</p>
-<p><img alt="Menu shown on the window -- on macOS this will be at the top of the screen." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/menu-shown-on-window.png" />
-<em>Menu shown on the window -- on macOS this will be at the top of the screen.</em></p>
-<p>Let's add some more things to the menu. Here, we'll add a separator to the menu, which will appear as a horizontal line in the menu, and then add the second <code>QAction</code> we created:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "&amp;Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        toolbar.addSeparator()
-
-        button_action2 = QAction(QIcon("bug.png"), "Your &amp;button2", self)
-        button_action2.setStatusTip("This is your button2")
-        button_action2.triggered.connect(self.toolbar_button_clicked)
-        button_action2.setCheckable(True)
-        toolbar.addAction(button_action2)
-
-        toolbar.addWidget(QLabel("Hello"))
-        toolbar.addWidget(QCheckBox())
-
-        self.setStatusBar(QStatusBar(self))
-
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&amp;File")
-        file_menu.addAction(button_action)
-        file_menu.addSeparator()
-        file_menu.addAction(button_action2)
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> You should see two menu items with a line between them.</p>
-<p><img alt="Our actions showing in the menu." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/actions-shown-in-menu.png" />
-<em>Our actions showing in the menu.</em></p>
-<p>You can also use ampersand to add <em>accelerator keys</em> to the menu to allow a single key to be used to jump to a menu item when it is open. Again this doesn't work on macOS.</p>
-<p>To add a submenu, you simply create a new menu by calling <code>addMenu()</code> on the parent menu. You can then add actions to it as usual. For example:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "&amp;Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        toolbar.addAction(button_action)
-
-        toolbar.addSeparator()
-
-        button_action2 = QAction(QIcon("bug.png"), "Your &amp;button2", self)
-        button_action2.setStatusTip("This is your button2")
-        button_action2.triggered.connect(self.toolbar_button_clicked)
-        button_action2.setCheckable(True)
-        toolbar.addAction(button_action2)
-
-        toolbar.addWidget(QLabel("Hello"))
-        toolbar.addWidget(QCheckBox())
-
-        self.setStatusBar(QStatusBar(self))
-
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&amp;File")
-        file_menu.addAction(button_action)
-        file_menu.addSeparator()
-
-        file_submenu = file_menu.addMenu("Submenu")
-        file_submenu.addAction(button_action2)
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-</code></pre>
-        </div>
-        
-<p class="admonition admonition-run"><span class="admonition-kind"><i class="fas fa-rocket"></i></span> <strong>Run it!</strong> You will see a nested menu in the <em>File</em> menu.</p>
-<p><img alt="Submenu nested in the File menu." src="https://www.pythonguis.com/static/tutorials/qt/actions-toolbars-menus/submenu-nested-in-file-menu.png" />
-<em>Submenu nested in the File menu.</em></p>
-<p>Finally, we'll add a keyboard shortcut to the <code>QAction</code>. You define a keyboard shortcut by passing <code>setKeySequence()</code> and passing in the key sequence. Any defined key sequences will appear in the menu.</p>
-<p class="admonition admonition-tip"><span class="admonition-kind"><i class="fas fa-lightbulb"></i></span>  Note that the keyboard shortcut is associated with the <code>QAction</code> and will still work whether or not the <code>QAction</code> is added to a menu or a toolbar.</p>
-<p>Key sequences can be defined in multiple ways - either by passing as text, using key names from the <code>Qt</code> namespace, or using the defined key sequences from the <code>Qt</code> namespace. Use the latter wherever you can to ensure compliance with the operating system standards.</p>
-<p>The completed code, showing the toolbar buttons and menus, is shown below:</p>
-
-        <div class="code-block">
-        <span class="code-block-language code-block-python">python</span>
-        <pre><code class="python">from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QLabel,
-    QMainWindow,
-    QStatusBar,
-    QToolBar,
-)
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("My App")
-
-        label = QLabel("Hello!")
-
-        # The `Qt` namespace has a lot of attributes to customize
-        # widgets. See: http://doc.qt.io/qt-6/qt.html
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Set the central widget of the Window. Widget will expand
-        # to take up all the space in the window by default.
-        self.setCentralWidget(label)
-
-        toolbar = QToolBar("My main toolbar")
-        toolbar.setIconSize(QSize(16, 16))
-        self.addToolBar(toolbar)
-
-        button_action = QAction(QIcon("bug.png"), "&amp;Your button", self)
-        button_action.setStatusTip("This is your button")
-        button_action.triggered.connect(self.toolbar_button_clicked)
-        button_action.setCheckable(True)
-        # You can enter keyboard shortcuts using key names (e.g. Ctrl+p)
-        # Qt.namespace identifiers (e.g. Qt.CTRL + Qt.Key_P)
-        # or system agnostic identifiers (e.g. QKeySequence.Print)
-        button_action.setShortcut(QKeySequence("Ctrl+p"))
-        toolbar.addAction(button_action)
-
-        toolbar.addSeparator()
-
-        button_action2 = QAction(QIcon("bug.png"), "Your &amp;button2", self)
-        button_action2.setStatusTip("This is your button2")
-        button_action2.triggered.connect(self.toolbar_button_clicked)
-        button_action2.setCheckable(True)
-        toolbar.addAction(button_action2)
-
-        toolbar.addWidget(QLabel("Hello"))
-        toolbar.addWidget(QCheckBox())
-
-        self.setStatusBar(QStatusBar(self))
-
-        menu = self.menuBar()
-
-        file_menu = menu.addMenu("&amp;File")
-        file_menu.addAction(button_action)
-
-        file_menu.addSeparator()
-
-        file_submenu = file_menu.addMenu("Submenu")
-
-        file_submenu.addAction(button_action2)
-
-    def toolbar_button_clicked(self, s):
-        print("click", s)
-
-app = QApplication([])
-window = MainWindow()
-window.show()
-app.exec()
-</code></pre>
-        </div>
-        
-<p>Experiment with building your own menus using <code>QAction</code> and <code>QMenu</code>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 11, 2025 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/tutorials/pyside6-actions-toolbars-menus/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mattlayman.com/videos/goodbye-journeyinbox-building-saas-218/" class="hover:underline"
-              >Goodbye JourneyInbox - Building SaaS #218</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this episode, I declared to the stream that I&rsquo;m done working on JourneyInbox as a SaaS product. I didn&rsquo;t see any meaningful market adoption, so I&rsquo;ve decided to pivot the project to serve only my personal needs. I used the stream to do a retrospective on the project and then convert the core logic to use Go to simplify when I need to run on my server.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 11, 2025 12:00 AM UTC by
-            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
-              >Matt Layman</a
-            >
-          </div>
-          <a
-            href="https://www.mattlayman.com/videos/goodbye-journeyinbox-building-saas-218/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2750,8 +2388,8 @@ app.exec()
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9122</a></li>
-    <li><a>Unique Feeds: 424</a></li>
+    <li><a>Total Entries: 8965</a></li>
+    <li><a>Unique Feeds: 421</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
