@@ -53,371 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/" class="hover:underline"
-              >scikit-survival 0.24.0 released</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It&rsquo;s my pleasure to announce the release of <a href="https://scikit-survival.readthedocs.io/" target="_blank">scikit-survival</a> 0.24.0.</p>
-<p>A highlight of this release the addition of
-<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.nonparametric.cumulative_incidence_competing_risks.html#sksurv.nonparametric.cumulative_incidence_competing_risks" target="_blank">cumulative_incidence_competing_risks()</a>
-which implements a non-parameteric estimator of the cumulative incidence function in the presence of competing risks.
-In addition, the release adds support for scikit-learn 1.6, including the support for missing values for
-<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.ensemble.ExtraSurvivalTrees.html#sksurv.ensemble.ExtraSurvivalTrees" target="_blank">ExtraSurvivalTrees</a>.</p>
-<h2 id="analysis-of-competing-risks">Analysis of Competing Risks</h2>
-<p>In classical survival analysis, the focus is on the time until a specific event occurs. If no event is observed during the study period, the time of the event is considered censored. A common assumption is that censoring is non-informative, meaning that censored subjects have a similar prognosis to those who were not censored.</p>
-<p>Competing risks arise when each subject can experience an event due to one of $K$ ($K \geq 2$) mutually exclusive causes, termed competing risks. Thus, the occurrence of one event prevents the occurrence of other events. For example, after a bone marrow transplant, a patient might relapse or die from transplant-related causes (transplant-related mortality). In this case, death from transplant-related mortality precludes relapse.</p>
-<p>The bone marrow transplant data from <a href="https://doi.org/10.1038/sj.bmt.1705727" target="_blank">Scrucca et al., Bone Marrow Transplantation (2007)</a> includes data
-from 35 patients grouped into two cancer types: Acute Lymphoblastic Leukemia (ALL; coded as 0), and Acute Myeloid Leukemia (AML; coded as 1).</p>
-<pre><code class="language-python">from sksurv.datasets import load_bmt
-bmt_features, bmt_outcome = load_bmt()
-diseases = bmt_features[&quot;dis&quot;].cat.rename_categories(
-{&quot;0&quot;: &quot;ALL&quot;, &quot;1&quot;: &quot;AML&quot;}
-)
-diseases.value_counts().to_frame()
-</code></pre>
-<div class="table-responsive">
-<table class="dataframe" style="width: 20%;">
-<thead>
-<tr>
-<th>dis</th>
-<th>count</th>
-</tr>
-</thead>
-<tbody>
-<tr style="text-align: right;">
-<th>AML</th>
-<td>18</td>
-</tr>
-<tr style="text-align: right;">
-<th>ALL</th>
-<td>17</td>
-</tr>
-</tbody>
-</table>
-</div>
-<p>During the follow-up period, some patients might experience a relapse of the original leukemia or die
-while in remission (transplant related death).
-The outcome is defined similarly to standard time-to-event data, except that the event indicator specifies the type of event, where 0 always indicates censoring.</p>
-<pre><code class="language-python">import pandas as pd
-status_labels = {
-0: &quot;Censored&quot;,
-1: &quot;Transplant related mortality&quot;,
-2: &quot;Relapse&quot;,
-}
-risks = pd.DataFrame.from_records(bmt_outcome).assign(
-label=lambda x: x[&quot;status&quot;].replace(status_labels)
-)
-risks[&quot;label&quot;].value_counts().to_frame()
-</code></pre>
-<div class="table-responsive">
-<table class="dataframe" style="width: 40%;">
-<thead>
-<tr>
-<th>label</th>
-<th>count</th>
-</tr>
-</thead>
-<tbody>
-<tr style="text-align: right;">
-<th>Relapse</th>
-<td>15</td>
-</tr>
-<tr style="text-align: right;">
-<th>Censored</th>
-<td>11</td>
-</tr>
-<tr style="text-align: right;">
-<th>Transplant related mortality</th>
-<td>9</td>
-</tr>
-</tbody>
-</table>
-</div>
-<p>The table above shows the number of observations for each status.</p>
-<h3 id="non-parametric-estimator-of-the-cumulative-incidence-function">Non-parametric Estimator of the Cumulative Incidence Function</h3>
-<p>If the goal is to estimate the probability of relapse, transplant-related death is a competing risk event. This means that the occurrence of relapse prevents the occurrence of transplant-related death, and vice versa. We aim to estimate curves that illustrate how the likelihood of these events changes over time.</p>
-<p>Let&rsquo;s begin by estimating the probability of relapse using the complement of the Kaplan-Meier estimator. With this approach, we treat deaths as censored observations. One minus the Kaplan-Meier estimator provides an estimate of the probability of relapse before time $t$.</p>
-<pre><code class="language-python">import matplotlib.pyplot as plt
-from sksurv.nonparametric import kaplan_meier_estimator
-times, km_estimate = kaplan_meier_estimator(
-bmt_outcome[&quot;status&quot;] == 1, bmt_outcome[&quot;ftime&quot;]
-)
-plt.step(times, 1 - km_estimate, where=&quot;post&quot;)
-plt.xlabel(&quot;time $t$&quot;)
-plt.ylabel(&quot;Probability of relapsing before time $t$&quot;)
-plt.ylim(0, 1)
-plt.grid()
-</code></pre>
-<figure>
-<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-kaplan-meier.svg" width="400" />
-</figure>
-<p>However, this approach has a significant drawback: considering death as a censoring event violates the assumption that censoring is non-informative. This is because patients who died from transplant-related mortality have a different prognosis than patients who did not experience any event. Therefore, the estimated probability of relapse is often biased.</p>
-<p>The cause-specific <strong>cumulative incidence function (CIF)</strong> addresses this problem by estimating the cause-specific hazard of each event separately. The cumulative incidence function estimates the probability that the event of interest occurs before time $t$, and that it occurs before any of the competing causes of an event. In the bone marrow transplant dataset, the cumulative incidence function of relapse indicates the probability of relapse before time $t$, given that the patient has not died from other causes before time $t$.</p>
-<pre><code class="language-python">from sksurv.nonparametric import cumulative_incidence_competing_risks
-times, cif_estimates = cumulative_incidence_competing_risks(
-bmt_outcome[&quot;status&quot;], bmt_outcome[&quot;ftime&quot;]
-)
-plt.step(times, cif_estimates[0], where=&quot;post&quot;, label=&quot;Total risk&quot;)
-for i, cif in enumerate(cif_estimates[1:], start=1):
-plt.step(times, cif, where=&quot;post&quot;, label=status_labels[i])
-plt.legend()
-plt.xlabel(&quot;time $t$&quot;)
-plt.ylabel(&quot;Probability of event before time $t$&quot;)
-plt.ylim(0, 1)
-plt.grid()
-</code></pre>
-<figure>
-<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence.svg" width="400" />
-</figure>
-<p>The plot shows the estimated probability of experiencing an event at time $t$ for both the individual risks and for the total risk.</p>
-<p>Next, we want to to estimate the cumulative incidence curves for the two cancer types — acute lymphoblastic leukemia (ALL) and acute myeloid leukemia (AML) — to examine how the probability of relapse depends on the original disease diagnosis.</p>
-<pre><code class="language-python">_, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
-for j, disease in enumerate(diseases.unique()):
-mask = diseases == disease
-event = bmt_outcome[&quot;status&quot;][mask]
-time = bmt_outcome[&quot;ftime&quot;][mask]
-times, cif_estimates, conf_int = cumulative_incidence_competing_risks(
-event,
-time,
-conf_type=&quot;log-log&quot;,
-)
-for i, (cif, ci, ax) in enumerate(
-zip(cif_estimates[1:], conf_int[1:], axs[:, j]), start=1
-):
-ax.step(times, cif, where=&quot;post&quot;)
-ax.fill_between(times, ci[0], ci[1], alpha=0.25, step=&quot;post&quot;)
-ax.set_title(f&quot;{disease}: {status_labels[i]}&quot;, size=&quot;small&quot;)
-ax.grid()
-for ax in axs[-1, :]:
-ax.set_xlabel(&quot;time $t$&quot;)
-for ax in axs[:, 0]:
-ax.set_ylim(0, 1)
-ax.set_ylabel(&quot;Probability of event before time $t$&quot;)
-</code></pre>
-<figure>
-<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence-by-diagnosis.svg" width="450" />
-</figure>
-<p>The left column shows the estimated cumulative incidence curves (solid lines) for patients diagnosed with ALL, while the right column shows the curves for patients diagnosed with AML, along with their 95% pointwise confidence intervals. The plot indicates that the estimated probability of relapse at $t=40$ days is more than three times higher for patients diagnosed with ALL compared to AML.</p>
-<p>If you want to run the examples above yourself, you can
-<a href="https://mybinder.org/v2/gh/sebp/scikit-survival/master?urlpath=lab/tree/notebooks/competing-risks.ipynb" target="_blank">execute them interactively in your browser using binder</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 26, 2025 09:26 PM UTC by
-            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
-              >Sebastian Pölsterl</a
-            >
-          </div>
-          <a
-            href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pypy.org/posts/2025/02/pypy-v7319-release.html" class="hover:underline"
-              >PyPy v7.3.19 release</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <section id="pypy-v7-3-19-release-of-python-2-7-3-10-and-3-11-beta">
-<h2>PyPy v7.3.19: release of python 2.7, 3.10 and 3.11 beta</h2>
-<p>The PyPy team is proud to release version 7.3.19 of PyPy. This is primarily a
-bug-fix release fixing JIT-related problems and follows quickly on the heels of
-the previous release on Feb 6, 2025.</p>
-<p>This release includes a python 3.11 interpreter. There were bugs in the first
-beta that could prevent its wider use, so we are continuing to call this
-release "beta". In the next release we will drop 3.10 and remove the "beta"
-label.</p>
-<p>The release includes three different interpreters:</p>
-<ul class="simple">
-<li><p>PyPy2.7, which is an interpreter supporting the syntax and the features of
-Python 2.7 including the stdlib for CPython 2.7.18+ (the <code class="docutils literal">+</code> is for
-backported security updates)</p></li>
-<li><p>PyPy3.10, which is an interpreter supporting the syntax and the features of
-Python 3.10, including the stdlib for CPython 3.10.16.</p></li>
-<li><p>PyPy3.11, which is an interpreter supporting the syntax and the features of
-Python 3.11, including the stdlib for CPython 3.11.11.</p></li>
-</ul>
-<p>The interpreters are based on much the same codebase, thus the triple
-release. This is a micro release, all APIs are compatible with the other 7.3
-releases. It follows after 7.3.17 release on August 28, 2024.</p>
-<p>We recommend updating. You can find links to download the releases here:</p>
-<blockquote>
-<p><a class="reference external" href="https://pypy.org/download.html">https://pypy.org/download.html</a></p>
-</blockquote>
-<p>We would like to thank our donors for the continued support of the PyPy
-project. If PyPy is not quite good enough for your needs, we are available for
-<a class="reference external" href="https://www.pypy.org/pypy-sponsors.html">direct consulting</a> work. If PyPy is helping you out, we would love to hear
-about it and encourage submissions to our <a class="reference external" href="https://pypy.org/blog">blog</a> via a pull request
-to <a class="reference external" href="https://github.com/pypy/pypy.org">https://github.com/pypy/pypy.org</a></p>
-<p>We would also like to thank our contributors and encourage new people to join
-the project. PyPy has many layers and we need help with all of them: bug fixes,
-<a class="reference external" href="https://doc.pypy.org/">PyPy</a> and <a class="reference external" href="https://rpython.readthedocs.org">RPython</a> documentation improvements, or general <a class="reference external" href="https://doc.pypy.org/en/latest/project-ideas.html">help</a> with
-making RPython's JIT even better.</p>
-<p>If you are a python library maintainer and use C-extensions, please consider
-making a <a class="reference external" href="https://hpyproject.org/">HPy</a> / <a class="reference external" href="https://cffi.readthedocs.io">CFFI</a> / <a class="reference external" href="https://cppyy.readthedocs.io">cppyy</a> version of your library that would be performant
-on PyPy. In any case, both <a class="reference external" href="https://github.com/joerick/cibuildwheel">cibuildwheel</a> and the <a class="reference external" href="https://github.com/matthew-brett/multibuild">multibuild system</a> support
-building wheels for PyPy.</p>
-<section id="what-is-pypy">
-<h3>What is PyPy?</h3>
-<p>PyPy is a Python interpreter, a drop-in replacement for CPython
-It's fast (<a class="reference external" href="https://speed.pypy.org">PyPy and CPython</a> performance
-comparison) due to its integrated tracing JIT compiler.</p>
-<p>We also welcome developers of other <a class="reference external" href="https://rpython.readthedocs.io/en/latest/examples.html">dynamic languages</a> to see what RPython
-can do for them.</p>
-<p>We provide binary builds for:</p>
-<ul class="simple">
-<li><p><strong>x86</strong> machines on most common operating systems
-(Linux 32/64 bits, Mac OS 64 bits, Windows 64 bits)</p></li>
-<li><p>64-bit <strong>ARM</strong> machines running Linux (<code class="docutils literal">aarch64</code>) and macos (<code class="docutils literal">macos_arm64</code>).</p></li>
-</ul>
-<p>PyPy supports Windows 32-bit, Linux PPC64 big- and little-endian, Linux ARM
-32 bit, RISC-V RV64IMAFD Linux, and s390x Linux but does not release binaries.
-Please reach out to us if you wish to sponsor binary releases for those
-platforms. Downstream packagers provide binary builds for debian, Fedora,
-conda, OpenBSD, FreeBSD, Gentoo, and more.</p>
-</section>
-<section id="what-else-is-new">
-<h3>What else is new?</h3>
-<p>For more information about the 7.3.19 release, see the <a class="reference external" href="https://doc.pypy.org/en/latest/release-v7.3.19.html#changelog">full changelog</a>.</p>
-<p>Please update, and continue to help us make pypy better.</p>
-<p>Cheers,
-The PyPy Team</p>
-</section>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 26, 2025 12:00 PM UTC by
-            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
-              >PyPy</a
-            >
-          </div>
-          <a
-            href="https://www.pypy.org/posts/2025/02/pypy-v7319-release.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/automate-microsoft-365-in-python.html" class="hover:underline"
-              >Automate Microsoft 365 Like a Pro: Skip the OAuth Headaches</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/automate-microsoft-365-in-python.html">Automate Microsoft 365 Like a Pro: Skip the OAuth Headaches</a>
-</h1>
-<div class="article-meta">
-  2025-02-26, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>Are you tired of fighting with Microsoft 365 APIs and complex authentication flows? This
-<a href="https://zato.io/en/tutorials/microsoft/365.html">practical tutorial</a>
-cuts through the complexity,
-showing you how to build production-ready Python automations for Outlook, Calendar, and SharePoint in just 60 minutes.</p>
-<p>No OAuth2 struggles, no Graph API complexity—just working code you can deploy today.</p>
-<p>What you'll learn in the <a href="https://zato.io/en/tutorials/microsoft/365.html">tutorial</a>:</p>
-<ul>
-<li>Connect to Microsoft 365 APIs with minimal Python code</li>
-<li>Build real email, calendar, and SharePoint automations</li>
-<li>Schedule background tasks without programming</li>
-<li>Access Entra ID (Azure AD) user data effortlessly</li>
-<li>Implement enterprise-grade patterns that solve actual business problems</li>
-</ul>
-<p><br /></p>
-<p><a href="https://zato.io/en/tutorials/microsoft/365.html"><img alt="Automate Microsoft 365 in Python" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/automate-microsoft-365/automate-microsoft-365-vertical.webp" style="width: 60%;" />
-</a></p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/network-packet-broker.html">What is a Network Packet Broker? How to automate networks in Python?</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 26, 2025 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/automate-microsoft-365-in-python.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonguis.com/faq/which-python-gui-library/" class="hover:underline"
               >Which Python GUI library should you use? — Comparing the Python GUI libraries available in 2025</a
             >
@@ -457,7 +92,7 @@ Qt Widgets-based applications use platform native widgets to ensure they look an
 <p><strong>Installation</strong> <code>pip install pyqt6</code> or <code>pip install pyside6</code></p>
 <p>A simple <em>hello world</em> application in PyQt6, using the Qt Widgets API is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">PyQt6</li>
-<li class="tab-link">PySide6</li></ul><div class="tab-content current code-block-outer" id="076324ee6c2a4904a7ffd52cb2cd7153">
+<li class="tab-link">PySide6</li></ul><div class="tab-content current code-block-outer" id="b313f2b905d84cccbeb7bc3427890a07">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -486,7 +121,7 @@ app.exec()
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="5801fba19d7449b08add5a4aa7e65e8c">
+<div class="tab-content code-block-outer" id="98c2c35f058149258fe3402bded68b78">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -563,7 +198,7 @@ app.exec()
 <p><strong>Installation</strong> Already installed with Python on Windows and macOS. Ubuntu/Debian Linux <code>sudo apt install python3-tk</code></p>
 <p>A simple <em>hello world</em> application in Tkinter is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">Standard</li>
-<li class="tab-link">Class-based</li></ul><div class="tab-content current code-block-outer" id="9c34f0f177d444d3ae2e5253389c32d3">
+<li class="tab-link">Class-based</li></ul><div class="tab-content current code-block-outer" id="0df4ab40e18e4683ba45f7672e08cebf">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -587,7 +222,7 @@ window.mainloop()
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="260c6e45b90143c0a223b988dcc9113e">
+<div class="tab-content code-block-outer" id="7302ce1e8210466f8992113e0c7464b4">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -669,7 +304,7 @@ app.run()
 <em>Hello world application built using Kivy, running on Windows 11</em></p>
 <p>An equivalent application built using the Kv declarative language is shown below.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">main.py</li>
-<li class="tab-link">controller.kv</li></ul><div class="tab-content current code-block-outer" id="7bb797db8aa942879783f7f8989e59ce">
+<li class="tab-link">controller.kv</li></ul><div class="tab-content current code-block-outer" id="da7664cf86c840b4b3fd39f89762e3c4">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -702,7 +337,7 @@ if __name__ == '__main__':
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="f9dcbf293d554b6cbfe08aaf79abd2b7">
+<div class="tab-content code-block-outer" id="65fee4b8e1fe4f3ab49f274eb3930e82">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -801,7 +436,7 @@ experiences, like those you find in media player applications like Spotify, or t
 <p><strong>Installation</strong> <code>pip install pyqt6</code> or <code>pip install pyside6</code></p>
 <p>A simple <em>Hello World</em> app in PyQt6 with QML. Save the QML file in the same folder as the Python file, and run as normally.</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">main.py</li>
-<li class="tab-link">main.qml</li></ul><div class="tab-content current code-block-outer" id="3227a520037243cf937821d5d06d8343">
+<li class="tab-link">main.qml</li></ul><div class="tab-content current code-block-outer" id="58302f36be57448db0e32e502c42e2d1">
 
         <div class="code-block">
         <span class="code-block-language code-block-python">python</span>
@@ -822,7 +457,7 @@ sys.exit(app.exec())
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="9e871b3812764e2e82fa97c7a21ba81c">
+<div class="tab-content code-block-outer" id="9542dba1abda4710a9d7202f514a9163">
 
         <div class="code-block">
         <span class="code-block-language code-block-qml">qml</span>
@@ -1445,6 +1080,86 @@ PyPy eventually.</p>
           </div>
           <a
             href="https://www.pypy.org/posts/2025/02/pypy-gc-sampling.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lukasz.langa.pl/f37aa97a-9ea3-4aeb-b6a0-9daeea5a7505/" class="hover:underline"
+              >A peek into a possible future of Python in the browser</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>My Python code was too slow, so I made it faster with Python. For some definition of “Python”.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 24, 2025 07:00 PM UTC by
+            <a href="https://lukasz.langa.pl/python/atom.xml" class="link link-hover text-primary"
+              >Łukasz Langa</a
+            >
+          </div>
+          <a
+            href="https://lukasz.langa.pl/f37aa97a-9ea3-4aeb-b6a0-9daeea5a7505/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python" class="hover:underline"
+              >7 free Machine Learning projects to practice using Python | DataWars</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            A collection of free projects to practice machine learning with real life examples using Python
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 24, 2025 09:25 AM UTC by
+            <a href="https://www.datawars.io/articles/rss.xml" class="link link-hover text-primary"
+              >DataWars.io</a
+            >
+          </div>
+          <a
+            href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2417,6 +2132,46 @@ immediately when it happens.
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.europython.eu/europython-february-2025-newsletter/" class="hover:underline"
+              >EuroPython February 2025 Newsletter</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Hey ya &#x1f44b;&#xa0;</p><p>Hope you&apos;re all having a fantastic February. We sure have been busy and got some exciting updates for you as we gear up for EuroPython 2025, which is taking place once again in the beautiful city of Prague. So let&apos;s dive right</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 13, 2025 08:36 AM UTC by
+            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
+              >EuroPython</a
+            >
+          </div>
+          <a
+            href="https://blog.europython.eu/europython-february-2025-newsletter/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -2428,12 +2183,12 @@ immediately when it happens.
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9068</a></li>
-    <li><a>Unique Feeds: 418</a></li>
+    <li><a>Total Entries: 8848</a></li>
+    <li><a>Unique Feeds: 419</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (502)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (430)</a></li><li><a href="http://testandcode.com/rss">Awesome Python Applications (426)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Matt Layman (336)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Test and Code (231)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (502)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (430)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Awesome Python Applications (426)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Matt Layman (336)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Python Anywhere (212)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
