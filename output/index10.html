@@ -53,6 +53,188 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/" class="hover:underline"
+              >scikit-survival 0.24.0 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>It&rsquo;s my pleasure to announce the release of <a href="https://scikit-survival.readthedocs.io/" target="_blank">scikit-survival</a> 0.24.0.</p>
+<p>A highlight of this release the addition of
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.nonparametric.cumulative_incidence_competing_risks.html#sksurv.nonparametric.cumulative_incidence_competing_risks" target="_blank">cumulative_incidence_competing_risks()</a>
+which implements a non-parameteric estimator of the cumulative incidence function in the presence of competing risks.
+In addition, the release adds support for scikit-learn 1.6, including the support for missing values for
+<a href="https://scikit-survival.readthedocs.io/en/v0.24.0/api/generated/sksurv.ensemble.ExtraSurvivalTrees.html#sksurv.ensemble.ExtraSurvivalTrees" target="_blank">ExtraSurvivalTrees</a>.</p>
+<h2 id="analysis-of-competing-risks">Analysis of Competing Risks</h2>
+<p>In classical survival analysis, the focus is on the time until a specific event occurs. If no event is observed during the study period, the time of the event is considered censored. A common assumption is that censoring is non-informative, meaning that censored subjects have a similar prognosis to those who were not censored.</p>
+<p>Competing risks arise when each subject can experience an event due to one of $K$ ($K \geq 2$) mutually exclusive causes, termed competing risks. Thus, the occurrence of one event prevents the occurrence of other events. For example, after a bone marrow transplant, a patient might relapse or die from transplant-related causes (transplant-related mortality). In this case, death from transplant-related mortality precludes relapse.</p>
+<p>The bone marrow transplant data from <a href="https://doi.org/10.1038/sj.bmt.1705727" target="_blank">Scrucca et al., Bone Marrow Transplantation (2007)</a> includes data
+from 35 patients grouped into two cancer types: Acute Lymphoblastic Leukemia (ALL; coded as 0), and Acute Myeloid Leukemia (AML; coded as 1).</p>
+<pre><code class="language-python">from sksurv.datasets import load_bmt
+bmt_features, bmt_outcome = load_bmt()
+diseases = bmt_features[&quot;dis&quot;].cat.rename_categories(
+{&quot;0&quot;: &quot;ALL&quot;, &quot;1&quot;: &quot;AML&quot;}
+)
+diseases.value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 20%;">
+<thead>
+<tr>
+<th>dis</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>AML</th>
+<td>18</td>
+</tr>
+<tr style="text-align: right;">
+<th>ALL</th>
+<td>17</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>During the follow-up period, some patients might experience a relapse of the original leukemia or die
+while in remission (transplant related death).
+The outcome is defined similarly to standard time-to-event data, except that the event indicator specifies the type of event, where 0 always indicates censoring.</p>
+<pre><code class="language-python">import pandas as pd
+status_labels = {
+0: &quot;Censored&quot;,
+1: &quot;Transplant related mortality&quot;,
+2: &quot;Relapse&quot;,
+}
+risks = pd.DataFrame.from_records(bmt_outcome).assign(
+label=lambda x: x[&quot;status&quot;].replace(status_labels)
+)
+risks[&quot;label&quot;].value_counts().to_frame()
+</code></pre>
+<div class="table-responsive">
+<table class="dataframe" style="width: 40%;">
+<thead>
+<tr>
+<th>label</th>
+<th>count</th>
+</tr>
+</thead>
+<tbody>
+<tr style="text-align: right;">
+<th>Relapse</th>
+<td>15</td>
+</tr>
+<tr style="text-align: right;">
+<th>Censored</th>
+<td>11</td>
+</tr>
+<tr style="text-align: right;">
+<th>Transplant related mortality</th>
+<td>9</td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The table above shows the number of observations for each status.</p>
+<h3 id="non-parametric-estimator-of-the-cumulative-incidence-function">Non-parametric Estimator of the Cumulative Incidence Function</h3>
+<p>If the goal is to estimate the probability of relapse, transplant-related death is a competing risk event. This means that the occurrence of relapse prevents the occurrence of transplant-related death, and vice versa. We aim to estimate curves that illustrate how the likelihood of these events changes over time.</p>
+<p>Let&rsquo;s begin by estimating the probability of relapse using the complement of the Kaplan-Meier estimator. With this approach, we treat deaths as censored observations. One minus the Kaplan-Meier estimator provides an estimate of the probability of relapse before time $t$.</p>
+<pre><code class="language-python">import matplotlib.pyplot as plt
+from sksurv.nonparametric import kaplan_meier_estimator
+times, km_estimate = kaplan_meier_estimator(
+bmt_outcome[&quot;status&quot;] == 1, bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, 1 - km_estimate, where=&quot;post&quot;)
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of relapsing before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-kaplan-meier.svg" width="400" />
+</figure>
+<p>However, this approach has a significant drawback: considering death as a censoring event violates the assumption that censoring is non-informative. This is because patients who died from transplant-related mortality have a different prognosis than patients who did not experience any event. Therefore, the estimated probability of relapse is often biased.</p>
+<p>The cause-specific <strong>cumulative incidence function (CIF)</strong> addresses this problem by estimating the cause-specific hazard of each event separately. The cumulative incidence function estimates the probability that the event of interest occurs before time $t$, and that it occurs before any of the competing causes of an event. In the bone marrow transplant dataset, the cumulative incidence function of relapse indicates the probability of relapse before time $t$, given that the patient has not died from other causes before time $t$.</p>
+<pre><code class="language-python">from sksurv.nonparametric import cumulative_incidence_competing_risks
+times, cif_estimates = cumulative_incidence_competing_risks(
+bmt_outcome[&quot;status&quot;], bmt_outcome[&quot;ftime&quot;]
+)
+plt.step(times, cif_estimates[0], where=&quot;post&quot;, label=&quot;Total risk&quot;)
+for i, cif in enumerate(cif_estimates[1:], start=1):
+plt.step(times, cif, where=&quot;post&quot;, label=status_labels[i])
+plt.legend()
+plt.xlabel(&quot;time $t$&quot;)
+plt.ylabel(&quot;Probability of event before time $t$&quot;)
+plt.ylim(0, 1)
+plt.grid()
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence.svg" width="400" />
+</figure>
+<p>The plot shows the estimated probability of experiencing an event at time $t$ for both the individual risks and for the total risk.</p>
+<p>Next, we want to to estimate the cumulative incidence curves for the two cancer types — acute lymphoblastic leukemia (ALL) and acute myeloid leukemia (AML) — to examine how the probability of relapse depends on the original disease diagnosis.</p>
+<pre><code class="language-python">_, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
+for j, disease in enumerate(diseases.unique()):
+mask = diseases == disease
+event = bmt_outcome[&quot;status&quot;][mask]
+time = bmt_outcome[&quot;ftime&quot;][mask]
+times, cif_estimates, conf_int = cumulative_incidence_competing_risks(
+event,
+time,
+conf_type=&quot;log-log&quot;,
+)
+for i, (cif, ci, ax) in enumerate(
+zip(cif_estimates[1:], conf_int[1:], axs[:, j]), start=1
+):
+ax.step(times, cif, where=&quot;post&quot;)
+ax.fill_between(times, ci[0], ci[1], alpha=0.25, step=&quot;post&quot;)
+ax.set_title(f&quot;{disease}: {status_labels[i]}&quot;, size=&quot;small&quot;)
+ax.grid()
+for ax in axs[-1, :]:
+ax.set_xlabel(&quot;time $t$&quot;)
+for ax in axs[:, 0]:
+ax.set_ylim(0, 1)
+ax.set_ylabel(&quot;Probability of event before time $t$&quot;)
+</code></pre>
+<figure>
+<img src="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/img/bmt-cumulative-incidence-by-diagnosis.svg" width="450" />
+</figure>
+<p>The left column shows the estimated cumulative incidence curves (solid lines) for patients diagnosed with ALL, while the right column shows the curves for patients diagnosed with AML, along with their 95% pointwise confidence intervals. The plot indicates that the estimated probability of relapse at $t=40$ days is more than three times higher for patients diagnosed with ALL compared to AML.</p>
+<p>If you want to run the examples above yourself, you can
+<a href="https://mybinder.org/v2/gh/sebp/scikit-survival/master?urlpath=lab/tree/notebooks/competing-risks.ipynb" target="_blank">execute them interactively in your browser using binder</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 26, 2025 09:26 PM UTC by
+            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
+              >Sebastian Pölsterl</a
+            >
+          </div>
+          <a
+            href="https://k-d-w.org/blog/2025/02/scikit-survival-0.24.0-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pypy.org/posts/2025/02/pypy-v7319-release.html" class="hover:underline"
               >PyPy v7.3.19 release</a
             >
@@ -579,46 +761,6 @@ PyPy eventually.</p>
           </div>
           <a
             href="https://www.pypy.org/posts/2025/02/pypy-gc-sampling.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python" class="hover:underline"
-              >7 free Machine Learning projects to practice using Python | DataWars</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            A collection of free projects to practice machine learning with real life examples using Python
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 24, 2025 09:25 AM UTC by
-            <a href="https://www.datawars.io/articles/rss.xml" class="link link-hover text-primary"
-              >DataWars.io</a
-            >
-          </div>
-          <a
-            href="https://www.datawars.io/articles/7-free-machine-learning-projects-to-practice-using-python"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1688,8 +1830,8 @@ of total downloads, meaning around 70k / 100k downloads per day.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9052</a></li>
-    <li><a>Unique Feeds: 421</a></li>
+    <li><a>Total Entries: 9123</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
