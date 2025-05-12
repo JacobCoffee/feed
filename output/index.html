@@ -53,6 +53,124 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/what-does-slot-do/" class="hover:underline"
+              >What does @Slot() do? — Is the Slot decorator even necessary?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>When working with Qt slots and signals in PySide6 you will discover the <code>@Slot</code> decorator. This decorator is used to <em>mark</em> a Python function or method as a <em>slot</em> to which a Qt signal can be connected. However, as you can see in our <a href="">signals and slots tutorials</a> you don't <em>have</em> to use this. Any Python function or method can be used, normally, as a slot for a Qt signals. But elsewhere, in our <a href="https://www.pythonguis.com/tutorials/multithreading-pyside6-applications-qthreadpool/">threading tutorials</a> we <em>do</em> use it.</p>
+<p><em>What's going on here?</em></p>
+<ul>
+<li>Why do you sometimes use <code>@Slot</code> but usually not?</li>
+<li>What happens when you omit it?</li>
+<li>Are there times when it is <em>required</em>?</li>
+</ul>
+<h2 id="what-does-the-documentation-say">What does the documentation say?</h2>
+<p>The <a href="https://www.riverbankcomputing.com/static/Docs/PyQt6/signals_slots.html#the-pyqtslot-decorator">PyQt6 documentation</a> has a good explanation:</p>
+<blockquote>
+<p>Although PyQt6 allows any Python callable to be used as a slot when connecting signals, it is sometimes necessary to explicitly mark a Python method as being a Qt slot and to provide a C++ signature for it. PyQt6 provides the <code>pyqtSlot()</code> function decorator to do this.</p>
+<p>Connecting a signal to a decorated Python method has the advantage of reducing the amount of memory used and is slightly faster.</p>
+</blockquote>
+<p>In PySide6 the decorator is named simply <code>Slot()</code> but is <a href="https://doc.qt.io/qtforpython-6.5/PySide6/QtCore/Slot.html">otherwise functionally compatible</a>:</p>
+<blockquote>
+<p>PySide6 adopts PyQt's new signal and slot syntax as-is. The PySide6 implementation is functionally compatible with the PyQt one [...].</p>
+</blockquote>
+<p>From the above we see that:</p>
+<ul>
+<li>Any Python callable can be used as a slot when connecting signals.</li>
+<li>It is sometimes necessary to explicitly mark a Python method as being a Qt slot and to provide a C++ signature for it.</li>
+<li>There is a side-benefit in that marking a function or method with <code>Slot()</code> reduces the amount of memory used, and makes the slot faster.</li>
+</ul>
+<h2 id="when-is-it-necessary">When <em>is</em> it necessary?</h2>
+<p><em>Sometimes necessary</em> is a bit vague. In practice the only situation where you <em>need</em> to use <code>Slot</code> decorators is when working with threads. This is because of a difference in how signal connections are handled in decorated vs. undecorated slots.</p>
+<ol>
+<li>If you decorate a method with <code>@Slot</code> then that slot is created as a native Qt slot, and behaves identically</li>
+<li>If you don't decorate the method then PySide6 will create a "proxy" object wrapper which provides a native slot to Qt</li>
+</ol>
+<p>In normal use this is fine, aside from the performance impact (see below). But when working with threads, there is a complication: is the proxy object created on the GUI thread or on the runner thread. If it ends up on the wrong thread, this can lead to segmentation faults. Using the <code>Slot</code> decorator side-steps this issue, because no proxy is created.</p>
+<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  When updating my <a href="/pyside6-book/">PySide6 book</a> I wondered -- <em>is this still necessary?!</em> -- and tested removing it from the examples. Many examples continue to work, but some failed. To be safe, use <code>Slot</code> decorators on your <code>QRunnable.run</code> methods.</p>
+<h2 id="what-about-performance">What about performance?</h2>
+<p>The PyQt6 documentation notes that using native slots "has the advantage of reducing the amount of memory used and is slightly faster". But how much faster is it really, and does decorating slots actually save much memory?</p>
+<p>We can test this directly by using <a href="https://github.com/schollii/sandals/blob/master/pyqt5_connections_mem_speed.py">this script from Oliver L Schoenborn</a>. Updating for PySide6 (replace <code>PyQt5</code> with <code>PySide6</code> and <code>pyqtSlot</code> with <code>Slot</code> and it will work as-is) and running this we get the following results:</p>
+<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  See the <a href="https://www.codeproject.com/articles/1123088/pyqt-signal-slot-connection-performance">original results for PyQt5</a> for comparison.</p>
+<p>First the results for the speed of emitting signals when connected to a decorated slot, vs non-decorated.</p>
+
+        <div class="code-block">
+        <span class="code-block-language code-block-python">python</span>
+        <pre><code class="python">Raw slot mean, stddev:  1.608 0.066
+Pyqt slot mean, stddev: 1.587 0.045
+Percent gain with Slot: 1 %
+</code></pre>
+        </div>
+        
+<p>The result shows <code>Slot</code> as 1% faster, but this is negligible (the original data on PyQt5 also showed no difference). So, using <code>Slot</code> will have no noticeable impact on the speed of signal handling in your applications.</p>
+<p>Next are the results for establishing connections. This shows the speed, and memory usage of connecting to decorated vs. non-decorated slots.</p>
+
+        <div class="code-block">
+        <span class="code-block-language code-block-python">python</span>
+        <pre><code class="python">Comparing mem and time required to create 10000000 connections, 1000 times
+
+Measuring for 100000 connections
+              # connects   mem (bytes)       time (sec)
+Raw         :   100000     38670336 (36MB)    0.381
+PySide Slot :   100000     17858560 (17MB)    0.426
+Ratios      :                     2               1
+
+</code></pre>
+        </div>
+        
+<p>The results show that decorated slots are marginally faster to connect to, but the difference is negligible. Based on these numbers, when connecting 100 signals the total execution time difference would be 0.03 ms vs 0.04 ms. This is negligible, not to mention imperceptible.</p>
+<p>Perhaps more significant is that using raw connections uses 2x the memory of decorated connections. Again though, bear in mind that for a more realistic upper limit of connections (100) the actual difference here is 3.6KB vs 1.7KB.</p>
+<p>The bottom line: don't expect any dramatic improvements in performance or memory usage from using slot decorators, unless you're working with insanely large numbers of signals or making regular connections you won't see any difference at all. That said, decorating your slots is an easy win if you need it.</p>
+<h2 id="are-there-any-other-reasons-to-decorate-a-slot">Are there any other reasons to decorate a slot?</h2>
+<p>In Qt signals can be used to transmit more than one type of data by <a href="https://doc.qt.io/qtforpython-6/tutorials/basictutorial/signals_and_slots.html#overloading-signals-and-slots">overloading signals and slots with different types</a>.</p>
+<p>For example, with the following code the <code>my_slot_fn</code> will <em>only</em> receive signals which match the signature of two <code>int</code> values.</p>
+
+        <div class="code-block">
+        <span class="code-block-language code-block-python">python</span>
+        <pre><code class="python">@Slot(int, int)
+def my_slot_fn(a, b):
+    pass
+</code></pre>
+        </div>
+        
+<p>This is a legacy of Qt5 and not recommended in new code. In Qt6 all of these signals have been replaced with separate signals with distinct names for different types. I recommend you follow the same approach in your own code for the sake of simplicity.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>The <code>Slot</code> decorator can be used to mark Python functions or methods as Qt slots. This decorator is only required on slots which may be connected to across threads, for example the <code>run</code> method of <code>QRunnable</code> objects. For all other slots it can be omitted. There is a very small performance benefit to using it, which you may want to consider when your application makes a large number of signal/slot connections.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 12, 2025 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/what-does-slot-do/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/248/" class="hover:underline"
               >The Real Python Podcast – Episode #248: Experiments With Gen AI, Knowledge Graphs, Workflows, and Python</a
             >
@@ -218,6 +336,50 @@ Teilnehmer sollten sich zudem in der PyDDF Telegram Gruppe registrieren, da wir 
           </div>
           <a
             href="https://www.egenix.com/company/news/PyDDF-Spring-Sprint-2025"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testandcode.com/episodes/pytest-metadata" class="hover:underline"
+              >pytest-metadata - provides access to test session metadata</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>pytest-metadata is described as a plugin for pytest that provides access to test session metadata. <br />That is such a humble description for such a massively useful plugin. <br />If you're already using pytest-html, you have pytest-metadata already installed, as pytest-metadata is one of the dependencies for pytest-html.<br />However, pytest-metadata is very useful even on its own.</p><p>Links:</p><ul><li><a href="https://pypi.org/project/pytest-metadata/">pytest-metadata</a> - The plugin we're talking about in this episode</li><li><a href="https://pypi.python.org/pypi/pytest-base-url/">pytest-base-url</a> - Adds the base URL to the metadata.</li><li><a href="https://pypi.python.org/pypi/pytest-html/">pytest-html</a> - Displays the metadata at the start of each report. <ul><li>See <a href="https://testandcode.com/episodes/pytest-html">S2:E6: pytest-html - a plugin that generates HTML reports for test results</a></li></ul></li><li><a href="https://pypi.org/project/pytest-reporter-html1/">pytest-reporter-html1</a> - Presents metadata as part of the report.</li><li><a href="https://pypi.python.org/pypi/pytest-selenium/">pytest-selenium</a> - Adds the driver, capabilities, and remote server to the metadata.</li></ul><p>If you've got other plugins that work well with pytest-metadata, please <a href="https://pythontest.com/contact/">let me know</a>.</p>
+<br /><p><strong>Sponsored by: </strong></p><ul><li><a href="https://porkbun.com/TestAndCode25"><strong>Porkbun</strong></a><strong> -- </strong>named the #1 domain registrar by USA Today from 2023 to 2025!</li><li><a href="https://porkbun.com/TestAndCode25">Get a .app or.dev domain name for only $5.99 first year.</a></li></ul><p><strong>Help support the show AND learn pytest: </strong></p><ul><li><a href="https://file+.vscode-resource.vscode-cdn.net/Users/brianokken/projects/test_and_code_notes/new_ad.md">The Complete pytest course</a> is now a bundle, with each part available separately.<ul><li><a href="https://courses.pythontest.com/pytest-primary-power">pytest Primary Power</a> teaches the super powers of pytest that you need to learn to use pytest effectively.</li><li><a href="https://courses.pythontest.com/using-pytest-with-projects">Using pytest with Projects</a> has lots of "when you need it" sections like debugging failed tests, mocking, testing strategy, and CI</li><li>Then <a href="https://courses.pythontest.com/pytest-booster-rockets">pytest Booster Rockets</a> can help with advanced parametrization and building plugins.</li></ul></li><li>Whether you need to get started with pytest today, or want to power up your pytest skills, <a href="https://courses.pythontest.com/">PythonTest</a> has a course for you.</li></ul><p><br /></p>
+<strong>
+  <a href="https://www.patreon.com/c/testpodcast" rel="payment" title="★ Support this podcast on Patreon ★">★ Support this podcast on Patreon ★</a>
+</strong>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 08, 2025 05:57 AM UTC by
+            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
+              >Test and Code</a
+            >
+          </div>
+          <a
+            href="https://testandcode.com/episodes/pytest-metadata"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2536,7 +2698,7 @@ INFO: To learn the basics of Streamlit, check out the complete [Streamlit Tutori
 <p>With that in mind, let's create a <a href="https://www.pythonguis.com/tutorials/python-virtual-environments/">virtual environment</a> and install our requirements into it. To do this, you can run the following commands:</p>
 <div class="tabbed-area multicode"><ul class="tabs"><li class="tab-link current">macOS</li>
 <li class="tab-link">Windows</li>
-<li class="tab-link">Linux</li></ul><div class="tab-content current code-block-outer" id="94026335c2544db799eb246421ef6aa5">
+<li class="tab-link">Linux</li></ul><div class="tab-content current code-block-outer" id="a5fd446a1011462ea64fc05763d73eb4">
 
         <div class="code-block">
         <span class="code-block-language code-block-sh">sh</span>
@@ -2549,7 +2711,7 @@ $ source venv/bin/activate
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="2d69a8e45bac4d14954f42846790efa2">
+<div class="tab-content code-block-outer" id="0e341c044d8a404e93715c7fe75de35b">
 
         <div class="code-block">
         <span class="code-block-language code-block-cmd">cmd</span>
@@ -2562,7 +2724,7 @@ $ source venv/bin/activate
         </div>
         
 </div>
-<div class="tab-content code-block-outer" id="aed58b8480fb4c6eb67b0b0927552022">
+<div class="tab-content code-block-outer" id="aab9db16f42b4584b25781bca6b56561">
 
         <div class="code-block">
         <span class="code-block-language code-block-sh">sh</span>
@@ -3265,6 +3427,50 @@ if uploaded_file is not None:
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testandcode.com/episodes/pytest-check" class="hover:underline"
+              >pytest-check - allow multiple failures per test</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>pytest-check is a pytest plugin that allows multiple failures per test.</p><p><br />Normally, a test function will fail and stop running with the first failed assert. That's totally fine for tons of kinds of software tests. However, there are times where you'd like to check more than one thing, and you'd really like to know the results of each check, even if one of them fails.</p><p><br />pytest-check allows multiple failed "checks" per test function, so you can see the whole picture of what's going wrong.</p><p><strong>Links:</strong></p><ul><li><a href="https://github.com/okken/pytest-check">pytest-check</a></li><li><a href="https://pythontest.com/top-pytest-plugins/">Top pytest plugins</a></li></ul>
+<br /><p><strong>Sponsored by: </strong></p><ul><li><a href="https://porkbun.com/TestAndCode25"><strong>Porkbun</strong></a><strong> -- </strong>named the #1 domain registrar by USA Today from 2023 to 2025!</li><li><a href="https://porkbun.com/TestAndCode25">Get a .app or.dev domain name for only $5.99 first year.</a></li></ul><p><strong>Help support the show AND learn pytest: </strong></p><ul><li><a href="https://file+.vscode-resource.vscode-cdn.net/Users/brianokken/projects/test_and_code_notes/new_ad.md">The Complete pytest course</a> is now a bundle, with each part available separately.<ul><li><a href="https://courses.pythontest.com/pytest-primary-power">pytest Primary Power</a> teaches the super powers of pytest that you need to learn to use pytest effectively.</li><li><a href="https://courses.pythontest.com/using-pytest-with-projects">Using pytest with Projects</a> has lots of "when you need it" sections like debugging failed tests, mocking, testing strategy, and CI</li><li>Then <a href="https://courses.pythontest.com/pytest-booster-rockets">pytest Booster Rockets</a> can help with advanced parametrization and building plugins.</li></ul></li><li>Whether you need to get started with pytest today, or want to power up your pytest skills, <a href="https://courses.pythontest.com/">PythonTest</a> has a course for you.</li></ul><p><br /></p>
+<strong>
+  <a href="https://www.patreon.com/c/testpodcast" rel="payment" title="★ Support this podcast on Patreon ★">★ Support this podcast on Patreon ★</a>
+</strong>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 02, 2025 10:03 PM UTC by
+            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
+              >Test and Code</a
+            >
+          </div>
+          <a
+            href="https://testandcode.com/episodes/pytest-check"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://discuss.tryton.org/t/release-1-6-0-of-python-sql/8550" class="hover:underline"
               >Release 1.6.0 of python-sql</a
             >
@@ -3641,166 +3847,6 @@ use it. Time will tell for how long.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/new-project-whichprovides?utm_campaign=rss" class="hover:underline"
-              >whichprovides: an abstraction of "yum provides"</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <blockquote>
-  <center>
-    This critical role would not be possible without funding from the <a href="https://alpha-omega.dev">Alpha-Omega project</a>.
-  </center>
-</blockquote>
-
-<p>I'm announcing a new small project I've created as a part
-of my work on Software Bill-of-Materials for Python packages.
-The library is called <a href="https://pypi.org/project/whichprovides/"><code>whichprovides</code></a> and it's available
-on PyPI under the same name:</p>
-
-<pre><code>$ python -m pip install whichprovides
-</code></pre>
-
-<p>You can use the tool as a CLI, but many users will be using
-this library indirectly through <a href="https://github.com/pypa/auditwheel/pull/577">tools like auditwheel</a>.</p>
-
-<p>The primary purpose of the library is to reverse a file path
-on your system back to the package ecosystem and package
-that "provided" the file, similar to how <code>yum provides</code> works:</p>
-
-<pre><code>$ python -m whichprovides /usr/bin/python3.10
-/usr/bin/python3.10: pkg:deb/ubuntu/python3.10-minimal@3.10.12-1~22.04.9
-</code></pre>
-
-<p>This information allows tools to create <a href="https://ecma-tc54.github.io/ECMA-xxx-PURL/">package URLs</a> (PURLs) for
-the files they use for building a Python package. PURLs are useful
-as a software identifier for performing vulnerability scanning.</p>
-
-<p>Currently, this library supports the following package ecosystems:</p>
-
-<ul>
-<li>RPM (Red Hat, CentOS, Rocky Linux, AlmaLinux)</li>
-<li>Dpkg (Debian, Ubuntu)</li>
-<li>Aptitude (Ubuntu)</li>
-<li>Apk (Alpine)</li>
-</ul>
-
-<p>I'm interested in adding support for other package ecosystems, too.
-If you'd like to <a href="https://codeberg.org/sethmlarson/whichprovides">contribute support for a new package ecosystem</a>
-or just generally review the code, I'd welcome these types of contributions.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 02, 2025 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/new-project-whichprovides?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.techiediaries.com/python-code-generate-crack-passwords/" class="hover:underline"
-              >Generate and Crack Passwords with Python and Ethical Considerations</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In modern cybersecurity space, password security remains a critical line of defense against unauthorized access. This post explains Python’s capabilities for both generating secure passwords and simulating password-cracking techniques.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 02, 2025 12:00 AM UTC by
-            <a href="https://www.techiediaries.com/tag/django/index.xml" class="link link-hover text-primary"
-              >Techiediaries - Django</a
-            >
-          </div>
-          <a
-            href="https://www.techiediaries.com/python-code-generate-crack-passwords/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.techiediaries.com/python-find-wi-fi-devices/" class="hover:underline"
-              >Find Wi-Fi Connected Devices with Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This article provides a step by step approach to building a Python script for identifying devices connected to a Wi-Fi network. By leveraging Address Resolution Protocol (ARP) scanning and MAC address vendor lookup tools, the solution automates device discovery and enhances network visibility. Below, we explore the theory and steps, and optimization hacks for building a robust network monitoring tool.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 02, 2025 12:00 AM UTC by
-            <a href="https://www.techiediaries.com/tag/django/index.xml" class="link link-hover text-primary"
-              >Techiediaries - Django</a
-            >
-          </div>
-          <a
-            href="https://www.techiediaries.com/python-find-wi-fi-devices/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -3812,12 +3858,12 @@ or just generally review the code, I'd welcome these types of contributions.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8859</a></li>
-    <li><a>Unique Feeds: 419</a></li>
+    <li><a>Total Entries: 9023</a></li>
+    <li><a>Unique Feeds: 424</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (503)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (431)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (336)</a></li><li><a href="https://raw.githubusercontent.com/mahmoud/awesome-python-applications/master/atom.xml">Python Anywhere (212)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://testandcode.com/rss">Talk Python to Me (503)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (431)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://testandcode.com/rss">Matt Layman (336)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (233)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
