@@ -53,320 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/jira-python-api.html" class="hover:underline"
-              >Integrating with Jira APIs</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/jira-python-api.html">Integrating with Jira APIs</a>
-</h1>
-<div class="article-meta">
-  2025-04-24, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<h3 id="overview">Overview</h3>
-<p>Continuing in the series of articles about newest cloud connections in Zato 3.3, this episode covers Atlassian Jira
-from the perspective of invoking its APIs to build integrations between Jira and other systems.</p>
-<p>There are essentially two use modes of integrations with Jira:</p>
-<ol>
-<li>Jira reacts to events taking place in your projects and invokes your endpoints accordingly via WebHooks.
-   In this case, it is Jira that explicitly establishes connections with and sends requests to your APIs.</li>
-<li>Jira projects are queried periodically or as a consequence of events triggered by Jira using means other than WebHooks.</li>
-</ol>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-integrations.png" /></p>
-<p>The first case is usually more straightforward to conceptualize - you create a WebHook in Jira, point it to your endpoint
-and Jira invokes it when a situation of interest arises, e.g. a new ticket is opened or updated. I will talk about this variant
-of integrations with Jira in a future instalment as the current one is about the other situation, when it is your systems
-that establish connections with Jira.</p>
-<p>The reason why it is more practical to first speak about the second form is that, even if WebHooks are somewhat easier
-to reason about, they do come with their own ramifications.</p>
-<p>To start off, assuming that you use the cloud-based version of
-Jira (e.g. https://example.atlassian.net), you need to have a publicly available endpoint for Jira to invoke through WebHooks.
-Very often, this is undesirable because the systems that you need to integrate with may be internal ones, never meant
-to be exposed to public networks.</p>
-<p>Secondly, your endpoints need to have a TLS certificate signed by a public Certificate Authority and they need to be accessible
-on port 443. Again, both of these are something that most enterprise systems will not allow at all or it may take months
-or years to process such a change internally across the various corporate departments involved.</p>
-<p>Lastly, even if a WebHook can be used, it is not always a given that the initial information that you receive in the request
-from a WebHook will already contain everything that you need in your particular integration service. Thus, you will still
-need a way to issue requests to Jira to look up details of a particular object, such as tickets, in this way reducing
-WebHooks to the role of initial triggers of an interaction with Jira, e.g. a WebHook invokes your endpoint,
-you have a ticket ID on input and then you invoke Jira back anyway to obtain all the details that you
-actually need in your business integration.</p>
-<p>The end situation is that, although WebHooks are a useful concept that I will write about in a future article,
-they may very well not be sufficient for many integration use cases. That is why I start with integration
-methods that are alternative to WebHooks.</p>
-<h2 id="alternatives-to-webhooks">Alternatives to WebHooks</h2>
-<p>If, in our case, we cannot use WebHooks then what next? Two good approaches are:</p>
-<ol>
-<li>Scheduled jobs</li>
-<li>Reacting to emails (via IMAP)</li>
-</ol>
-<p>Scheduled jobs will let you periodically inquire with Jira about the changes that you have not processed yet. For instance,
-with a job definition as below:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-scheduler-menu.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-scheduler-sample.png" /></p>
-<p>Now, the service configured for this job will be invoked once per minute to carry out any integration works required.
-For instance, it can get a list of tickets since the last time it ran, process each of them as required in your business context
-and update a database with information about what has been just done - the database can be based on Redis, MongoDB, SQL or anything
-else.</p>
-<p>Integrations built around scheduled jobs make most sense when you need to make periodic sweeps across a large swaths of business
-data, these are the "Give me everything that changed in the last period" kind of interactions when you do not know precisely
-how much data you are going to receive.</p>
-<p>In the specific case of Jira tickets, though, an interesting alternative may be to combine scheduled jobs with IMAP connections:</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-imap-menu.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-imap-form.png" /></p>
-<p>The idea here is that when new tickets are opened, or when updates are made to existing ones, Jira will send out notifications
-to specific email addresses and we can take advantage of it.</p>
-<p>For instance, you can tell Jira to CC or BCC an address such as zato@example.com. Now, Zato will still run a scheduled job
-but instead of connecting with Jira directly, that job will look up unread emails for it inbox
-("UNSEEN" per the relevant
-<a href="https://en.wikipedia.org/wiki/Internet_Message_Access_Protocol">RFC</a>).</p>
-<p>Anything that is unread must be new since the last iteration which means that we can process each such email from the inbox, in this way
-guaranteeing that we process only the latest updates, dispensing with the need for our own database of tickets already processed.
-We can extract the ticket ID or other details from the email, look up its details in Jira and the continue as needed.</p>
-<p>All the details of how to work with IMAP emails are provided in the documentation but it would boil down to this:</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Service</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">imap</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">'My Jira Inbox'</span><span class="p">)</span><span class="o">.</span><span class="n">conn</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="k">for</span> <span class="n">msg_id</span><span class="p">,</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>            <span class="c1"># Process the message here ..</span>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>            <span class="n">process_message</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>            <span class="c1"># .. and mark it as seen in IMAP.</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>            <span class="n">msg</span><span class="o">.</span><span class="n">mark_seen</span><span class="p">()</span>
-</code></pre></div>
-<p>The natural question is - how would the "process_message" function extract details of a ticket from an email?</p>
-<p>There are several ways:</p>
-<ol>
-<li>Each email has a subject of a fixed form - "[JIRA] (ABC-123) Here goes description". In this case, ABC-123 is the ticket ID.</li>
-<li>Each email will contain a summary, such as the one below, which can also be parsed:</li>
-</ol>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a><span class="w">         </span>Summary:<span class="w"> </span>Here<span class="w"> </span>goes<span class="w"> </span>description
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a><span class="w">             </span>Key:<span class="w"> </span>ABC-123
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a><span class="w">             </span>URL:<span class="w"> </span>https://example.atlassian.net/browse/ABC-123
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a><span class="w">         </span>Project:<span class="w"> </span>My<span class="w"> </span>Project
-<a id="line-1-5" name="line-1-5"></a><a href="#line-1-5"><span class="linenos"></span></a><span class="w">      </span>Issue<span class="w"> </span>Type:<span class="w"> </span>Improvement
-<a id="line-1-6" name="line-1-6"></a><a href="#line-1-6"><span class="linenos"></span></a>Affects<span class="w"> </span>Versions:<span class="w"> </span><span class="m">1</span>.3.17
-<a id="line-1-7" name="line-1-7"></a><a href="#line-1-7"><span class="linenos"></span></a><span class="w">     </span>Environment:<span class="w"> </span>Production
-<a id="line-1-8" name="line-1-8"></a><a href="#line-1-8"><span class="linenos"></span></a><span class="w">        </span>Reporter:<span class="w"> </span>Reporter<span class="w"> </span>Name
-<a id="line-1-9" name="line-1-9"></a><a href="#line-1-9"><span class="linenos"></span></a><span class="w">        </span>Assignee:<span class="w"> </span>Assignee<span class="w"> </span>Name
-</code></pre></div>
-<ol>
-<li>Finally, each email will have an "X-Atl-Mail-Meta" header with interesting metadata that can also be parsed and extracted:</li>
-</ol>
-<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a>X-Atl-Mail-Meta:<span class="w"> </span><span class="nv">user_id</span><span class="o">=</span><span class="s2">&quot;123456:12d80508-dcd0-42a2-a2cd-c07f230030e5&quot;</span>,
-<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a><span class="w">                 </span><span class="nv">event_type</span><span class="o">=</span><span class="s2">&quot;Issue Created&quot;</span>,
-<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a><span class="w">                 </span><span class="nv">tenant</span><span class="o">=</span><span class="s2">&quot;https://example.atlassian.net&quot;</span>
-</code></pre></div>
-<p>The first option is the most straightforward and likely the most convenient one - simply parse out the ticket ID and
-call Jira with that ID on input for all the other information about the ticket. How to do it exactly is presented in the
-next chapter.</p>
-<p>Regardless of how we parse the emails, the important part is that we know that we invoke Jira only when there are new or updated
-tickets - otherwise there would not have been any new emails to process. Moreover, because it is our side that invokes Jira,
-we do not expose our internal system to the public network directly.</p>
-<p>However, from the perspective of the overall security architecture, email is still part of the attack surface so we need to make
-sure that we read and parse emails with that in view. In other words, regardless of whether it is Jira invoking us
-or our reading emails from Jira, all the usual security precautions regarding API integrations and accepting input from external
-resources, all that still holds and needs to be part of the design of the integration workflow.</p>
-<h2 id="creating-jira-connections">Creating Jira connections</h2>
-<p>The above presented the ways in which we can arrive at the step of when we invoke Jira and now we are ready to actually do it.</p>
-<p>As with other types of connections, Jira connections are created in Zato Dashboard, as below. Note that you use the email
-address of a user on whose behalf you connect to Jira but the only other credential is that user's API token previously
-generated in Jira, not the user's password.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-menu.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-form.png" /></p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-change-api-token.png" /></p>
-<h2 id="invoking-jira">Invoking Jira</h2>
-<p>With a Jira connection in place, we can now create a Python API service. In this case, we accept a ticket ID on input
-(called "a key" in Jira) and we return a few details about the ticket to our caller.</p>
-<p>This is the kind of a service that could be invoked from a service that is triggered by a scheduled job. That is,
-we would separate the tasks, one service would be responsible for opening IMAP inboxes and parsing emails
-and the one below would be responsible for communication with Jira.</p>
-<p>Thanks to this loose coupling, we make everything much more reusable - that the services can be changed independently is but one part
-and the more important side is that, with such separation, both of them can be reused by future services as well,
-without tying them rigidly to this one integration alone.</p>
-<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>
-<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a><span class="c1"># stdlib</span>
-<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
-<a id="line-3-5" name="line-3-5"></a><a href="#line-3-5"><span class="linenos"></span></a>
-<a id="line-3-6" name="line-3-6"></a><a href="#line-3-6"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-3-7" name="line-3-7"></a><a href="#line-3-7"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.common.typing_</span><span class="w"> </span><span class="kn">import</span> <span class="n">cast_</span><span class="p">,</span> <span class="n">dictnone</span>
-<a id="line-3-8" name="line-3-8"></a><a href="#line-3-8"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Model</span><span class="p">,</span> <span class="n">Service</span>
-<a id="line-3-9" name="line-3-9"></a><a href="#line-3-9"><span class="linenos"></span></a>
-<a id="line-3-10" name="line-3-10"></a><a href="#line-3-10"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-<a id="line-3-11" name="line-3-11"></a><a href="#line-3-11"><span class="linenos"></span></a>
-<a id="line-3-12" name="line-3-12"></a><a href="#line-3-12"><span class="linenos"></span></a><span class="k">if</span> <span class="mi">0</span><span class="p">:</span>
-<a id="line-3-13" name="line-3-13"></a><a href="#line-3-13"><span class="linenos"></span></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.connection.jira_</span><span class="w"> </span><span class="kn">import</span> <span class="n">JiraClient</span>
-<a id="line-3-14" name="line-3-14"></a><a href="#line-3-14"><span class="linenos"></span></a>
-<a id="line-3-15" name="line-3-15"></a><a href="#line-3-15"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-<a id="line-3-16" name="line-3-16"></a><a href="#line-3-16"><span class="linenos"></span></a>
-<a id="line-3-17" name="line-3-17"></a><a href="#line-3-17"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="line-3-18" name="line-3-18"></a><a href="#line-3-18"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">GetTicketDetailsRequest</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
-<a id="line-3-19" name="line-3-19"></a><a href="#line-3-19"><span class="linenos"></span></a>    <span class="n">key</span><span class="p">:</span> <span class="nb">str</span>
-<a id="line-3-20" name="line-3-20"></a><a href="#line-3-20"><span class="linenos"></span></a>
-<a id="line-3-21" name="line-3-21"></a><a href="#line-3-21"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="line-3-22" name="line-3-22"></a><a href="#line-3-22"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">GetTicketDetailsResponse</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
-<a id="line-3-23" name="line-3-23"></a><a href="#line-3-23"><span class="linenos"></span></a>    <span class="n">assigned_to</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span>
-<a id="line-3-24" name="line-3-24"></a><a href="#line-3-24"><span class="linenos"></span></a>    <span class="n">progress_info</span><span class="p">:</span> <span class="n">dictnone</span> <span class="o">=</span> <span class="kc">None</span>
-<a id="line-3-25" name="line-3-25"></a><a href="#line-3-25"><span class="linenos"></span></a>
-<a id="line-3-26" name="line-3-26"></a><a href="#line-3-26"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-<a id="line-3-27" name="line-3-27"></a><a href="#line-3-27"><span class="linenos"></span></a>
-<a id="line-3-28" name="line-3-28"></a><a href="#line-3-28"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">GetTicketDetails</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-3-29" name="line-3-29"></a><a href="#line-3-29"><span class="linenos"></span></a>
-<a id="line-3-30" name="line-3-30"></a><a href="#line-3-30"><span class="linenos"></span></a>    <span class="k">class</span><span class="w"> </span><span class="nc">SimpleIO</span><span class="p">:</span>
-<a id="line-3-31" name="line-3-31"></a><a href="#line-3-31"><span class="linenos"></span></a>        <span class="nb">input</span>  <span class="o">=</span> <span class="n">GetTicketDetailsRequest</span>
-<a id="line-3-32" name="line-3-32"></a><a href="#line-3-32"><span class="linenos"></span></a>        <span class="n">output</span> <span class="o">=</span> <span class="n">GetTicketDetailsResponse</span>
-<a id="line-3-33" name="line-3-33"></a><a href="#line-3-33"><span class="linenos"></span></a>
-<a id="line-3-34" name="line-3-34"></a><a href="#line-3-34"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-3-35" name="line-3-35"></a><a href="#line-3-35"><span class="linenos"></span></a>
-<a id="line-3-36" name="line-3-36"></a><a href="#line-3-36"><span class="linenos"></span></a>        <span class="c1"># This is our input data</span>
-<a id="line-3-37" name="line-3-37"></a><a href="#line-3-37"><span class="linenos"></span></a>        <span class="nb">input</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">input</span> <span class="c1"># type: GetTicketDetailsRequest</span>
-<a id="line-3-38" name="line-3-38"></a><a href="#line-3-38"><span class="linenos"></span></a>
-<a id="line-3-39" name="line-3-39"></a><a href="#line-3-39"><span class="linenos"></span></a>        <span class="c1"># .. create a reference to our connection definition ..</span>
-<a id="line-3-40" name="line-3-40"></a><a href="#line-3-40"><span class="linenos"></span></a>        <span class="n">jira</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">jira</span><span class="p">[</span><span class="s1">'My Jira Connection'</span><span class="p">]</span>
-<a id="line-3-41" name="line-3-41"></a><a href="#line-3-41"><span class="linenos"></span></a>
-<a id="line-3-42" name="line-3-42"></a><a href="#line-3-42"><span class="linenos"></span></a>        <span class="c1"># .. obtain a client to Jira ..</span>
-<a id="line-3-43" name="line-3-43"></a><a href="#line-3-43"><span class="linenos"></span></a>        <span class="k">with</span> <span class="n">jira</span><span class="o">.</span><span class="n">conn</span><span class="o">.</span><span class="n">client</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
-<a id="line-3-44" name="line-3-44"></a><a href="#line-3-44"><span class="linenos"></span></a>
-<a id="line-3-45" name="line-3-45"></a><a href="#line-3-45"><span class="linenos"></span></a>            <span class="c1"># Cast to enable code completion</span>
-<a id="line-3-46" name="line-3-46"></a><a href="#line-3-46"><span class="linenos"></span></a>            <span class="n">client</span> <span class="o">=</span> <span class="n">cast_</span><span class="p">(</span><span class="s1">'JiraClient'</span><span class="p">,</span> <span class="n">client</span><span class="p">)</span>
-<a id="line-3-47" name="line-3-47"></a><a href="#line-3-47"><span class="linenos"></span></a>
-<a id="line-3-48" name="line-3-48"></a><a href="#line-3-48"><span class="linenos"></span></a>            <span class="c1"># Get details of a ticket (issue) from Jira</span>
-<a id="line-3-49" name="line-3-49"></a><a href="#line-3-49"><span class="linenos"></span></a>            <span class="n">ticket</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_issue</span><span class="p">(</span><span class="nb">input</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
-<a id="line-3-50" name="line-3-50"></a><a href="#line-3-50"><span class="linenos"></span></a>
-<a id="line-3-51" name="line-3-51"></a><a href="#line-3-51"><span class="linenos"></span></a>        <span class="c1"># Observe that ticket may be None (e.g. invalid key), hence this 'if' guard ..</span>
-<a id="line-3-52" name="line-3-52"></a><a href="#line-3-52"><span class="linenos"></span></a>        <span class="k">if</span> <span class="n">ticket</span><span class="p">:</span>
-<a id="line-3-53" name="line-3-53"></a><a href="#line-3-53"><span class="linenos"></span></a>
-<a id="line-3-54" name="line-3-54"></a><a href="#line-3-54"><span class="linenos"></span></a>            <span class="c1"># .. build a shortcut reference to all the fields in the ticket ..</span>
-<a id="line-3-55" name="line-3-55"></a><a href="#line-3-55"><span class="linenos"></span></a>            <span class="n">fields</span> <span class="o">=</span> <span class="n">ticket</span><span class="p">[</span><span class="s1">'fields'</span><span class="p">]</span>
-<a id="line-3-56" name="line-3-56"></a><a href="#line-3-56"><span class="linenos"></span></a>
-<a id="line-3-57" name="line-3-57"></a><a href="#line-3-57"><span class="linenos"></span></a>            <span class="c1"># .. build our response object ..</span>
-<a id="line-3-58" name="line-3-58"></a><a href="#line-3-58"><span class="linenos"></span></a>            <span class="n">response</span> <span class="o">=</span> <span class="n">GetTicketDetailsResponse</span><span class="p">()</span>
-<a id="line-3-59" name="line-3-59"></a><a href="#line-3-59"><span class="linenos"></span></a>            <span class="n">response</span><span class="o">.</span><span class="n">assigned_to</span> <span class="o">=</span> <span class="n">fields</span><span class="p">[</span><span class="s1">'assignee'</span><span class="p">][</span><span class="s1">'emailAddress'</span><span class="p">]</span>
-<a id="line-3-60" name="line-3-60"></a><a href="#line-3-60"><span class="linenos"></span></a>            <span class="n">response</span><span class="o">.</span><span class="n">progress_info</span> <span class="o">=</span> <span class="n">fields</span><span class="p">[</span><span class="s1">'progress'</span><span class="p">]</span>
-<a id="line-3-61" name="line-3-61"></a><a href="#line-3-61"><span class="linenos"></span></a>
-<a id="line-3-62" name="line-3-62"></a><a href="#line-3-62"><span class="linenos"></span></a>            <span class="c1"># .. and return the response to our caller.</span>
-<a id="line-3-63" name="line-3-63"></a><a href="#line-3-63"><span class="linenos"></span></a>            <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="n">response</span>
-<a id="line-3-64" name="line-3-64"></a><a href="#line-3-64"><span class="linenos"></span></a>
-<a id="line-3-65" name="line-3-65"></a><a href="#line-3-65"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-</code></pre></div>
-<h2 id="creating-a-rest-channel-and-testing-it">Creating a REST channel and testing it</h2>
-<p>The last remaining part is a REST channel to invoke our service through. We will provide the ticket ID (key) on input
-and the service will reply with what was found in Jira for that ticket.</p>
-<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-atlassian/jira-rest-form.png" /></p>
-<p>We are now ready for the final step - we invoke the channel, which invokes the service which communicates with Jira,
-transforming the response from Jira to the output that we need:</p>
-<div class="highlight"><pre><span></span><code><a id="line-4-1" name="line-4-1"></a><a href="#line-4-1"><span class="linenos"></span></a>$<span class="w"> </span>curl<span class="w"> </span>localhost:17010/jira1<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{&quot;key&quot;:&quot;ABC-123&quot;}'</span>
-<a id="line-4-2" name="line-4-2"></a><a href="#line-4-2"><span class="linenos"></span></a><span class="o">{</span>
-<a id="line-4-3" name="line-4-3"></a><a href="#line-4-3"><span class="linenos"></span></a><span class="w">    </span><span class="s2">&quot;assigned_to&quot;</span>:<span class="s2">&quot;zato@example.com&quot;</span>,
-<a id="line-4-4" name="line-4-4"></a><a href="#line-4-4"><span class="linenos"></span></a><span class="w">    </span><span class="s2">&quot;progress_info&quot;</span>:<span class="w"> </span><span class="o">{</span>
-<a id="line-4-5" name="line-4-5"></a><a href="#line-4-5"><span class="linenos"></span></a><span class="w">        </span><span class="s2">&quot;progress&quot;</span>:<span class="w"> </span><span class="m">10</span>,
-<a id="line-4-6" name="line-4-6"></a><a href="#line-4-6"><span class="linenos"></span></a><span class="w">        </span><span class="s2">&quot;total&quot;</span>:<span class="w"> </span><span class="m">30</span>
-<a id="line-4-7" name="line-4-7"></a><a href="#line-4-7"><span class="linenos"></span></a><span class="w">    </span><span class="o">}</span>
-<a id="line-4-8" name="line-4-8"></a><a href="#line-4-8"><span class="linenos"></span></a><span class="o">}</span>
-<a id="line-4-9" name="line-4-9"></a><a href="#line-4-9"><span class="linenos"></span></a>$
-</code></pre></div>
-<p>And this is everything for today - just remember that this is just one way of integrating with Jira. The other one,
-using WebHooks, is something that I will go into in one of the future articles.</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 24, 2025 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/jira-python-api.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.datawars.io/articles/replit-teams-for-education-deprecation-all-you-need-to-know" class="hover:underline"
-              >Replit Teams for Education Deprecation: All you need to know | DataWars</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Replit Teams for Education will shut down on August 1st, 2024. Here is all you need to know to find an alternative.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 23, 2025 07:41 PM UTC by
-            <a href="https://www.datawars.io/articles/rss.xml" class="link link-hover text-primary"
-              >DataWars.io</a
-            >
-          </div>
-          <a
-            href="https://www.datawars.io/articles/replit-teams-for-education-deprecation-all-you-need-to-know"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/python-idle/" class="hover:underline"
               >Getting Started With Python IDLE</a
             >
@@ -2390,6 +2076,86 @@ special methods just so you can have some attributes.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/python-break/" class="hover:underline"
+              >How to Exit Loops Early With the Python Break Keyword</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this tutorial, you'll explore various ways to use Python's break statement to exit a loop early. Through practical examples, such as a student test score analysis tool and a number-guessing game, you'll see how the break statement can improve the efficiency and effectiveness of your code.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 16, 2025 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/python-break/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/04/pycharm-2025-1/" class="hover:underline"
+              >PyCharm 2025.1: Unified PyCharm, Free AI Tier, Junie Release, and More!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            PyCharm 2025.1 brings major updates to improve your development experience. PyCharm is now a unified product, combining PyCharm Professional and Community Edition. Version 2025.1 also brings a free AI tier, the public release of Junie, the launch of Cadence, significant Jupyter enhancements, support for Hatch, Data Wrangler, and many other improvements. Get the latest version [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 16, 2025 01:58 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/04/pycharm-2025-1/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -2401,8 +2167,8 @@ special methods just so you can have some attributes.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8958</a></li>
-    <li><a>Unique Feeds: 418</a></li>
+    <li><a>Total Entries: 9010</a></li>
+    <li><a>Unique Feeds: 420</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
