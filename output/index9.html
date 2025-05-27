@@ -53,6 +53,499 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2025-03-21-another-home-outage/" class="hover:underline"
+              >Minor outage at Teksavvy business</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This morning, internet was down at home. The last time I had such an
+issue was in <a href="https://anarc.at/blog/2023-02-08-major-outage/">February 2023</a>, when my
+provider was Oricom. Now I'm with a business service at Teksavvy
+Internet (TSI), in which I pay 100$ per month for a 250/50 mbps
+business package, with a static IP address, on which I run, well,
+everything: email services, this website, etc.</p>
+
+<h1 id="mitigation">Mitigation</h1>
+
+<h2 id="email">Email</h2>
+
+<p>The main problem when the service goes down like this for prolonged
+outages is email. Mail is pretty resilient to failures like this but
+after some delay (which varies according to the other end), mail
+starts to drop. I am actually not sure what the various settings are
+among different providers, but I would assume mail is typically kept
+for about 24h, so that's our mark.</p>
+
+<p>Last time, I setup VMs at Linode and Digital Ocean to deal better with
+this. I have actually kept those VMs running as DNS servers until now,
+so that part is already done.</p>
+
+<p>I had fantasized about Puppetizing the mail server configuration so
+that I could quickly spin up mail exchangers on those machines. But
+now I am realizing that my Puppet server is one of the service that's
+down, so this would not work, at least not unless the manifests can be
+applied without a Puppet server (say with <code>puppet apply</code>).</p>
+
+<p>Thankfully, my colleague groente did amazing work to refactor our
+Postfix configuration in Puppet at Tor, and that gave me the
+motivation to reproduce the setup in the lab. So I have finally
+Puppetized part of my mail setup at home. That used to be hand-crafted
+experimental stuff documented in a couple of pages in this wiki, but
+is now being deployed by Puppet.</p>
+
+<p>It's not complete yet: spam filtering (including DKIM checks and
+graylisting) are not implemented yet, but that's the next step,
+presumably to do during the next outage. The setup <em>should</em> be
+deployable with <code>puppet apply</code>, however, and I have refined that
+mechanism a little bit, with the <code>run</code> script.</p>
+
+<p>Heck, it's not even <em>deployed</em> yet. But the hard part / grunt work is
+done.</p>
+
+<h2 id="other">Other</h2>
+
+<p>The outage was "short" enough (5 hours) that I didn't take time to
+deploy the other mitigations I had deployed in the previous incident.</p>
+
+<p>But I'm starting to seriously consider deploying a web (and caching)
+reverse proxy so that I endure such problems more gracefully.</p>
+
+<h1 id="side-note-on-proper-servics">Side note on proper servics</h1>
+
+<p>Typically, I tend to think of a properly functioning service as having
+four things:</p>
+
+<ol>
+<li>backups</li>
+<li>documentation</li>
+<li>monitoring</li>
+<li>automation</li>
+<li>high availability</li>
+</ol>
+
+
+<p>Yes, I miscounted. This is why you have high availability.</p>
+
+<h2 id="backups">Backups</h2>
+
+<p>Duh. If data is maliciously or accidentally destroyed, you need a copy
+somewhere. Preferably in a way that malicious joe can't get to.</p>
+
+<p>This is harder than you think.</p>
+
+<h2 id="documentation">Documentation</h2>
+
+<p>I have an entire <a href="https://gitlab.torproject.org/tpo/tpa/wiki-replica/-/raw/master/service/template.md?ref_type=heads">template</a> for this. Essentially, it boils down to
+using <a href="https://diataxis.fr/">https://diataxis.fr/</a> and <a href="https://bluesock.org/~willkg/blog/dev/auditing_projects.html">this "audit" guide</a>. For me, the
+most important parts are:</p>
+
+<ul>
+<li>disaster recovery (includes backups, probably)</li>
+<li>playbook</li>
+<li>install/upgrade procedures (see automation)</li>
+</ul>
+
+
+<p>You probably know this is hard, and this is why you're not doing
+it. Do it anyways, you'll think it sucks, but you'll be really
+grateful for whatever scraps you wrote when you're in trouble.</p>
+
+<h2 id="monitoring">Monitoring</h2>
+
+<p>If you don't have monitoring, you'll know it fails too late, and you
+won't know it recovers. Consider high availability, work hard to
+reduce noise, and don't have machine wake people up, that's literally
+torture and is against the Geneva convention.</p>
+
+<p>Consider predictive algorithm to prevent failures, like "add storage
+within 2 weeks before this disk fills up".</p>
+
+<p>This is harder than you think.</p>
+
+<h2 id="automation">Automation</h2>
+
+<p>Make it easy to redeploy the service elsewhere.</p>
+
+<p>Yes, I know you have backups. That is not enough: that typically
+restores data and while it can also include configuration, you're
+going to need to change things when you restore, which is what
+automation (or call it "configuration management" if you will) will do
+for you anyways.</p>
+
+<p>This also means you can do unit tests on your configuration, otherwise
+you're building legacy.</p>
+
+<p>This is probably as hard as you think.</p>
+
+<h2 id="high-availability">High availability</h2>
+
+<p>Make it not fail when one part goes down.</p>
+
+<p>Eliminate single points of failures.</p>
+
+<p>This is easier than you think, except for storage and DNS (which, I
+guess, means it's harder than you think too).</p>
+
+<h2 id="assessment">Assessment</h2>
+
+<p>In the above 5 items, I check two:</p>
+
+<ol>
+<li>backups</li>
+<li>documentation</li>
+</ol>
+
+
+<p>And barely: I'm not happy about the offsite backups, and my
+documentation is much better at work than at home (and even there, I
+have a 15 year backlog to catchup on).</p>
+
+<p>I barely have monitoring: Prometheus is scraping parts of the infra,
+but I don't have any sort of alerting -- by which I don't mean
+"electrocute myself when something goes wrong", I mean "there's a set
+of thresholds and conditions that define an outage and I can look at
+it".</p>
+
+<p>Automation is wildly incomplete. My home server is a random collection
+of old experiments and technologies, ranging from Apache with Perl and
+CGI scripts to Docker containers running Golang applications. Most of
+it is not Puppetized (but the ratio is growing). Puppet itself
+introduces a huge attack vector with kind of catastrophic lateral
+movement if the Puppet server gets compromised.</p>
+
+<p>And, fundamentally, I am not sure I can provide high availability in
+the lab. I'm just this one guy running my home network, and I'm
+growing older. I'm thinking more about winding things down than
+building things now, and that's just really sad, because I feel
+<a href="https://anarc.at/blog/2025-03-21-losing-war-internet/">we're losing</a> (well that escalated
+quickly).</p>
+
+<h1 id="resolution">Resolution</h1>
+
+<p>In the end, I didn't need any mitigation and the problem fixed
+itself. I did do quite a bit of cleanup so that feels somewhat good,
+although I despaired quite a bit at the amount of technical debt I've
+accumulated in the lab.</p>
+
+<h1 id="timeline">Timeline</h1>
+
+<p>Times are in UTC-4.</p>
+
+<ul>
+<li>6:52: IRC bouncer goes offline</li>
+<li>9:20: called TSI support, waited on the line 15 minutes then was
+told I'd get a call back</li>
+<li>9:54: outage apparently detected by TSI</li>
+<li>11:00: no response, tried calling back support again</li>
+<li>11:10: confirmed bonding router outage, no official ETA but "today",
+source of the 9:54 timestamp above</li>
+<li>12:08: TPA monitoring notices service restored</li>
+<li>12:34: call back from TSI; service restored, problem was with the
+"bonder" configuration on their end, which was "fighting between
+Montréal and Toronto"</li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 22, 2025 04:25 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2025-03-21-another-home-outage/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2025-03-21-losing-war-internet/" class="hover:underline"
+              >Losing the war for the free internet</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Warning: this is a long ramble I wrote after an outage of my home
+internet. You'll get your regular scheduled programming shortly.</p>
+
+<p>I didn't realize this until relatively recently, but we're at war.</p>
+
+<p>Fascists and capitalists are trying to take over the world, and it's
+bringing utter chaos.</p>
+
+<p>We're more numerous than them, of course: this is only a handful of
+people screwing everyone else over, but they've accumulated so much
+wealth and media control that it's getting really, really hard to move
+around.</p>
+
+<p>Everything is surveilled: people are carrying tracking and recording
+devices in their pockets at all time, or they drive around in
+surveillance machines. Payments are all turning digital. There's
+cameras everywhere, including in cars. Personal data leaks are so
+common people kind of assume their personal address, email address,
+and other personal information <em>has</em> already been leaked.</p>
+
+<p>The internet itself is collapsing: most people are using the network
+only as a channel to reach a "small" set of "<a href="https://en.wikipedia.org/wiki/Hyperscale_computing">hyperscalers</a>":
+mind-boggingly large datacenters that don't really operate like the
+old internet. Once you reach the local endpoint, you're not on the
+internet anymore. Netflix, Google, Facebook (Instagram, Whatsapp,
+Messenger), Apple, Amazon, Microsoft (Outlook, Hotmail, etc), all
+those things are not really the internet anymore.</p>
+
+<p>Those companies operate over the "<a href="https://en.wikipedia.org/wiki/Internet">internet</a>" (as in the
+<a href="https://en.wikipedia.org/wiki/Internet_protocol_suite">TCP/IP</a> network), but they are not an "interconnected network" as
+much as their own, gigantic silos so much bigger than everything else
+that they essentially dictate how the network operates, regardless of
+standards. You access it over "the <a href="https://en.wikipedia.org/wiki/World_Wide_Web">web</a>" (as in "<a href="https://en.wikipedia.org/wiki/HTTP">HTTP</a>") but
+the fabric is not made of interconnected links that cross sites: all
+those sites are trying really hard to keep you captive on their
+platforms.</p>
+
+<p>Besides, you <em>think</em> you're writing an email to the state department,
+for example, but you're really writing to Microsoft Outlook. That app
+your university or border agency tells you to install, the backend is
+not hosted by those institutions, it's on Amazon. Heck, even Netflix
+is on Amazon.</p>
+
+<p>Meanwhile I've been operating my own mail server first under my bed
+(yes, really) and then in a cupboard or the basement for almost three
+decades now. And what for?</p>
+
+<p>So I can tell people I can? Maybe!</p>
+
+<p>I guess the reason I'm doing this is the same reason people are
+suddenly asking me about <a href="https://wiki.reseaulibre.ca/">the (dead) mesh</a> again. People are
+worried and scared that the world has been taken over, and they're
+right: we have gotten seriously screwed.</p>
+
+<p>It's the same reason I keep doing radio, minimally know how to grow
+food, ride a bike, build a shed, paddle a canoe, archive and document
+things, talk with people, host an assembly. Because, when push comes
+to shove, there's no one else who's going to do it for you, at least
+not the way that benefits the people.</p>
+
+<p>The Internet is one of humanity's greatest accomplishments. Obviously,
+oligarchs and fascists are trying to destroy it. I just didn't expect
+the tech bros to be flipping to that side so easily. I thought we were
+friends, but I guess we are, after all, enemies.</p>
+
+<p>That said, that old internet is still around. It's getting harder to
+host your own stuff at home, but it's not impossible. Mail is tricky
+because of reputation, but it's also tricky in the cloud (don't get
+fooled!), so it's not that much easier (or cheaper) there.</p>
+
+<p>So there's things you can do, if you're into tech.</p>
+
+<p>Share your wifi with your neighbours.</p>
+
+<p>Build a LAN. Throw a wire over to your neighbour too, it works better
+than wireless.</p>
+
+<p>Use <a href="https://www.torproject.org/">Tor</a>. <a href="https://community.torproject.org/relay/">Run a relay</a>, a <a href="https://snowflake.torproject.org/">snowflake</a>, a <a href="https://blog.torproject.org/call-for-webtunnel-bridges/">webtunnel</a>.</p>
+
+<p>Host a web server. Build a site with a static site generator and throw
+it in the wind.</p>
+
+<p>Download and share <a href="https://en.wikipedia.org/wiki/BitTorrent">torrents</a>, and why not a <a href="https://en.wikipedia.org/wiki/BitTorrent_tracker">tracker</a>.</p>
+
+<p>Run an <a href="https://en.wikipedia.org/wiki/IRC">IRC</a> server (or <a href="https://anarc.at/blog/2022-06-17-matrix-notes/">Matrix</a>, if
+you want to federate and lose high availability).</p>
+
+<p>At least use <a href="https://signal.org/">Signal</a>, not Whatsapp or Messenger.</p>
+
+<p>And yes, why not, run a mail server, join a mesh.</p>
+
+<p>Don't write new software, there's plenty of that around already.</p>
+
+<p>(Just kidding, you can write code, <a href="https://en.wikipedia.org/wiki/Cypherpunk">cypherpunk</a>.)</p>
+
+<p>You can do <em>many</em> of those things just by setting up a <a href="https://www.freedombox.org/">FreedomBox</a>.</p>
+
+<p>That is, after all, the internet: people doing their own thing for
+their own people.</p>
+
+<p>Otherwise, it's just like sitting in front of the television and
+watching the ads. Opium of the people, like the good old time.</p>
+
+<p>Let a billion droplets build the biggest multitude of clouds that will
+storm over this world and rip apart this fascist conspiracy.</p>
+
+<p>Disobey. Revolt. Build.</p>
+
+<p>We are more than them.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 22, 2025 04:25 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2025-03-21-losing-war-internet/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/244/" class="hover:underline"
+              >The Real Python Podcast – Episode #244: A Decade of Automating the Boring Stuff With Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What goes into updating one of the most popular books about working with Python? After a decade of changes in the Python landscape, what projects, libraries, and skills are relevant to an office worker? This week on the show, we speak with previous guest Al Sweigart about the third edition of "Automate the Boring Stuff With Python."
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 21, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/244/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/497/outlier-detection-with-python" class="hover:underline"
+              >#497: Outlier Detection with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Have you ever wondered why certain data points stand out so dramatically? They might hold the key to everything from fraud detection to groundbreaking discoveries. This week on Talk Python to Me, we dive into the world of outlier detection with Python with Brett Kennedy. You'll learn how outliers can signal errors, highlight novel insights, or even reveal hidden patterns lurking in the data you thought you understood. We'll explore fresh research developments, practical use cases, and how outlier detection compares to other core data science tasks like prediction and clustering. If you're ready to spot those game-changing anomalies in your own projects, stay tuned.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 21, 2025 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/497/outlier-detection-with-python"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.mattlayman.com/videos/onboarding-form-and-template-building-saas-217/" class="hover:underline"
+              >Onboarding Form and Template - Building SaaS #217</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, I updated my new onboarding form on the School Desk app. This form is vital for the first experience of new users, so I spent a lot of time making sure it will do what is needed.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 21, 2025 12:00 AM UTC by
+            <a href="https://www.mattlayman.com/categories/python/index.xml" class="link link-hover text-primary"
+              >Matt Layman</a
+            >
+          </div>
+          <a
+            href="https://www.mattlayman.com/videos/onboarding-form-and-template-building-saas-217/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.techiediaries.com/vibe-coding-clone-uis-ai-python-mobile-lynxjs-new-angular-19-react-19-laravel-12/" class="hover:underline"
               >10xDev Newsletter #1: Vibe Coding, Clone UIs with AI; Python for Mobile Dev; LynxJS — Tiktok New Framework;  New Angular 19, React 19, Laravel 12 Features; AI Fakers in Recruitment; Local-First Apps…</a
             >
@@ -1067,276 +1560,6 @@ Foundation</a>.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/496/scaf-complete-blueprint-for-new-python-kubernetes-projects" class="hover:underline"
-              >#496: Scaf: Complete blueprint for new Python Kubernetes projects</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Today we explore the wild world of Python deployment with my friend, Calvin Hendryx-Parker from Six Feet Up. We’ll tackle some of the biggest challenges in taking a Python app from “it works on my machine” to production, covering inconsistent environments, conflicting dependencies, and sneaky security pitfalls. Along the way, Calvin shares how containerization with Docker and Kubernetes can both simplify and complicate deployments, especially for smaller teams. Finally, we’ll introduce Scaf, a powerful project blueprint designed to give developers a rock-solid start on Python web projects of all sizes. Get notified when the [_Talk Python in Production_ book](https://talkpython.fm/books/python-in-production) goes live and [read the first third online](https://talkpython.fm/books/python-in-production) right now.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 14, 2025 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/496/scaf-complete-blueprint-for-new-python-kubernetes-projects"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/break-statement-alternatives/" class="hover:underline"
-              >Alternatives to Python's "break" statement</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Python's <code>break</code> statement is handy for breaking out of a loop. But <code>break</code> statements can often be replaced by a more readable looping helper function.</p>
-
-
-<div>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/break-statement-alternatives/#using-a-containment-check-instead" target="_blank">Using a containment check instead</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/break-statement-alternatives/#checking-whether-someevery-item-matches-a-condition" target="_blank">Checking whether some/every item matches a condition</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/break-statement-alternatives/#finding-the-first-matching-value" target="_blank">Finding the first matching value</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/break-statement-alternatives/#collecting-items-until-a-condition-is-met" target="_blank">Collecting items until a condition is met</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/break-statement-alternatives/#consider-break-statement-alternatives" target="_blank">Consider <code>break</code> statement alternatives</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Using a containment check instead</h2>
-    
-      
-        <p>Python's <code>break</code> statement is often used when you need an <strong>early break condition</strong>, that is a condition which would indicate that you don't need to loop any further because you've found what you're looking for.</p>
-
-      
-        <p>For example here's a loop that checks for a specific value and then breaks:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="n">color_options</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"blue"</span><span class="p">,</span> <span class="s2">"green"</span><span class="p">,</span> <span class="s2">"purple"</span><span class="p">]</span>
-
-<span class="n">is_purple_an_option</span> <span class="o">=</span> <span class="kc">False</span>
-<span class="k">for</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">color_options</span><span class="p">:</span>
-    <span class="k">if</span> <span class="n">color</span> <span class="o">==</span> <span class="s2">"purple"</span><span class="p">:</span>
-        <span class="n">is_purple_an_option</span> <span class="o">=</span> <span class="kc">True</span>
-        <span class="k">break</span>
-</code></pre></div>
-
-
-      
-        <p>That <code>for</code> loop checks whether our iterable contains a certain value at least once. If it does, we flip a boolean variable from <code>False</code> to <code>True</code>.</p>
-
-      
-        <p>Instead of using that <code>for</code> loop, we could use Python's <code>in</code> operator on our iterable:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="n">color_options</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"blue"</span><span class="p">,</span> <span class="s2">"green"</span><span class="p">,</span> <span class="s2">"purple"</span><span class="p">]</span>
-
-<span class="n">is_purple_an_option</span> <span class="o">=</span> <span class="s2">"purple"</span> <span class="ow">in</span> <span class="n">color_options</span>
-</code></pre></div>
-
-
-      
-        <p>All iterables support the <code>in</code> operator and in fact on some iterables (e.g. sets and dictionaries) it's even faster than looping (see <a href="https://www.pythonmorsels.com/list-containment-checks/" target="_blank">list containment checks</a>).</p>
-
-      
-    
-  
-    <h2>Checking whether some/every item matches a condition</h2>
-    
-      <p>What if we're checking for …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/break-statement-alternatives/" target="_blank">Read the full article: https://www.pythonmorsels.com/break-statement-alternatives/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 13, 2025 04:05 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/break-statement-alternatives/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://techbeamers.com/python-increment-and-decrement-operators/" class="hover:underline"
-              >Python Increment and Decrement Operations – A Comprehensive Guide</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Python provides multiple ways to increment and decrement values, which are commonly used for: &#x2705; Controlling iteration within loops&#x2705; Managing counters in simulations or data processing&#x2705; Adjusting values dynamically in mathematical computations Unlike languages like C or Java, Python does not support x++ or x&#8211; operators. Instead, it encourages an explicit and readable approach using [&#8230;]
-<p><a href="https://techbeamers.com/python-increment-and-decrement-operators/" rel="nofollow">Source</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 13, 2025 06:44 AM UTC by
-            <a href="https://www.techbeamers.com/python-programming-tutorials/feed/" class="link link-hover text-primary"
-              >TechBeamers Python</a
-            >
-          </div>
-          <a
-            href="https://techbeamers.com/python-increment-and-decrement-operators/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://techbeamers.com/unsigned-integers-in-python/" class="hover:underline"
-              >Enforcing Unsigned Integers in Python: A Complete Guide</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Python does not have built-in unsigned integers, unlike C, C++, or Java. This can create problems when:&#x2714; You need strictly non-negative values&#x2714; You are porting code from C/C++&#x2714; You work with binary data, memory buffers, or numerical computing Since Python&#x2019;s int can store negative values and doesn&#x2019;t have a fixed bit-width, we must manually enforce [&#8230;]
-<p><a href="https://techbeamers.com/unsigned-integers-in-python/" rel="nofollow">Source</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 13, 2025 03:41 AM UTC by
-            <a href="https://www.techbeamers.com/python-programming-tutorials/feed/" class="link link-hover text-primary"
-              >TechBeamers Python</a
-            >
-          </div>
-          <a
-            href="https://techbeamers.com/unsigned-integers-in-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://mirekdlugosz.com/blog/2025/django-data-modified-in-pre-save-signal-is-not-saved/" class="hover:underline"
-              >Django: data modified in pre_save signal is not saved</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When I was working on my first Django project, I encountered a problem where modifications done inside <a href="https://docs.djangoproject.com/en/dev/ref/signals/#django.db.models.signals.pre_save"><code>pre_save</code> signal</a> were not stored in the database. Back then it took me a couple of hours to figure out what is wrong and how to fix it. I&#8217;m sharing what I …</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 12, 2025 06:09 PM UTC by
-            <a href="https://mirekdlugosz.com/blog/feeds/planet-python.atom.xml" class="link link-hover text-primary"
-              >Mirek Długosz</a
-            >
-          </div>
-          <a
-            href="https://mirekdlugosz.com/blog/2025/django-data-modified-in-pre-save-signal-is-not-saved/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -1348,8 +1571,8 @@ Foundation</a>.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8905</a></li>
-    <li><a>Unique Feeds: 420</a></li>
+    <li><a>Total Entries: 9034</a></li>
+    <li><a>Unique Feeds: 421</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
