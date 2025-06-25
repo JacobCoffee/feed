@@ -53,6 +53,1144 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://mirekdlugosz.com/blog/2025/pytest-running-multiple-tests-with-names-that-might-contain-spaces/" class="hover:underline"
+              >pytest: running multiple tests with names that might contain spaces</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>You most certainly know that you can run a single test in entire suite by passing the full&nbsp;path:</p>
+<div class="highlight"><pre><span></span><code><span class="nv">PRODUCT_ENV</span><span class="o">=</span><span class="s1">'stage'</span><span class="w"> </span>pytest<span class="w"> </span>-v<span class="w"> </span>--critical<span class="w"> </span>tests/test_mod.py::test_func<span class="o">[</span>x1<span class="o">]</span>
+</code></pre></div>
+
+<p>This gets old when you want to run around 3 or more tests. In that case, you might end up putting …</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 09, 2025 06:28 PM UTC by
+            <a href="https://mirekdlugosz.com/blog/feeds/planet-python.atom.xml" class="link link-hover text-primary"
+              >Mirek Długosz</a
+            >
+          </div>
+          <a
+            href="https://mirekdlugosz.com/blog/2025/pytest-running-multiple-tests-with-names-that-might-contain-spaces/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2025/04/prospero-in-rpython.html" class="hover:underline"
+              >Doing the Prospero-Challenge in RPython</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Recently I had a lot of fun playing with the <a href="https://www.mattkeeter.com/projects/prospero/">Prospero
+Challenge</a> by <a href="https://www.mattkeeter.com/">Matt
+Keeter</a>. The challenge is to render a 1024x1024 image of
+a quote from The Tempest by Shakespeare. The input is a mathematical formula
+with 7866 operations, which is evaluated once per pixel.</p>
+<p>What made the challenge particularly enticing for me personally was the fact
+that the formula is basically a trace in
+<a href="https://en.wikipedia.org/wiki/Static_single-assignment_form">SSA-form</a> – a
+linear sequence of operations, where every variable is assigned exactly once.
+The challenge is to evaluate the formula as fast as possible. I tried a number
+of ideas how to speed up execution and will talk about them in this somewhat
+meandering post. Most of it follows Matt's implementation
+<a href="https://github.com/mkeeter/fidget">Fidget</a> very closely. There are two points
+of difference:</p>
+<ul>
+<li>I tried to add more peephole optimizations, but they didn't end up helping
+  much.</li>
+<li>I implemented a "demanded information" optimization that removes a lot of
+  operations by only keeping the sign of the result. This optimization ended up
+  being useful.</li>
+</ul>
+<p>Most of the prototyping in this post was done in RPython (a statically typable
+subset of Python2, that can be compiled to C), but I later rewrote the program
+in C to get better performance. All the code <a href="https://github.com/cfbolz/pyfidget/">can be found on
+Github</a>.</p>
+<h3 id="input-program">Input program</h3>
+<p>The input program is a sequence of operations, like this:</p>
+<div class="code"><pre class="code literal-block"><span class="n">_0</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="mf">2.95</span>
+<span class="n">_1</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">x</span>
+<span class="n">_2</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="mf">8.13008</span>
+<span class="n">_3</span><span class="w"> </span><span class="n">mul</span><span class="w"> </span><span class="n">_1</span><span class="w"> </span><span class="n">_2</span>
+<span class="n">_4</span><span class="w"> </span><span class="n">add</span><span class="w"> </span><span class="n">_0</span><span class="w"> </span><span class="n">_3</span>
+<span class="n">_5</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="mf">3.675</span>
+<span class="n">_6</span><span class="w"> </span><span class="n">add</span><span class="w"> </span><span class="n">_5</span><span class="w"> </span><span class="n">_3</span>
+<span class="n">_7</span><span class="w"> </span><span class="n">neg</span><span class="w"> </span><span class="n">_6</span>
+<span class="n">_8</span><span class="w"> </span><span class="nb">max</span><span class="w"> </span><span class="n">_4</span><span class="w"> </span><span class="n">_7</span>
+<span class="o">...</span>
+</pre></div>
+
+<p>The first column is the name of the result variable, the second column is the
+operation, and the rest are the arguments to the operation. <code>var-x</code> is a
+special operation that returns the x-coordinate of the pixel being rendered,
+and equivalently for <code>var-y</code> the y-coordinate. The sign of the result gives the
+color of the pixel, the absolute value is not important.</p>
+<h3 id="a-baseline-interpreter">A baseline interpreter</h3>
+<p>To run the program, I first parse them and replace the register names with
+indexes, to avoid any dictionary lookups at runtime.
+Then I implemented a simple interpreter for the SSA-form
+input program. The interpreter is a simple register machine, where every
+operation is executed in order. The result of the operation is stored into a
+list of results, and the next operation is executed. This was the slow baseline
+implementation of the interpreter but it's very useful to compare against the optimized
+versions.</p>
+<p>This is roughly what the code looks like</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">DirectFrame</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">program</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">program</span> <span class="o">=</span> <span class="n">program</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">next</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_floats</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">setxyz</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">setxyz</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">z</span> <span class="o">=</span> <span class="n">z</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">program</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">program</span>
+        <span class="n">num_ops</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">num_operations</span><span class="p">()</span>
+        <span class="n">floatvalues</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">num_ops</span>
+        <span class="k">for</span> <span class="n">op</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_ops</span><span class="p">):</span>
+            <span class="n">func</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">get_func_and_args</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">const</span><span class="p">:</span>
+                <span class="n">floatvalues</span><span class="p">[</span><span class="n">op</span><span class="p">]</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">consts</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span>
+                <span class="k">continue</span>
+            <span class="n">farg0</span> <span class="o">=</span> <span class="n">floatvalues</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span>
+            <span class="n">farg1</span> <span class="o">=</span> <span class="n">floatvalues</span><span class="p">[</span><span class="n">arg1</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_x</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">x</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_y</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">y</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_z</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">z</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">add</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">farg0</span><span class="p">,</span> <span class="n">farg1</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">sub</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="n">farg0</span><span class="p">,</span> <span class="n">farg1</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">mul</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mul</span><span class="p">(</span><span class="n">farg0</span><span class="p">,</span> <span class="n">farg1</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">max</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">farg0</span><span class="p">,</span> <span class="n">farg1</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">min</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">farg0</span><span class="p">,</span> <span class="n">farg1</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">square</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">square</span><span class="p">(</span><span class="n">farg0</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">sqrt</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">farg0</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">exp</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">farg0</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">neg</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">neg</span><span class="p">(</span><span class="n">farg0</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">abs</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">farg0</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="mi">0</span>
+            <span class="n">floatvalues</span><span class="p">[</span><span class="n">op</span><span class="p">]</span> <span class="o">=</span> <span class="n">res</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">floatvalues</span><span class="p">[</span><span class="n">num_ops</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">arg0</span> <span class="o">+</span> <span class="n">arg1</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">sub</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">arg0</span> <span class="o">-</span> <span class="n">arg1</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">mul</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">arg0</span> <span class="o">*</span> <span class="n">arg1</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">max</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">max</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">min</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">min</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">square</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">):</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="n">arg0</span>
+        <span class="k">return</span> <span class="n">val</span><span class="o">*</span><span class="n">val</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">sqrt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">exp</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">neg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="o">-</span><span class="n">arg0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">abs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">abs</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+</pre></div>
+
+<p>Running the naive interpreter on the prospero image file is super slow, since
+it performs 7866 * 1024 * 1024 float operations, plus the interpretation overhead.</p>
+<h3 id="using-quadtrees-to-render-the-picture">Using Quadtrees to render the picture</h3>
+<p>The approach that Matt describes in his really excellent
+<a href="https://www.youtube.com/watch?v=UxGxsGnbyJ4">talk</a> is to use
+<a href="https://en.wikipedia.org/wiki/Quadtree">quadtrees</a>: recursively subdivide the
+image into quadrants, and evaluate the formula in each quadrant. For every
+quadrant you can simplify the formula by doing a range analysis. After a few
+recursion steps, the formula becomes significantly smaller, often only a few
+hundred or a few dozen operations.</p>
+<p>At the bottom of the recursion you either reach a square where the range
+analysis reveals that the sign for all pixels is determined, then you can fill
+in all the pixels of the quadrant. Or you can evaluate the (now much simpler)
+formula in the quadrant by executing it for every pixel.</p>
+<p>This is an interesting use case of JIT compiler/optimization techniques,
+requiring the optimizer itself to execute really quickly since it is an essential
+part of the performance of the algorithm. The optimizer runs literally hundreds
+of times to render a single image. If the algorithm is used for 3D models
+it becomes even more crucial.</p>
+<h3 id="writing-a-simple-optimizer">Writing a simple optimizer</h3>
+<p>Implementing the quadtree recursion is straightforward. Since the program has
+no control flow the optimizer is very simple to write. I've written a couple of
+blog posts on how to easily write optimizers for linear sequences of
+operations, and I'm using the approach described in these <a href="https://pypy.org/categories/toy-optimizer.html">Toy
+Optimizer</a> posts. The interval
+analysis is basically an <a href="https://pypy.org/posts/2024/08/toy-knownbits.html">abstract
+interpretation</a> of the
+operations. The optimizer does a sequential forward pass over the input
+program. For every operation, the output interval is computed. The optimizer
+also performs optimizations based on the computed intervals, which helps in
+reducing the number of operations executed (I'll talk about this further down).</p>
+<p>Here's a sketch of the Python code that does the optimization:</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">Optimizer</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">program</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">program</span> <span class="o">=</span> <span class="n">program</span>
+        <span class="n">num_operations</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">num_operations</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">resultops</span> <span class="o">=</span> <span class="n">ProgramBuilder</span><span class="p">(</span><span class="n">num_operations</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span> <span class="o">=</span> <span class="n">IntervalFrame</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">program</span><span class="p">)</span>
+        <span class="c1"># old index -&gt; new index</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">opreplacements</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">num_operations</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_replacement</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opreplacements</span><span class="p">[</span><span class="n">op</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">newop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">,</span> <span class="n">arg0</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">arg1</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">resultops</span><span class="o">.</span><span class="n">add_op</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">newconst</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="n">const</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">resultops</span><span class="o">.</span><span class="n">add_const</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">minvalues</span><span class="p">[</span><span class="n">const</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">maxvalues</span><span class="p">[</span><span class="n">const</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="c1">#self.seen_consts[value] = const</span>
+        <span class="k">return</span> <span class="n">const</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">optimize</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">f</span><span class="p">):</span>
+        <span class="n">program</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">program</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">setxyz</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">e</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span>
+        <span class="n">numops</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">num_operations</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">index</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">numops</span><span class="p">):</span>
+            <span class="n">newop</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_optimize_op</span><span class="p">(</span><span class="n">index</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">opreplacements</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">newop</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opreplacements</span><span class="p">[</span><span class="n">numops</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_optimize_op</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">op</span><span class="p">):</span>
+        <span class="n">program</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">program</span>
+        <span class="n">intervalframe</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span>
+        <span class="n">func</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">get_func_and_args</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">arg0</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+        <span class="k">assert</span> <span class="n">arg1</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_x</span><span class="p">:</span>
+            <span class="n">minimum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">minx</span>
+            <span class="n">maximum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">maxx</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">var_x</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_y</span><span class="p">:</span>
+            <span class="n">minimum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">miny</span>
+            <span class="n">maximum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">maxy</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">var_y</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_z</span><span class="p">:</span>
+            <span class="n">minimum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">minz</span>
+            <span class="n">maximum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">maxz</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">var_z</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">const</span><span class="p">:</span>
+            <span class="n">const</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">consts</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">newconst</span><span class="p">(</span><span class="n">const</span><span class="p">)</span>
+        <span class="n">arg0</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_replacement</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+        <span class="n">arg1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_replacement</span><span class="p">(</span><span class="n">arg1</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="n">arg0</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+        <span class="k">assert</span> <span class="n">arg1</span> <span class="o">&gt;=</span> <span class="mi">0</span>
+        <span class="n">arg0minimum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">minvalues</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span>
+        <span class="n">arg0maximum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">maxvalues</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span>
+        <span class="n">arg1minimum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">minvalues</span><span class="p">[</span><span class="n">arg1</span><span class="p">]</span>
+        <span class="n">arg1maximum</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">maxvalues</span><span class="p">[</span><span class="n">arg1</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">neg</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_neg</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">min</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_min</span><span class="p">(</span><span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">,</span> <span class="n">arg1minimum</span><span class="p">,</span> <span class="n">arg1maximum</span><span class="p">)</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">opt_default</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">,</span> <span class="n">arg0</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">arg1</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">_set</span><span class="p">(</span><span class="n">newop</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">newop</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">opt_neg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">):</span>
+        <span class="c1"># peephole rules go here, see below</span>
+        <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">_neg</span><span class="p">(</span><span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">neg</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">,</span> <span class="n">arg0</span><span class="p">)</span>
+
+    <span class="nd">@symmetric</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">opt_min</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">,</span> <span class="n">arg1minimum</span><span class="p">,</span> <span class="n">arg1maximum</span><span class="p">):</span>
+        <span class="c1"># peephole rules go here, see below</span>
+        <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">_max</span><span class="p">(</span><span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">,</span> <span class="n">arg1minimum</span><span class="p">,</span> <span class="n">arg1maximum</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+
+    <span class="o">...</span>
+</pre></div>
+
+<p>The resulting optimized traces are then simply interpreted at the bottom of the
+quadtree recursion. Matt talks about also generating machine code from them,
+but when I tried to use PyPy's JIT for that it was way too slow at
+producing machine code.</p>
+<h3 id="testing-soundness-of-the-interval-abstract-domain">Testing soundness of the interval abstract domain</h3>
+<p>To make sure that my interval computation in the optimizer is correct, I
+implemented a hypothesis-based property based test. It checks the abstract
+transfer functions of the interval domain for soundness. It does so by
+generating random concrete input values for an operation and random intervals that
+surround the random concrete values, then performs the concrete operation to
+get the concrete output, and finally checks that the abstract transfer function applied
+to the input intervals gives an interval that contains the concrete output.</p>
+<p>For example, the random test for the <code>square</code> operation would look like this:</p>
+<div class="code"><pre class="code literal-block"><span class="kn">from</span><span class="w"> </span><span class="nn">hypothesis</span><span class="w"> </span><span class="kn">import</span> <span class="n">given</span><span class="p">,</span> <span class="n">strategies</span><span class="p">,</span> <span class="n">assume</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pyfidget.vm</span><span class="w"> </span><span class="kn">import</span> <span class="n">IntervalFrame</span><span class="p">,</span> <span class="n">DirectFrame</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="n">regular_floats</span> <span class="o">=</span> <span class="n">strategies</span><span class="o">.</span><span class="n">floats</span><span class="p">(</span><span class="n">allow_nan</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">allow_infinity</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_range_and_contained_float</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">):</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">,</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">([</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span>
+
+<span class="n">frame</span> <span class="o">=</span> <span class="n">DirectFrame</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">intervalframe</span> <span class="o">=</span> <span class="n">IntervalFrame</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+
+<span class="n">range_and_contained_float</span> <span class="o">=</span> <span class="n">strategies</span><span class="o">.</span><span class="n">builds</span><span class="p">(</span><span class="n">make_range_and_contained_float</span><span class="p">,</span> <span class="n">regular_floats</span><span class="p">,</span> <span class="n">regular_floats</span><span class="p">,</span> <span class="n">regular_floats</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">contains</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">rmin</span><span class="p">,</span> <span class="n">rmax</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">math</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">rmin</span><span class="p">)</span> <span class="ow">or</span> <span class="n">math</span><span class="o">.</span><span class="n">isnan</span><span class="p">(</span><span class="n">rmax</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="n">rmin</span> <span class="o">&lt;=</span> <span class="n">res</span> <span class="o">&lt;=</span> <span class="n">rmax</span>
+
+
+<span class="nd">@given</span><span class="p">(</span><span class="n">range_and_contained_float</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_square</span><span class="p">(</span><span class="n">val</span><span class="p">):</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">c</span> <span class="o">=</span> <span class="n">val</span>
+    <span class="n">rmin</span><span class="p">,</span> <span class="n">rmax</span> <span class="o">=</span> <span class="n">intervalframe</span><span class="o">.</span><span class="n">_square</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">square</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">contains</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">rmin</span><span class="p">,</span> <span class="n">rmax</span><span class="p">)</span>
+</pre></div>
+
+<p>This test generates a random float <code>b</code>, and two other floats <code>a</code> and <code>c</code> such
+that the interval <code>[a, c]</code> contains <code>b</code>. The test then checks that the result
+of the <code>square</code> operation on <code>b</code> is contained in the interval <code>[rmin, rmax]</code>
+returned by the abstract transfer function for the <code>square</code> operation.</p>
+<h3 id="peephole-rewrites">Peephole rewrites</h3>
+<p>The only optimization that Matt does in his implementation is a peephole
+optimization rule that removes <code>min</code> and <code>max</code> operations where the intervals
+of the arguments don't overlap. In that case, the optimizer statically can know
+which of the arguments will be the result of the operation. I implemented this
+peephole optimization in my implementation as well, but I also added a few more
+peephole optimizations that I thought would be useful.</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">Optimizer</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">opt_neg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">):</span>
+        <span class="c1"># new: add peephole rule --x =&gt; x</span>
+        <span class="n">func</span><span class="p">,</span> <span class="n">arg0arg0</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">resultops</span><span class="o">.</span><span class="n">get_func_and_args</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">neg</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">arg0arg0</span>
+        <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">_neg</span><span class="p">(</span><span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">neg</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">,</span> <span class="n">arg0</span><span class="p">)</span>
+
+    <span class="nd">@symmetric</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">opt_min</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">,</span> <span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">,</span> <span class="n">arg1minimum</span><span class="p">,</span> <span class="n">arg1maximum</span><span class="p">):</span>
+        <span class="c1"># Matt's peephole rule</span>
+        <span class="k">if</span> <span class="n">arg0maximum</span> <span class="o">&lt;</span> <span class="n">arg1minimum</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">arg0</span> <span class="c1"># we can use the intervals to decide which argument will be returned</span>
+        <span class="c1"># new one by me: min(x, x) =&gt; x </span>
+        <span class="k">if</span> <span class="n">arg0</span> <span class="o">==</span> <span class="n">arg1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">arg0</span>
+        <span class="n">func</span><span class="p">,</span> <span class="n">arg0arg0</span><span class="p">,</span> <span class="n">arg0arg1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">resultops</span><span class="o">.</span><span class="n">get_func_and_args</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+        <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">intervalframe</span><span class="o">.</span><span class="n">_max</span><span class="p">(</span><span class="n">arg0minimum</span><span class="p">,</span> <span class="n">arg0maximum</span><span class="p">,</span> <span class="n">arg1minimum</span><span class="p">,</span> <span class="n">arg1maximum</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">opt_default</span><span class="p">(</span><span class="n">OPS</span><span class="o">.</span><span class="n">max</span><span class="p">,</span> <span class="n">minimum</span><span class="p">,</span> <span class="n">maximum</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span><span class="p">)</span>
+
+    <span class="o">...</span>
+</pre></div>
+
+<p>However, it turns out that all my attempts at adding other peephole
+optimization rules were not very useful. Most rules never fired, and the ones
+that did only had a small effect on the performance of the program. The only
+peephole optimization that I found to be useful was the one that Matt describes
+in his talk. Matt's <code>min</code>/<code>max</code> optimization were 96% of all rewrites that my
+peephole optimizer applied for the <code>prospero.vm</code> input. The remaining 4% of
+rewrites were (the percentages are of that 4%):</p>
+<div class="code"><pre class="code literal-block">--x =&gt; x                          4.65%
+(-x)**2 =&gt; x ** 2                 0.99%
+min(x, x) =&gt; x                   20.86%
+min(x, min(x, y)) =&gt;  min(x, y)  52.87%
+max(x, x) =&gt; x                   16.40%
+max(x, max(x, y)) =&gt; max(x, y)    4.23%
+</pre></div>
+
+<p>In the end it turned out that having these extra optimization rules made the
+total runtime of the system go up. Checking for the rewrites isn't free, and
+since they apply so rarely they don't pay for their own cost in terms of
+improved performance.</p>
+<p>There are some further rules that I tried that never fired at all:</p>
+<div class="code"><pre class="code literal-block">a <span class="gs">* 0 =&gt; 0</span>
+<span class="gs">a *</span> 1 =&gt; a
+a <span class="gs">* a =&gt; a *</span>* 2
+a <span class="gs">* -1 =&gt; -a</span>
+<span class="gs">a + 0 =&gt; a</span>
+<span class="gs">a - 0 =&gt; a</span>
+<span class="gs">x - x =&gt; 0</span>
+<span class="gs">abs(known positive number x) =&gt; x</span>
+<span class="gs">abs(known negative number x) =&gt; -x</span>
+<span class="gs">abs(-x) =&gt; abs(x)</span>
+<span class="gs">(-x) *</span>* 2 =&gt; x ** 2
+</pre></div>
+
+<p>This investigation is clearly way too focused on a single program and should be
+re-done with a larger set of example inputs, if this were an actually serious
+implementation.</p>
+<h3 id="demanded-information-optimization">Demanded Information Optimization</h3>
+<p>LLVM has an static analysis pass called 'demanded bits'. It is a backwards analysis that
+allows you to determine which bits of a value are actually used in the final
+result. This information can then be used in peephole optimizations. For
+example, if you have an expression that computes a value, but only the last
+byte of that value is used in the final result, you can optimize the expression
+to only compute the last byte.</p>
+<p>Here's an example. Let's say we first byte-swap a 64-bit int, and then mask off the last byte:</p>
+<div class="code"><pre class="code literal-block"><span class="kt">uint64_t</span><span class="w"> </span><span class="nf">byteswap_then_mask</span><span class="p">(</span><span class="kt">uint64_t</span><span class="w"> </span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">byteswap</span><span class="p">(</span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;</span><span class="w"> </span><span class="mh">0xff</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>In this case, the "demanded bits" of the <code>byteswap(a)</code> expression are
+<code>0b0...011111111</code>, which inversely means that we don't care about the upper 56
+bits. Therefore the whole expression can be optimized to <code>a &gt;&gt; 56</code>.</p>
+<p>For the Prospero challenge, we can observe that for the resulting pixel values, the value of
+the result is not used at all, only its sign. Essentially, every program ends
+implicitly with a <code>sign</code> operation that returns <code>0.0</code> for negative values and
+<code>1.0</code> for positive values. For clarity, I will show this <code>sign</code> operation in
+the rest of the section, even if it's not actually in the real code.</p>
+<p>This makes it possible to simplify certain min/max
+operations further. Here is an example of a program, together with the
+intervals of the variables:</p>
+<div class="code"><pre class="code literal-block"><span class="n">x</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">x</span><span class="w">     </span><span class="c1"># [0.1, 1]</span>
+<span class="n">y</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">y</span><span class="w">     </span><span class="c1"># [-1, 1]</span>
+<span class="n">m</span><span class="w"> </span><span class="nb">min</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="n">y</span><span class="w"> </span><span class="c1"># [-1, 1]</span>
+<span class="n">out</span><span class="w"> </span><span class="nb">sign</span><span class="w"> </span><span class="n">m</span>
+</pre></div>
+
+<p>This program can be optimized to:</p>
+<div class="code"><pre class="code literal-block"><span class="n">y</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">y</span>
+<span class="n">out</span><span class="w"> </span><span class="nb">sign</span><span class="w"> </span><span class="n">m</span>
+</pre></div>
+
+<p>Because that expression has the same result as the original expression: if <code>x &gt;
+0.1</code>, for the result of <code>min(x, y)</code> to be negative then <code>y</code> needs to be negative.</p>
+<p>Another, more complex, example is this:</p>
+<div class="code"><pre class="code literal-block"><span class="n">x</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">x</span><span class="w">        </span><span class="c1"># [1, 100]</span>
+<span class="n">y</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">y</span><span class="w">        </span><span class="c1"># [-10, 10]</span>
+<span class="n">z</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">z</span><span class="w">        </span><span class="c1"># [-100, 100]</span>
+<span class="n">m1</span><span class="w"> </span><span class="nb">min</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="n">y</span><span class="w">     </span><span class="c1"># [-10, 10]</span>
+<span class="n">m2</span><span class="w"> </span><span class="nb">max</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="n">out</span><span class="w">   </span><span class="c1"># [-10, 100]</span>
+<span class="n">out</span><span class="w"> </span><span class="nb">sign</span><span class="w"> </span><span class="n">m2</span>
+</pre></div>
+
+<p>Which can be optimized to this:</p>
+<div class="code"><pre class="code literal-block"><span class="n">y</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">y</span>
+<span class="n">z</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">z</span>
+<span class="n">m2</span><span class="w"> </span><span class="nb">max</span><span class="w"> </span><span class="n">z</span><span class="w"> </span><span class="n">y</span>
+<span class="n">out</span><span class="w"> </span><span class="nb">sign</span><span class="w"> </span><span class="n">m2</span>
+</pre></div>
+
+<p>This is because the sign of <code>min(x, y)</code> is the same as the sign of <code>y</code> if <code>x &gt;
+0</code>, and the sign of <code>max(z, min(x, y))</code> is thus the same as the sign of <code>max(z,
+y)</code>.</p>
+<p>To implement this optimization, I do a backwards pass over the program after
+the peephole optimization forward pass. For every <code>min</code> call I encounter, where
+one of the arguments is positive, I can optimize the <code>min</code> call away and
+replace it with the other argument. For <code>max</code> calls I simplify their arguments
+recursively.</p>
+<p>The code looks roughly like this:</p>
+<div class="code"><pre class="code literal-block"><span class="k">def</span><span class="w"> </span><span class="nf">work_backwards</span><span class="p">(</span><span class="n">resultops</span><span class="p">,</span> <span class="n">result</span><span class="p">,</span> <span class="n">minvalues</span><span class="p">,</span> <span class="n">maxvalues</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">demand_sign_simplify</span><span class="p">(</span><span class="n">op</span><span class="p">):</span>
+        <span class="n">func</span><span class="p">,</span> <span class="n">arg0</span><span class="p">,</span> <span class="n">arg1</span> <span class="o">=</span> <span class="n">resultops</span><span class="o">.</span><span class="n">get_func_and_args</span><span class="p">(</span><span class="n">op</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">max</span><span class="p">:</span>
+            <span class="n">narg0</span> <span class="o">=</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">narg0</span> <span class="o">!=</span> <span class="n">arg0</span><span class="p">:</span>
+                <span class="n">resultops</span><span class="o">.</span><span class="n">setarg</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">narg0</span><span class="p">)</span>
+            <span class="n">narg1</span> <span class="o">=</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">narg1</span> <span class="o">!=</span> <span class="n">arg1</span><span class="p">:</span>
+                <span class="n">resultops</span><span class="o">.</span><span class="n">setarg</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">narg1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">min</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">minvalues</span><span class="p">[</span><span class="n">arg0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">minvalues</span><span class="p">[</span><span class="n">arg1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+            <span class="n">narg0</span> <span class="o">=</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg0</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">narg0</span> <span class="o">!=</span> <span class="n">arg0</span><span class="p">:</span>
+                <span class="n">resultops</span><span class="o">.</span><span class="n">setarg</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">narg0</span><span class="p">)</span>
+            <span class="n">narg1</span> <span class="o">=</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">arg1</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">narg1</span> <span class="o">!=</span> <span class="n">arg1</span><span class="p">:</span>
+                <span class="n">resultops</span><span class="o">.</span><span class="n">setarg</span><span class="p">(</span><span class="n">op</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">narg1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">op</span>
+    <span class="k">return</span> <span class="n">demand_sign_simplify</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+</pre></div>
+
+<p>In my experiment, this optimization lets me remove 25% of all operations in
+prospero, at the various levels of my octree. I'll briefly look at performance
+results further down.</p>
+<h3 id="further-ideas-about-the-demanded-sign-simplification">Further ideas about the demanded sign simplification</h3>
+<p>There is another idea how to short-circuit the evaluation of expressions that I
+tried briefly but didn't pursue to the end. Let's go back to the first example
+of the previous subsection, but with different intervals:</p>
+<div class="code"><pre class="code literal-block"><span class="n">x</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">x</span><span class="w">     </span><span class="c1"># [-1, 1]</span>
+<span class="n">y</span><span class="w"> </span><span class="k">var</span><span class="o">-</span><span class="n">y</span><span class="w">     </span><span class="c1"># [-1, 1]</span>
+<span class="n">m</span><span class="w"> </span><span class="nb">min</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="n">y</span><span class="w">   </span><span class="c1"># [-1, 1]</span>
+<span class="n">out</span><span class="w"> </span><span class="nb">sign</span><span class="w"> </span><span class="n">m</span>
+</pre></div>
+
+<p>Now we can't use the "demanded sign" trick in the optimizer, because neither
+<code>x</code> nor <code>y</code> are known positive. However, during <em>execution</em> of the program, if
+<code>x</code> turns out to be negative we can end the execution of this trace
+immediately, since we know that the result must be negative.</p>
+<p>So I experimented with adding <code>return_early_if_neg</code> flags to all operations
+with this property. The interpreter then checks whether the flag is set on an
+operation and if the result is negative, it stops the execution of the program
+early:</p>
+<div class="code"><pre class="code literal-block"><span class="n">x</span><span class="w"> </span><span class="nf">var</span><span class="o">-</span><span class="n">x</span><span class="o">[</span><span class="n">return_early_if_neg</span><span class="o">]</span>
+<span class="n">y</span><span class="w"> </span><span class="nf">var</span><span class="o">-</span><span class="n">y</span><span class="o">[</span><span class="n">return_early_if_neg</span><span class="o">]</span>
+<span class="n">m</span><span class="w"> </span><span class="nf">min</span><span class="w"> </span><span class="n">x</span><span class="w"> </span><span class="n">y</span>
+<span class="k">out</span><span class="w"> </span><span class="nf">sign</span><span class="w"> </span><span class="n">m</span>
+</pre></div>
+
+<p>This looked pretty promising, but it's also a trade-off because the cost of
+checking the flag and the value isn't zero. Here's a sketch to the change in the interpreter:</p>
+<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">DirectFrame</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="o">...</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">program</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">program</span>
+        <span class="n">num_ops</span> <span class="o">=</span> <span class="n">program</span><span class="o">.</span><span class="n">num_operations</span><span class="p">()</span>
+        <span class="n">floatvalues</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">num_ops</span>
+        <span class="k">for</span> <span class="n">op</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_ops</span><span class="p">):</span>
+            <span class="o">...</span>
+            <span class="k">if</span> <span class="n">func</span> <span class="o">==</span> <span class="n">OPS</span><span class="o">.</span><span class="n">var_x</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">x</span>
+            <span class="o">...</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="mi">0</span>
+            <span class="k">if</span> <span class="n">program</span><span class="o">.</span><span class="n">get_flags</span><span class="p">(</span><span class="n">op</span><span class="p">)</span> <span class="o">&amp;</span> <span class="n">OPS</span><span class="o">.</span><span class="n">should_return_if_neg</span> <span class="ow">and</span> <span class="n">res</span> <span class="o">&lt;</span> <span class="mf">0.0</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">res</span>
+            <span class="n">floatvalues</span><span class="p">[</span><span class="n">op</span><span class="p">]</span> <span class="o">=</span> <span class="n">res</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">floatvalues</span><span class="p">[</span><span class="n">num_ops</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span>
+</pre></div>
+
+<p>I implemented this in the RPython
+version, but didn't end up porting it to C, because it interferes with SIMD.</p>
+<h3 id="dead-code-elimination">Dead code elimination</h3>
+<p>Matt performs dead code elimination in his implementation by doing a single
+backwards pass over the program. This is a very simple and effective
+optimization, and I implemented it in my implementation as well. The dead code
+elimination pass is very simple: It starts by marking the result operation as
+used. Then it goes backwards over the program. If the current operation is
+used, its arguments are marked as used as well. Afterwards, all the operations
+that are not marked as used are removed from the program. The PyPy JIT actually
+performs dead code elimination on traces in exactly the same way (and I don't
+think we ever explained how this works on the blog), so I thought it was worth
+mentioning.</p>
+<p>Matt also performs register allocation as part of the backwards pass, but I
+didn't implement it because I wasn't too interested in that aspect.</p>
+<h3 id="random-testing-of-the-optimizer">Random testing of the optimizer</h3>
+<p>To make sure I didn't break anything in the optimizer, I implemented a
+test that generates random input programs and checks that the output of the
+optimizer is equivalent to the input program. The test generates random
+operations, random intervals for the operations and a random input value within
+that interval. It then runs the optimizer on the input program and checks that
+the output program has the same result as the input program. This is again
+implemented with <code>hypothesis</code>. Hypothesis' test case minimization feature is
+super useful for finding optimizer bugs. It's just not fun to analyze a problem
+on a many-thousand-operation input file, but Hypothesis often generated reduced
+test cases that were only a few operations long.</p>
+<h3 id="visualizing-programs">Visualizing programs</h3>
+<p>It's actually surprisingly annoying to visualize <code>prospero.vm</code> well, because
+it's quite a bit too large to just feed it into Graphviz. I made the problem
+slightly easier by grouping several operations together, where only the first
+operation in a group is used as the argument for more than one operation
+further in the program. This made it slightly more manageable for Graphviz. But
+it still wasn't a big enough improvement to be able to visualize all of
+<code>prospero.vm</code> in its unoptimized form at the top of the octree.</p>
+<p>Here's a visualization of the optimized <code>prospero.vm</code> at one of the octree
+levels:</p>
+<p><img alt="graph visualization of a part of the input program" src="https://www.pypy.org/images/2025-image-prospero-dataflow.png" /></p>
+<p>The result is on top, every node points to its arguments. The <code>min</code> and <code>max</code>
+operations form a kind of "spine" of the expression tree, because they are
+unions and intersection in the constructive solid geometry sense.</p>
+<p>I also wrote a function to visualize the octree recursion itself, the output
+looks like this:</p>
+<p><img alt="graph visualization of the octree recursion, zoomed out" src="https://www.pypy.org/images/2025-image-octree-zoomed-out.png" /></p>
+<p><img alt="graph visualization of the octree recursion, zoomed in" src="https://www.pypy.org/images/2025-image-octree-zoomed-in.png" /></p>
+<p>Green nodes are where the interval analysis determined that the output must be
+entirely outside the shape. Yellow nodes are where the octree recursion
+bottomed out.</p>
+<h3 id="c-implementation">C implementation</h3>
+<p>To achieve even faster performance, I decided to rewrite the implementation in
+C. While RPython is great for prototyping, it can be challenging to control
+low-level aspects of the code. The rewrite in C allowed me to experiment with
+several techniques I had been curious about:</p>
+<ul>
+<li><a href="https://blog.reverberate.org/2021/04/21/musttail-efficient-interpreters.html"><code>musttail</code> optimization</a> for the interpreter.</li>
+<li>SIMD (Single Instruction, Multiple Data): Using Clang's
+  <a href="https://clang.llvm.org/docs/LanguageExtensions.html#vectors-and-extended-vectors"><code>ext_vector_type</code></a>, I process eight pixels at once using AVX (or some other
+  SIMD magic that I don't properly understand).</li>
+<li>Efficient struct packing: I packed the operations struct into just 8
+  bytes by limiting the maximum number of operations to 65,536, with the idea
+  of making the optimizer faster.</li>
+</ul>
+<p>I didn't rigorously study the performance impact of each of these techniques
+individually, so it's possible that some of them might not have contributed
+significantly. However, the rewrite was a fun exercise for me to explore these
+techniques. The code can be found
+<a href="https://github.com/cfbolz/pyfidget/blob/main/pyfidget/experiments.c">here</a>.</p>
+<h3 id="testing-the-c-implementation">Testing the C implementation</h3>
+<p>At various points I had bugs in the C implementation, leading to a fun glitchy
+version of prospero:</p>
+<p><img alt="glitchy prospero" src="https://www.pypy.org/images/2025-glitchy-prospero.png" /></p>
+<p>To find these bugs, I used the same random testing approach as in the
+RPython version. I generated random input programs as strings in Python and
+checked that the output of the C implementation was equivalent to the output of
+the RPython implementation (simply by calling out to the shell and reading the
+generated image, then comparing pixels). This helped ensure that the C
+implementation was
+correct and didn't introduce any bugs. It was surprisingly tricky to get this
+right, for reasons that I didn't expect. At lot of them are related to the fact
+that in C I used <code>float</code> and Python uses <code>double</code> for its (Python) <code>float</code>
+type. This made the random tester find weird floating point corner cases where
+rounding behaviour between the widths was different.</p>
+<p>I solved those by using <code>double</code> in C when running the random tests by means of
+an <code>IFDEF</code>.</p>
+<p>It's super fun to watch the random program generator produce random images, here are a few:</p>
+
+
+<h3 id="performance">Performance</h3>
+<p>Some very rough performance results on my laptop (an AMD Ryzen 7 PRO 7840U with
+32 GiB RAM running Ubuntu 24.04), comparing the RPython version, the C version
+(with and without demanded info), and Fidget (in <code>vm</code> mode, its JIT made things
+worse for me), both for 1024x1024 and 4096x4096 images:</p>
+<table>
+<thead>
+<tr>
+<th>Implementation</th>
+<th>1024x1024</th>
+<th>4096x4096</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RPython</td>
+<td>26.8ms</td>
+<td>75.0ms</td>
+</tr>
+<tr>
+<td>C (no demanded info)</td>
+<td>24.5ms</td>
+<td>45.0ms</td>
+</tr>
+<tr>
+<td>C (demanded info)</td>
+<td>18.0ms</td>
+<td>37.0ms</td>
+</tr>
+<tr>
+<td>Fidget</td>
+<td>10.8ms</td>
+<td>57.8ms</td>
+</tr>
+</tbody>
+</table>
+<p>The demanded info seem to help quite a bit, which was nice to see.</p>
+<h3 id="conclusion">Conclusion</h3>
+<p>That's it! I had lots of fun with the challenge and have a whole bunch of other
+ideas I want to try out, thanks Matt for this interesting puzzle.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 09, 2025 03:07 PM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2025/04/prospero-in-rpython.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2025/04/09/python-101-an-intro-to-working-with-ini-files-using-configparser/" class="hover:underline"
+              >Python 101 – An Intro to Working with INI files Using configparser</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Many programs require configuration. Most have a default configuration and many allow the user to adjust that configuration. There are many different types of configuration files. Some use text files while others use databases. Python has a standard library called configparser that you can use to work with Microsoft Windows INI files. In this tutorial, [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2025/04/09/python-101-an-intro-to-working-with-ini-files-using-configparser/">Python 101 &#8211; An Intro to Working with INI files Using configparser</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 09, 2025 12:30 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2025/04/09/python-101-an-intro-to-working-with-ini-files-using-configparser/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythoninsider.blogspot.com/2025/04/python-3140a7-3133-31210-31112-31017.html" class="hover:underline"
+              >Python 3.14.0a7, 3.13.3, 3.12.10, 3.11.12, 3.10.17 and 3.9.22 are now available</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Not one, not two, not three, not four, not five, but six releases! Is
+this the most in a single day?</p>
+<p>3.12-3.14 were regularly scheduled, and we had some security fixes to
+release in 3.9-3.11 so let’s make a big day of it. This also marks the
+last bugfix release of 3.12 as it enters the security-only phase. See <a href="https://devguide.python.org/versions/">devguide.python.org/versions/</a>
+for a chart.</p>
+<h1 id="python-3.14.0a7">Python 3.14.0a7</h1>
+<p>Here comes the final alpha! This means we have just four weeks until
+the first beta to get those last features into 3.14 before the feature
+freeze on 2025-05-06!</p>
+<p><a href="https://www.python.org/downloads/release/python-3140a7/">https://www.python.org/downloads/release/python-3140a7/</a></p>
+<p><strong>This is an early developer preview of Python
+3.14</strong></p>
+<h2 id="major-new-features-of-the-3.14-series-compared-to-3.13">Major
+new features of the 3.14 series, compared to 3.13</h2>
+<p>Python 3.14 is still in development. This release, 3.14.0a7, is the
+last of seven planned alpha releases.</p>
+<p>Alpha releases are intended to make it easier to test the current
+state of new features and bug fixes and to test the release process.</p>
+<p>During the alpha phase, features may be added up until the start of
+the beta phase (2025-05-06) and, if necessary, may be modified or
+deleted up until the release candidate phase (2025-07-22). Please keep
+in mind that this is a preview release and its use is
+<strong>not</strong> recommended for production environments.</p>
+<p>Many new features for Python 3.14 are still being planned and
+written. Among the new major new features and changes so far:</p>
+<ul>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep649">PEP
+649</a>: deferred evaluation of annotations</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep741">PEP
+741</a>: Python configuration C API</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep758">PEP
+758</a>: Allow except and except* expressions without parentheses</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep761">PEP
+761</a>: Python 3.14 and onwards no longer provides PGP signatures for
+release artifacts. Instead, Sigstore is recommended for verifiers.</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep765">PEP
+765</a>: disallow
+<code>return</code>/<code>break</code>/<code>continue</code> that exit a
+<code>finally</code> block</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pep768">PEP
+768</a>: Safe external debugger interface for CPython</li>
+<li>A <a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-tail-call">new
+type of interpreter</a>. For certain newer compilers, this interpreter
+provides significantly better performance. Opt-in for now, requires
+building from source.</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#uuid">UUID
+versions 6-8</a> are now supported by the <code>uuid</code> module, and
+generation of versions 3-5 and 8 are up to 40% faster.</li>
+<li><a href="https://docs.python.org/3.14/whatsnew/3.14.html#improved-error-messages">Improved
+error messages</a></li>
+<li>Python <a href="https://docs.python.org/3.14/whatsnew/3.14.html#removed">removals</a>
+and <a href="https://docs.python.org/3.14/whatsnew/3.14.html#deprecated">deprecations</a></li>
+<li>C API <a href="https://docs.python.org/3.14/whatsnew/3.14.html#c-api-removed">removals</a>
+and <a href="https://docs.python.org/3.14/whatsnew/3.14.html#c-api-deprecated">deprecations</a></li>
+<li><small>(Hey, <strong>fellow core developer,</strong> if a feature
+you find important is missing from this list, let Hugo
+know.)</small></li>
+</ul>
+<p>The next pre-release of Python 3.14 will be the first beta, 3.14.0b1,
+currently scheduled for 2025-05-06. After this, no new features can be
+added but bug fixes and docs improvements are allowed – and
+encouraged!</p>
+<h1 id="python-3.13.3">Python 3.13.3</h1>
+<p>This is the third maintenance release of Python 3.13.</p>
+<p>Python 3.13 is the newest major release of the Python programming
+language, and it contains many new features and optimizations compared
+to Python 3.12. 3.13.3 is the latest maintenance release, containing
+almost 320 bugfixes, build improvements and documentation changes since
+3.13.2.</p>
+<p><a href="https://www.python.org/downloads/release/python-3133/">https://www.python.org/downloads/release/python-3133/</a></p>
+<h1 id="python-3.12.10">Python 3.12.10</h1>
+<p>This is the tenth maintenance release of Python 3.12.</p>
+<p>Python 3.12.10 is the latest maintenance release of Python 3.12, and
+the last full maintenance release. Subsequent releases of 3.12 will be
+security-fixes only. This last maintenance release contains about 230
+bug fixes, build improvements and documentation changes since
+3.12.9.</p>
+<p><a href="https://www.python.org/downloads/release/python-31210/">https://www.python.org/downloads/release/python-31210/</a></p>
+<h1 id="python-3.11.12">Python 3.11.12</h1>
+<p>This is a security release of Python 3.11:</p>
+<ul>
+<li><a href="https://github.com/python/cpython/issues/106883">gh-106883</a>:
+Fix deadlock in threaded application when using sys._current_frames</li>
+<li><a href="https://github.com/python/cpython/issues/131809">gh-131809</a>:
+Upgrade vendored expat to 2.7.1</li>
+<li><a href="https://github.com/python/cpython/issues/80222">gh-80222</a>:
+Folding of quoted string in display_name violates RFC</li>
+<li><a href="https://github.com/python/cpython/issues/121284">gh-121284</a>:
+Invalid RFC 2047 address header after refolding with
+email.policy.default</li>
+<li><a href="https://github.com/python/cpython/issues/131261">gh-131261</a>:
+Update libexpat to 2.7.0</li>
+<li><a href="https://github.com/python/cpython/issues/105704">gh-105704</a>:
+[CVE-2025-0938] urlparse does not flag hostname <em>containing</em> [ or
+] as incorrect</li>
+<li><a href="https://github.com/python/cpython/issues/119511">gh-119511</a>:
+OOM vulnerability in the imaplib module</li>
+</ul>
+<p><a href="https://www.python.org/downloads/release/python-31112/">https://www.python.org/downloads/release/python-31112/</a></p>
+<h1 id="python-3.10.17">Python 3.10.17</h1>
+<p>This is a security release of Python 3.10:</p>
+<ul>
+<li><a href="https://github.com/python/cpython/issues/131809">gh-131809</a>:
+Upgrade vendored expat to 2.7.1</li>
+<li><a href="https://github.com/python/cpython/issues/80222">gh-80222</a>:
+Folding of quoted string in display_name violates RFC</li>
+<li><a href="https://github.com/python/cpython/issues/121284">gh-121284</a>:
+Invalid RFC 2047 address header after refolding with
+email.policy.default</li>
+<li><a href="https://github.com/python/cpython/issues/131261">gh-131261</a>:
+Update libexpat to 2.7.0</li>
+<li><a href="https://github.com/python/cpython/issues/105704">gh-105704</a>: <a href="https://nvd.nist.gov/vuln/detail/CVE-2025-0938">CVE-2025-0938</a>
+urlparse does not flag hostname <em>containing</em> [ or ] as
+incorrect</li>
+<li><a href="https://github.com/python/cpython/issues/119511">gh-119511</a>:
+OOM vulnerability in the imaplib module</li>
+</ul>
+<p><a href="https://www.python.org/downloads/release/python-31017/">https://www.python.org/downloads/release/python-31017/</a></p>
+<h1 id="python-3.9.22">Python 3.9.22</h1>
+<p>This is a security release of Python 3.9:</p>
+<ul>
+<li><a href="https://github.com/python/cpython/issues/131809">gh-131809</a> and
+<a href="https://github.com/python/cpython/issues/131261">gh-131261</a>:
+Upgrade vendored expat to 2.7.1</li>
+<li><a href="https://github.com/python/cpython/issues/121284">gh-121284</a>:
+Invalid RFC 2047 address header after refolding with
+email.policy.default</li>
+<li><a href="https://github.com/python/cpython/issues/105704">gh-105704</a>: <a href="https://nvd.nist.gov/vuln/detail/CVE-2025-0938">CVE-2025-0938</a>
+urlparse does not flag hostname <em>containing</em> [ or ] as
+incorrect</li>
+<li><a href="https://github.com/python/cpython/issues/119511">gh-119511</a>:
+OOM vulnerability in the imaplib module</li>
+</ul>
+<p><a href="https://www.python.org/downloads/release/python-3922/">https://www.python.org/downloads/release/python-3922/</a></p>
+<h1 id="please-upgrade-please-test">Please upgrade! Please test!</h1>
+<p>We highly recommend upgrading 3.9-3.13 and we encourage you to test
+3.14.</p>
+<h1 id="and-now-for-something-completely-different">And now for
+something completely different</h1>
+<p>On Saturday, 5th April, 3.141592653589793 months of the year had
+elapsed.</p>
+<h1 id="enjoy-the-new-releases">Enjoy the new releases</h1>
+<p>Thanks to all of the many volunteers who help make Python Development
+and these releases possible! Please consider supporting our efforts by
+volunteering yourself or through organisation contributions to the <a href="https://www.python.org/psf-landing/">Python Software
+Foundation</a>.</p>
+<p>Regards from a sunny and cold Helsinki springtime,</p>
+<p>Your full release team,</p>
+<p>Hugo van Kemenade<br />Thomas Wouters<br />Pablo Galindo Salgado<br />Łukasz Langa
+<br />Ned Deily<br />Steve Dower</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 08, 2025 07:15 PM UTC by
+            <a href="http://feeds.feedburner.com/PythonInsider" class="link link-hover text-primary"
+              >Python Insider</a
+            >
+          </div>
+          <a
+            href="https://pythoninsider.blogspot.com/2025/04/python-3140a7-3133-31210-31112-31017.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2025/04/07/how-to-download-the-latest-release-assets-from-github-with-python/" class="hover:underline"
+              >How to Download the Latest Release Assets from GitHub with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I recently needed to figure out how to write an updater script for a project I was working on. The application is released on an internal GitHub page with compressed files and an executable. I needed a way to check the latest release artifacts in GitHub and download them. Let&#8217;s find out how all this [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2025/04/07/how-to-download-the-latest-release-assets-from-github-with-python/">How to Download the Latest Release Assets from GitHub with Python</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 07, 2025 08:25 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2025/04/07/how-to-download-the-latest-release-assets-from-github-with-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.marsja.se/how-to-extract-gps-coordinates-from-a-photo-the-usaid-mystery/" class="hover:underline"
+              >How to Extract GPS Coordinates from a Photo: The USAID Mystery</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The post <a href="https://www.marsja.se/how-to-extract-gps-coordinates-from-a-photo-the-usaid-mystery/">How to Extract GPS Coordinates from a Photo: The USAID Mystery</a> appeared first on <a href="https://www.marsja.se">Erik Marsja</a>.</p>
+<p>Where did the USAID nutrition pack go? Using Python, we tracked down its exact location by extracting GPS coordinates from a photo. In this post, you'll learn how to pull location data from images and plot it on a map—step by step. A small mystery solved with code and a curious eye.</p>
+<p>The post <a href="https://www.marsja.se/how-to-extract-gps-coordinates-from-a-photo-the-usaid-mystery/">How to Extract GPS Coordinates from a Photo: The USAID Mystery</a> appeared first on <a href="https://www.marsja.se">Erik Marsja</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 07, 2025 07:03 PM UTC by
+            <a href="http://www.marsja.se/category/python/feed/" class="link link-hover text-primary"
+              >Erik Marsja</a
+            >
+          </div>
+          <a
+            href="https://www.marsja.se/how-to-extract-gps-coordinates-from-a-photo-the-usaid-mystery/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/mutable-default-arguments/" class="hover:underline"
+              >Mutable default arguments</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In Python, default argument values are defined only one time (when a function is defined).</p>
+
+
+<div>
+  
+    <a href="https://www.pythonmorsels.com/mutable-default-arguments/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2002444073-7e162d901f30cac6c6c91cec05f8f4ba42e6dd8e148be1b8fb75a773e54f592e-d_1920x1080%3F&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#functions-can-have-default-values" target="_blank">Functions can have default values</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#a-shared-default-value" target="_blank">A shared default value</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#default-values-are-only-evaluated-once" target="_blank">Default values are only evaluated once</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#mutable-default-arguments-can-be-trouble" target="_blank">Mutable default arguments can be trouble</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#shared-argument-values-are-the-real-problem" target="_blank">Shared argument values are the real problem</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#avoiding-shared-argument-issues-by-copying" target="_blank">Avoiding shared argument issues by copying</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#avoiding-mutable-default-values-entirely" target="_blank">Avoiding mutable default values entirely</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/mutable-default-arguments/#be-careful-with-pythons-default-argument-values" target="_blank">Be careful with Python's default argument values</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>Functions can have default values</h2>
+    
+      
+        <p>Function arguments in Python can have <strong><a href="https://www.pythonmorsels.com/making-a-function/#default-argument-values" target="_blank">default values</a></strong>.
+For example this <code>greet</code> function's <code>name</code> argument has a default value:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"World"</span><span class="p">):</span>
+<span class="gp">... </span>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!"</span><span class="p">)</span>
+<span class="gp">...</span>
+</code></pre></div>
+
+
+      
+        <p>When we call this function without any arguments, the default value will be used:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">greet</span><span class="p">()</span>
+<span class="go">Hello, World!</span>
+<span class="go">&gt;&gt;&gt;</span>
+</code></pre></div>
+
+
+      
+        <p>Default values are great, but they have one <em>gotcha</em> that Python developers sometimes overlook.</p>
+
+      
+    
+  
+    <h2>A shared default value</h2>
+    
+      <p>Let's use a default value …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/mutable-default-arguments/" target="_blank">Read the full article: https://www.pythonmorsels.com/mutable-default-arguments/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 07, 2025 05:30 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/mutable-default-arguments/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="http://edcrewe.blogspot.com/2025/04/talk-about-cloud-prices-at-pyconlt-2025.html" class="hover:underline"
               >Talk about Cloud Prices at PyConLT 2025</a
             >
@@ -562,6 +1700,50 @@ Or if something completely different catches my interest.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testandcode.com/episodes/python-3-14-wont-repeat-with-pytest-repeat" class="hover:underline"
+              >Python 3.14 won't repeat with pytest-repeat</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>pytest-repeat is a pytest plugin that makes it easy to repeat a single test, or multiple tests, a specific number of times.  </p><p>Note: This was an April Fools attempt, so the statement ...<br />"Unfortunately, it doesn't seem to work with Python 3.14, even though there is no rational reason why it shouldn't work." <br />... is NOT true.</p><p>Listen to the NEXT episode to get an explanation</p><p>Links:</p><ul><li><a href="https://github.com/pytest-dev/pytest-repeat">pytest-repeat</a></li><li>Next episode: <a href="https://testandcode.com/episodes/pytest-repeat-works-fine-on-python-3-14">pytest-repeat - works fine on Python 3.14</a></li></ul>
+<br /><p><strong>Help support the show AND learn pytest: </strong></p><ul><li><a href="https://file+.vscode-resource.vscode-cdn.net/Users/brianokken/projects/test_and_code_notes/new_ad.md">The Complete pytest course</a> is now a bundle, with each part available separately.<ul><li><a href="https://courses.pythontest.com/pytest-primary-power">pytest Primary Power</a> teaches the super powers of pytest that you need to learn to use pytest effectively.</li><li><a href="https://courses.pythontest.com/using-pytest-with-projects">Using pytest with Projects</a> has lots of "when you need it" sections like debugging failed tests, mocking, testing strategy, and CI</li><li>Then <a href="https://courses.pythontest.com/pytest-booster-rockets">pytest Booster Rockets</a> can help with advanced parametrization and building plugins.</li></ul></li><li>Whether you need to get started with pytest today, or want to power up your pytest skills, <a href="https://courses.pythontest.com">PythonTest</a> has a course for you.<p></p></li></ul>
+<strong>
+  <a href="https://www.patreon.com/c/testpodcast" rel="payment" title="★ Support this podcast on Patreon ★">★ Support this podcast on Patreon ★</a>
+</strong>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 01, 2025 10:20 PM UTC by
+            <a href="http://testandcode.com/rss" class="link link-hover text-primary"
+              >Test and Code</a
+            >
+          </div>
+          <a
+            href="https://testandcode.com/episodes/python-3-14-wont-repeat-with-pytest-repeat"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.blog.pythonlibrary.org/2025/04/01/textual-how-to-add-widgets-to-a-container/" class="hover:underline"
               >Textual – How to Add Widgets to a Container</a
             >
@@ -984,514 +2166,6 @@ as the default.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.glyph.im/2025/03/a-bigger-database.html" class="hover:underline"
-              >A Bigger Database</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We do what we can, because we must.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 01, 2025 12:47 AM UTC by
-            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
-              >Glyph Lefkowitz</a
-            >
-          </div>
-          <a
-            href="https://blog.glyph.im/2025/03/a-bigger-database.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/426/committing-to-formatted-markdown" class="hover:underline"
-              >#426 Committing to Formatted Markdown</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include mdformat, pre-commit-uv, , and Serie books.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 31, 2025 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/426/committing-to-formatted-markdown"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/499/beeware-and-the-state-of-python-on-mobile" class="hover:underline"
-              >#499: BeeWare and the State of Python on Mobile</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This episode is all about Beeware, the project that working towards true native apps built on Python, especially for iOS and Android. Russell's been at this for more than a decade, and the progress is now hitting critical mass. We'll talk about the Toga GUI toolkit, building and shipping your apps with Briefcase, the newly official support for iOS and Android in CPython, and so much more. I can't wait to explore how BeeWare opens up the entire mobile ecosystem for Python developers, let's jump right in.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 31, 2025 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/499/beeware-and-the-state-of-python-on-mobile"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://lucumr.pocoo.org/2025/3/31/leaving" class="hover:underline"
-              >I'm Leaving Sentry</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Every ending marks a new beginning, and today, is the beginning of a new
-chapter for me.  Ten years ago I took a leap into the unknown, today I
-take another.  After a decade of working on <a class="reference external" href="https://sentry.io/">Sentry</a> I move on to start something new.</p>
-<p>Sentry has been more than just a job, it has been a defining part of my
-life.  A place where I've poured my energy, my ideas, my heart.  It has
-shaped me, just as I've shaped it.  And now, as I step away, I do so with
-immense gratitude, a deep sense of pride, and a heart full of memories.</p>
-<div class="section" id="from-a-chance-encounter">
-<h2>From A Chance Encounter</h2>
-<p>I've known David, Sentry's co-founder (alongside Chris), long before I was
-ever officially part of the team as our paths first crossed on IRC in the
-Django community.  Even <a class="reference external" href="https://github.com/getsentry/sentry/commit/7b82413ce9a011ffca14aa8e98721211aabad77e">my first commit</a>
-to Sentry predates me officially working there by a few years.  Back in
-2013, over conversations in the middle of Russia — at a conference that,
-incidentally, also led to me meeting my wife — we toyed with the idea of
-starting a company together.  That exact plan didn't materialize, but the
-seeds of collaboration had been planted.</p>
-<p>Conversations continued, and by late 2014, the opportunity to help
-transform Sentry (which already showed product market fit) into a much
-bigger company was simply too good to pass up.  I never could have
-imagined just how much that decision would shape the next decade of my
-life.</p>
-</div>
-<div class="section" id="to-a-decade-of-experiences">
-<h2>To A Decade of Experiences</h2>
-<p>For me, Sentry's growth has been nothing short of extraordinary.  At
-first, I thought reaching 30 employees would be our ceiling.  Then we
-surpassed that, and the milestones just kept coming — reaching a unicorn
-valuation was something I once thought was impossible.  While we may have
-stumbled at times, we've also learned immensely throughout this time.</p>
-<p>I'm grateful for all the things I got to experience and there never was a
-dull moment.  From representing Sentry at conferences, opening an
-engineering office in Vienna, growing teams, helping employees, assisting
-our licensing efforts and leading our internal platform teams.  Every step
-and achievement drove me.</p>
-<p>Yet for me, the excitement and satisfaction of being so close to the
-founding of a company, yet not quite a founder, has only intensified my
-desire to see the rest of it.</p>
-</div>
-<div class="section" id="a-hard-goodbye">
-<h2>A Hard Goodbye</h2>
-<p>Walking away from something you love is never easy and leaving Sentry is
-hard.  Really hard.  Sentry has been woven into the very fabric of my
-adult life.  Working on it hasn't just spanned any random decade; it
-perfectly overlapped with marrying my wonderful wife, and growing our
-family from zero to three kids.</p>
-<p>And will it go away entirely?  The office is right around the corner
-afterall.  From now on, every morning, when I will grab my coffee, I will
-walk past it.  The idea of no longer being part of the daily decisions,
-the debates, the momentum — it feels surreal.  That sense of belonging to
-a passionate team, wrestling with tough decisions, chasing big wins,
-fighting fires together, sometimes venting about our missteps and
-discussing absurd and ridiculous trivia became part of my identity.</p>
-<p>There are so many bright individuals at Sentry, and I'm incredibly proud
-of what we have built together.  Not just from an engineering point of
-view, but also product, marketing and upholding our core values.  We
-developed SDKs that support a wide array of platforms from <a class="reference external" href="https://github.com/getsentry/sentry-python">Python</a> to <a class="reference external" href="https://github.com/getsentry/sentry-javascript">JavaScript</a> to <a class="reference external" href="https://github.com/getsentry/sentry-cocoa">Swift</a> to <a class="reference external" href="https://github.com/getsentry/sentry-native">C++</a>, lately expanding to game
-consoles.  We stayed true to our Open Source principles, even when other
-options were available.  For example, when we needed an Open Source PDB
-implementation for analyzing Windows crashes but couldn't find a suitable
-solution, we contributed to a promising Rust crate instead of relying on
-Windows VMs and Microsoft's dbghelp.  When we started, our ingestion
-system handled a few thousand requests per second —&nbsp;now it handles well
-over a million.</p>
-<p>While building an SDK may seem straightforward, maintaining and updating
-them to remain best-in-class over the years requires immense dedication.
-It takes determination to build something that works out of the box with
-little configuration.  A lot of clever engineering and a lot of deliberate
-tradeoffs went into the product to arrive where it is.  And ten years
-later, is a multi-product company.  What started with just crashes, now
-you can send traces, profiles, sessions, replays and more.</p>
-<p>We also stuck to our values.  I'm pleased that we ran <a class="reference external" href="http://lucumr.pocoo.org/2023/11/19/cathedral-and-bazaaar-licensing/">experiments with
-licensing</a> despite all
-the push back we got over the years.  We might not have found the right
-solution yet, but we pushed the conversation.  The same goes for our
-commitment to <a class="reference external" href="https://fair.io/">funding of dependencies</a>.</p>
-</div>
-<div class="section" id="and-heartfelt-thank-you">
-<h2>And Heartfelt Thank You</h2>
-<p>I feel an enormous amount of gratitude for those last ten years.  There
-are so many people I owe thanks to.  I owe eternal thanks to <a class="reference external" href="https://cra.mr/">David Cramer</a> and <a class="reference external" href="http://chriskjennings.com/">Chris Jennings</a>
-for the opportunity and trust they placed in me. To <a class="reference external" href="https://benv.ca/">Ben Vinegar</a> for his unwavering guidance and support.  To <a class="reference external" href="https://www.accel.com/people/daniel-levine">Dan
-Levine</a>, for investing in
-us and believing in our vision.  To <a class="reference external" href="https://www.linkedin.com/in/daniel-griesser-a8407b3b/">Daniel Griesser</a>, for being an
-exceptional first hire in Vienna, and shepherding our office there and
-growing it to 50 people.  To <a class="reference external" href="https://www.linkedin.com/in/vlad-cretu-139a0244/">Vlad Cretu</a>, for bringing
-structure to our chaos over the years.  To <a class="reference external" href="https://x.com/virtualmilin">Milin Desai</a> for taking the helm and growing us.</p>
-<p>And most of all, to my wonderful wife, Maria — who has stood beside me
-through every challenge, who has supported me when the road was uncertain,
-and who has always encouraged me to forge my own path.</p>
-<p>To everyone at Sentry, past and present — thank you.  For the trust, the
-lessons, the late nights, the victories.  For making Sentry what it is
-today.</p>
-</div>
-<div class="section" id="quo-eo">
-<h2>Quo eo?</h2>
-<p>I'm fully aware it's a gamble to believe my next venture will find the
-same success as Sentry.  The reality is that startups that achieve the
-kind of scale and impact Sentry has are incredibly rare.  There's a
-measure of hubris in assuming lightning strikes twice, and as humbling as
-that realization is, it also makes me that much more determined.  The
-creative spark that fueled me at Sentry isn't dimming.  Not at all in
-fact: it burns brighter fueld by the feeling that I can explore new
-things, beckoning me.  There's more for me to explore, and I'm ready to
-channel all that energy into a new venture.</p>
-<p>Today, I stand in an open field, my backpack filled with experiences and a
-renewed sense of purpose.  That's because the world has changed a lot in
-the past decade, and so have I.  What drives me now is different from what
-drove me before, and I want my work to reflect that evolution.</p>
-<p>At my core, I'm still inspired by the same passion — seeing others find
-value in what I create, but my perspective has expanded.  While I still
-take great joy in building things that help developers, I want to broaden
-my reach.  I may not stray far from familiar territory, but I want to
-build something that speaks to more people, something that, hopefully,
-even my children will find meaningful.</p>
-<p>Watch this space, as they say.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 31, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="http://lucumr.pocoo.org/2025/3/31/leaving"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202503/human_sorting_improved.html" class="hover:underline"
-              >Human sorting improved</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When sorting strings, you&#8217;d often like the order to make sense to a person.
-That means numbers need to be treated numerically even if they are in a larger
-string.</p><p>For example, sorting Python versions with the default sort() would give
-you:</p><blockquote class="code"><pre>Python 3.10<br />Python 3.11<br />Python 3.9<br /></pre></blockquote><p>when you want it to be:</p><blockquote class="code"><pre>Python 3.9<br />Python 3.10<br />Python 3.11<br /></pre></blockquote><p>I wrote about this long ago (<a href="https://nedbatchelder.com/blog/200712/human_sorting.html">Human sorting</a>), but have
-continued to tweak the code and needed to <a href="https://github.com/nedbat/watchgha/commit/cfcd48ac3f24f5b76aa02caa695af13e37f38bcf" rel="external noopener">add it to a
-project</a> recently.  Here&#8217;s the latest:</p><blockquote class="code"><pre class="python"><div class="source"><span class="kn">import</span><span class="w">&#xa0;</span><span class="nn">re</span>
-<br />
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">human_key</span><span class="p">(</span><span class="n">s</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span>&#xa0;<span class="o">|</span>&#xa0;<span class="nb">int</span><span class="p">],</span>&#xa0;<span class="nb">str</span><span class="p">]:</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;Turn&#xa0;a&#xa0;string&#xa0;into&#xa0;a&#xa0;sortable&#xa0;value&#xa0;that&#xa0;works&#xa0;how&#xa0;humans&#xa0;expect.</span>
-<br />
-<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&quot;z23A&quot;&#xa0;-&gt;&#xa0;([&quot;z&quot;,&#xa0;23,&#xa0;&quot;a&quot;],&#xa0;&quot;z23A&quot;)</span>
-<br />
-<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;The&#xa0;original&#xa0;string&#xa0;is&#xa0;appended&#xa0;as&#xa0;a&#xa0;last&#xa0;value&#xa0;to&#xa0;ensure&#xa0;the</span>
-<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;key&#xa0;is&#xa0;unique&#xa0;enough&#xa0;so&#xa0;that&#xa0;&quot;x1y&quot;&#xa0;and&#xa0;&quot;x001y&quot;&#xa0;can&#xa0;be&#xa0;distinguished.</span>
-<br />
-<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;&quot;&quot;&quot;</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">def</span><span class="w">&#xa0;</span><span class="nf">try_int</span><span class="p">(</span><span class="n">s</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">str</span>&#xa0;<span class="o">|</span>&#xa0;<span class="nb">int</span><span class="p">:</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;If&#xa0;`s`&#xa0;is&#xa0;a&#xa0;number,&#xa0;return&#xa0;an&#xa0;int,&#xa0;else&#xa0;`s`&#xa0;unchanged.&quot;&quot;&quot;</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">try</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">except</span>&#xa0;<span class="ne">ValueError</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">s</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="p">([</span><span class="n">try_int</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">c</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">re</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(\d+)&quot;</span><span class="p">,</span>&#xa0;<span class="n">s</span><span class="o">.</span><span class="n">casefold</span><span class="p">())],</span>&#xa0;<span class="n">s</span><span class="p">)</span>
-<br />
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">human_sort</span><span class="p">(</span><span class="n">strings</span><span class="p">:</span>&#xa0;<span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="kc">None</span><span class="p">:</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;Sort&#xa0;a&#xa0;list&#xa0;of&#xa0;strings&#xa0;how&#xa0;humans&#xa0;expect.&quot;&quot;&quot;</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">strings</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">human_key</span><span class="p">)</span>
-<br /></div>
-</pre></blockquote><p>The central idea here is to turn a string like <code>"Python 3.9"</code> into the
-key <code>["Python ", 3, ".", 9]</code> so that numeric components will be sorted by
-their numeric value. The re.split() function gives us interleaved words and
-numbers, and try_int() turns the numbers into actual numbers, giving us sortable
-key lists.</p><p>There are two improvements from the original:</p><ul>
-
-<li>The sort is made case-insensitive by using casefold() to lower-case the
-string.</li>
-
-<li>The key returned is now a two-element tuple: the first element is the list
-of intermixed strings and integers that gives us the ordering we want.  The
-second element is the original string unchanged to ensure that unique strings
-will always result in distinct keys.  Without it, <code>"x1y"</code> and
-<code>"x001Y"</code> would both produce the same key.  This solves a
-<a href="https://github.com/nedbat/coveragepy/issues/1709" rel="external noopener">problem that actually happened</a> when sorting the items of
-a dictionary.
-
-<blockquote class="code"><pre class="python"><div class="source"><span class="c1">#&#xa0;Without&#xa0;the&#xa0;tuple:&#xa0;different&#xa0;strings,&#xa0;same&#xa0;key!!</span>
-<br /><span class="n">human_key</span><span class="p">(</span><span class="s2">&quot;x1y&quot;</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span>&#xa0;<span class="mi">1</span><span class="p">,</span>&#xa0;<span class="s2">&quot;y&quot;</span><span class="p">]</span>
-<br /><span class="n">human_key</span><span class="p">(</span><span class="s2">&quot;x001Y&quot;</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="p">[</span><span class="s2">&quot;x&quot;</span><span class="p">,</span>&#xa0;<span class="mi">1</span><span class="p">,</span>&#xa0;<span class="s2">&quot;y&quot;</span><span class="p">]</span>
-<br />
-<br /><span class="c1">#&#xa0;With&#xa0;the&#xa0;tuple:&#xa0;different&#xa0;strings,&#xa0;different&#xa0;keys.</span>
-<br /><span class="n">human_key</span><span class="p">(</span><span class="s2">&quot;x1y&quot;</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="p">([</span><span class="s2">&quot;x&quot;</span><span class="p">,</span>&#xa0;<span class="mi">1</span><span class="p">,</span>&#xa0;<span class="s2">&quot;y&quot;</span><span class="p">],</span>&#xa0;<span class="s2">&quot;x1y&quot;</span><span class="p">)</span>
-<br /><span class="n">human_key</span><span class="p">(</span><span class="s2">&quot;x001Y&quot;</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="p">([</span><span class="s2">&quot;x&quot;</span><span class="p">,</span>&#xa0;<span class="mi">1</span><span class="p">,</span>&#xa0;<span class="s2">&quot;y&quot;</span><span class="p">],</span>&#xa0;<span class="s2">&quot;x001Y&quot;</span><span class="p">)</span>
-<br /></div>
-</pre></blockquote>
-
-</li>
-
-</ul><p>If you are interested, there are many different ways to split the string into
-the word/number mix.  The <a href="https://nedbatchelder.com/blog/200712/human_sorting.html#comments" rel="external noopener">comments on the old post</a>
-have many alternatives, and there are certainly more.</p><p>This still makes some assumptions about what is wanted, and doesn&#8217;t cover all
-possible options (floats? negative/positive? full file paths?).  For those, you
-probably want the full-featured <a href="https://pypi.org/project/natsort/" rel="external noopener">natsort</a> (natural sort)
-package.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 29, 2025 04:59 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202503/human_sorting_improved.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/tutorials/pyqt6-actions-toolbars-menus/" class="hover:underline"
-              >PyQt6 Toolbars & Menus — QAction — Defining toolbars, menus, and keyboard shortcuts with QAction</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Next, we'll look at some of the common user interface elements you've probably seen in many other applications &mdash; toolbars and menus. We'll also explore the neat system Qt provides for minimizing the duplication between different UI areas &mdash; <code>QAction</code>.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 29, 2025 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/tutorials/pyqt6-actions-toolbars-menus/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.rtwilson.com/learning-resources-for-gis-in-python-with-cloud-native-geospatial-postgis-and-more/" class="hover:underline"
-              >Learning resources for GIS in Python with cloud-native geospatial, PostGIS and more</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            I recently gave a careers talk to students at Solent University, and through that I got to know a MSc student there who had previous GIS experience and was now doing a Data Analytics and AI MSc course. Her GIS experience was mostly in the ESRI stack (ArcGIS and related tools) and she was keen [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 28, 2025 07:34 PM UTC by
-            <a href="http://blog.rtwilson.com/category/programming-2/python/feed/" class="link link-hover text-primary"
-              >Robin Wilson</a
-            >
-          </div>
-          <a
-            href="https://blog.rtwilson.com/learning-resources-for-gis-in-python-with-cloud-native-geospatial-postgis-and-more/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonanywhere.com/219/" class="hover:underline"
-              >innit: a new system image, with Python 3.13 and Ubuntu 22.04</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you signed up for an account on PythonAnywhere after 25 March 2025, you&rsquo;ll
-have Python versions 3.11, 3.12 and 3.13 available.  Additionally, the underlying operating system for
-your account will be Ubuntu 22.04, rather than the 20.04 used by older accounts.</p>
-<p>If you signed up before that date, you&rsquo;ll be on an older &ldquo;system image&rdquo; &ndash;
-essentially the version of the operating system and the set of installed packages
-that you have access to.  You can
-<a href="https://help.pythonanywhere.com/pages/ChangingSystemImage">switch to the new system image from the &ldquo;Account&rdquo; page</a>,
-but you may need to make changes to your code and/or virtualenvs to make
-everything work &ndash; there&rsquo;s more information on that page.</p>
-<p>This post has more details on what&rsquo;s new in the &ldquo;innit&rdquo; system image.  There&rsquo;s a lot!</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 27, 2025 01:00 PM UTC by
-            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
-              >Python Anywhere</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonanywhere.com/219/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1503,12 +2177,12 @@ everything work &ndash; there&rsquo;s more information on that page.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8717</a></li>
+    <li><a>Total Entries: 8999</a></li>
     <li><a>Unique Feeds: 418</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (509)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (437)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (336)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (212)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (509)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (437)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (336)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Test and Code (233)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
