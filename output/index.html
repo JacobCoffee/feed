@@ -94,12 +94,13 @@ by fully embracing threads.</p>
 <h2>Structured, Virtual Threads</h2>
 <p>Another really positive thing that came out of async in Python was that a lot of
 experimentation was made to improve the ergonomics of those APIs.  The most
-important innovation has been the idea of structured concurrency.  Structured
-concurrency is all about the idea of disallowing one task to outlive its parent.
-And this is also a really good feature because it allows, for instance, a task
-to also have a relationship to the parent task, which makes the flow of
-information (such as context variables) much clearer than traditional threads
-and thread local variables do, where threads have effectively no real
+important innovation has been the idea of <a href="https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/">structured
+concurrency</a>.
+Structured concurrency is all about the idea of disallowing one task to outlive
+its parent. And this is also a really good feature because it allows, for
+instance, a task to also have a relationship to the parent task, which makes the
+flow of information (such as context variables) much clearer than traditional
+threads and thread local variables do, where threads have effectively no real
 relationships to their parents. </p>
 <p>Unfortunately, task groups (the implementation of structured concurrency in
 Python) are a rather recent addition, and unfortunately its rather strict
@@ -182,7 +183,9 @@ parent/child relationship of threads, the child inherits the context of the
 parent.  This is also how edge and level cancellation can travel to threads.</li>
 </ul>
 <p>Behind the scenes, something like this would happen:</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
     <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
 
     <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">():</span>
@@ -190,7 +193,7 @@ parent.  This is also how edge and level cancellation can travel to threads.</li
             <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
 
         <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">ThreadGroup</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">_thread</span><span class="p">(</span><span class="n">url</span><span class="p">))</span>
+            <span class="n">ThreadGroup</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">_thread</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
 
     <span class="k">return</span> <span class="n">results</span>
 </pre></div>
@@ -220,7 +223,9 @@ concept of futures or promises, async tasks, or anything like that. </p>
 And it is somewhat debatable if automatic thread groups are the right solution.
 You could also model this after what we have with async/await and make thread
 groups explicit:</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
     <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
@@ -228,7 +233,7 @@ groups explicit:</p>
 
     <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">()</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
         <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
+            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
 
     <span class="k">return</span> <span class="n">results</span>
 </pre></div>
@@ -248,7 +253,9 @@ of enclosing values in a mutex over carrying a mutex somewhere on the side.</p>
 <p>Also, semaphores are an incredibly potent system to limit concurrency and to
 create more stable systems.  Something like this could also become a part of a
 thread group, directly limiting how many spawns can happen simultaniously.</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results_mutex</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results_mutex</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
     <span class="k">with</span> <span class="n">results_mutex</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span> <span class="k">as</span> <span class="n">results</span><span class="p">:</span>
         <span class="n">result</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
         <span class="n">results</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
@@ -258,7 +265,7 @@ thread group, directly limiting how many spawns can happen simultaniously.</p>
 
     <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">(</span><span class="n">max_concurrency</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
         <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
+            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
 
     <span class="k">return</span> <span class="n">results</span>
 </pre></div>
@@ -2043,8 +2050,8 @@ the default. You can switch between providers with <tt class="literal"><span cla
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8939</a></li>
-    <li><a>Unique Feeds: 414</a></li>
+    <li><a>Total Entries: 8949</a></li>
+    <li><a>Unique Feeds: 413</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
