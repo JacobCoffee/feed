@@ -53,6 +53,241 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/salesforce-python.html" class="hover:underline"
+              >Enterprise Python: Integrating with Salesforce</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/salesforce-python.html">Enterprise Python: Integrating with Salesforce</a>
+</h1>
+<div class="article-meta">
+  2025-06-02, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<h2 id="overview">Overview</h2>
+<p><a href="https://zato.io/en/customer-success/keysight/salesforce.html">Salesforce connections</a> are one of the newest additions to
+Zato
+3.2, allowing you to look up and manage Salesforce records
+and other business data. To showcase it, the article will create a sample Salesforce marketing campaign in a way that
+does not require the usage of anything else except for basic REST APIs combined with plain Python objects, such as dicts.</p>
+<p>If you have not done it already, you can <a href="https://zato.io/en/docs/3.3/admin/guide/install/index.html">download Zato here</a>.</p>
+<h2 id="basic-workflow">Basic workflow</h2>
+<p>The scope of our works will be:</p>
+<ul>
+<li>Creating Salesforce credentials for our integration project</li>
+<li>Defining a Salesforce connection in Zato</li>
+<li>Authoring a service that will map input data to the format that Salesforce expects</li>
+<li>Creating a Zato REST channel that will be invoked through curl during tests</li>
+<li>Testing the integration</li>
+</ul>
+<h2 id="creating-salesforce-credentials">Creating Salesforce credentials</h2>
+<p>To be able to create as connection to Salesforce in the next step, we need a few credentials. There is
+<a href="https://zato.io/en/blog/salesforce-credentials.html">a full article</a>
+about how to prepare them and this section is the gist of it.</p>
+<p>In runtime,
+based on this information, Zato will obtain the necessary authentication and authorization tokens itself,
+which means that you will only focus on the business side of the integrations, not on the low-level
+aspects of it.</p>
+<p>The process of obtaining the credentials needs to be coordinated with an administrator of your organization.
+To assist in that, the screenshots below explain where to find them.</p>
+<p>The credentials are:</p>
+<ul>
+<li>Username and password</li>
+<li>Consumer key</li>
+<li>Consumer secret</li>
+</ul>
+<p>The username and password are simply the same credentials that can be used to log in to Salesforce:</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/salesforce-login.png" /></p>
+<p>Consumer key and secret are properties of a <strong>connected app</strong> - this is a term that Salesforce uses for API
+clients that invoke its services. If you are already an experienced Salesforce REST API user, you may know
+the key and secret under their aliases of "client_id" and "client_secret" - these are the same objects.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/salesforce-app-manager.png" /></p>
+<p>Note that when a connected app already exists and you would like to retrieve the key and secret, they will be available
+under the "View" menu option for the app, not under "Edit" or "Manage".</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/salesforce-app-credentials.png" /></p>
+<h2 id="defining-a-salesforce-connection-in-zato">Defining a Salesforce connection in Zato</h2>
+<p>With all the credentials in place, we can create a new Salesforce connection in Zato Dashboard, as below.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/zato-sf-menu.png" /></p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/zato-sf-form-create.png" /></p>
+<h2 id="authoring-an-integration-service-in-python">Authoring an integration service in Python</h2>
+<p>Above, we created a connection definition that lets Zato obtain session tokens and establish connections to Salesforce.
+Now, we can create an API service that will make use of such connections.</p>
+<p>In the example below, we are using the POST REST method to invoke an endpoint that creates new Salesforce campaigns.
+In your own integrations, you can invoke any other Salesforce endpoint, using any REST method as needed, by following the same
+pattern, which is, create a model with input fields, build a Python dict for the request to Salesforce, invoke it
+and map all the required from the response from Salesforce to that which your own service returns to its own callers.</p>
+<p>Note that we use a datamodel-based <a href="https://zato.io/en/docs/3.3/dev/model/index.html">SimpleIO</a> definition for the service.
+Among other things, although we are not going to do it here, this would let us offer definitions for this and other services.</p>
+<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
+<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
+<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># stdlib</span>
+<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a>
+<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="c1"># Zato</span>
+<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Model</span><span class="p">,</span> <span class="n">Service</span>
+<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
+<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
+<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
+<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a><span class="k">if</span> <span class="mi">0</span><span class="p">:</span>
+<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>    <span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.connection.salesforce</span><span class="w"> </span><span class="kn">import</span> <span class="n">SalesforceClient</span>
+<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>
+<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
+<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>
+<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">CreateCampaignRequest</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
+<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>    <span class="n">name</span><span class="p">:</span>    <span class="nb">str</span>
+<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>    <span class="n">segment</span><span class="p">:</span> <span class="nb">str</span>
+<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>
+<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
+<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>
+<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">CreateCampaignResponse</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
+<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>    <span class="n">campaign_id</span><span class="p">:</span> <span class="nb">str</span>
+<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>
+<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
+<a id="line-0-28" name="line-0-28"></a><a href="#line-0-28"><span class="linenos"></span></a>
+<a id="line-0-29" name="line-0-29"></a><a href="#line-0-29"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">CreateCampaign</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
+<a id="line-0-30" name="line-0-30"></a><a href="#line-0-30"><span class="linenos"></span></a>
+<a id="line-0-31" name="line-0-31"></a><a href="#line-0-31"><span class="linenos"></span></a>    <span class="k">class</span><span class="w"> </span><span class="nc">SimpleIO</span><span class="p">:</span>
+<a id="line-0-32" name="line-0-32"></a><a href="#line-0-32"><span class="linenos"></span></a>        <span class="nb">input</span>  <span class="o">=</span> <span class="n">CreateCampaignRequest</span>
+<a id="line-0-33" name="line-0-33"></a><a href="#line-0-33"><span class="linenos"></span></a>        <span class="n">output</span> <span class="o">=</span> <span class="n">CreateCampaignResponse</span>
+<a id="line-0-34" name="line-0-34"></a><a href="#line-0-34"><span class="linenos"></span></a>
+<a id="line-0-35" name="line-0-35"></a><a href="#line-0-35"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<a id="line-0-36" name="line-0-36"></a><a href="#line-0-36"><span class="linenos"></span></a>
+<a id="line-0-37" name="line-0-37"></a><a href="#line-0-37"><span class="linenos"></span></a>        <span class="c1"># This is our input data</span>
+<a id="line-0-38" name="line-0-38"></a><a href="#line-0-38"><span class="linenos"></span></a>        <span class="nb">input</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">input</span> <span class="c1"># type: CreateCampaignRequest</span>
+<a id="line-0-39" name="line-0-39"></a><a href="#line-0-39"><span class="linenos"></span></a>
+<a id="line-0-40" name="line-0-40"></a><a href="#line-0-40"><span class="linenos"></span></a>        <span class="c1"># Salesforce REST API endpoint to invoke - note that Zato</span>
+<a id="line-0-41" name="line-0-41"></a><a href="#line-0-41"><span class="linenos"></span></a>        <span class="c1"># will add a prefix to it containing the API version.</span>
+<a id="line-0-42" name="line-0-42"></a><a href="#line-0-42"><span class="linenos"></span></a>        <span class="n">path</span> <span class="o">=</span> <span class="s1">'/sobjects/Campaign/'</span>
+<a id="line-0-43" name="line-0-43"></a><a href="#line-0-43"><span class="linenos"></span></a>
+<a id="line-0-44" name="line-0-44"></a><a href="#line-0-44"><span class="linenos"></span></a>        <span class="c1"># Build the request to Salesforce based on what we received</span>
+<a id="line-0-45" name="line-0-45"></a><a href="#line-0-45"><span class="linenos"></span></a>        <span class="n">request</span> <span class="o">=</span> <span class="p">{</span>
+<a id="line-0-46" name="line-0-46"></a><a href="#line-0-46"><span class="linenos"></span></a>          <span class="s1">'Name'</span><span class="p">:</span> <span class="nb">input</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+<a id="line-0-47" name="line-0-47"></a><a href="#line-0-47"><span class="linenos"></span></a>          <span class="s1">'Segment__c'</span><span class="p">:</span> <span class="nb">input</span><span class="o">.</span><span class="n">segment</span><span class="p">,</span>
+<a id="line-0-48" name="line-0-48"></a><a href="#line-0-48"><span class="linenos"></span></a>        <span class="p">}</span>
+<a id="line-0-49" name="line-0-49"></a><a href="#line-0-49"><span class="linenos"></span></a>
+<a id="line-0-50" name="line-0-50"></a><a href="#line-0-50"><span class="linenos"></span></a>        <span class="c1"># .. create a reference to our connection definition ..</span>
+<a id="line-0-51" name="line-0-51"></a><a href="#line-0-51"><span class="linenos"></span></a>        <span class="n">salesforce</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cloud</span><span class="o">.</span><span class="n">salesforce</span><span class="p">[</span><span class="s1">'My Salesforce Connection'</span><span class="p">]</span>
+<a id="line-0-52" name="line-0-52"></a><a href="#line-0-52"><span class="linenos"></span></a>
+<a id="line-0-53" name="line-0-53"></a><a href="#line-0-53"><span class="linenos"></span></a>        <span class="c1"># .. obtain a client to Salesforce ..</span>
+<a id="line-0-54" name="line-0-54"></a><a href="#line-0-54"><span class="linenos"></span></a>        <span class="k">with</span> <span class="n">salesforce</span><span class="o">.</span><span class="n">conn</span><span class="o">.</span><span class="n">client</span><span class="p">()</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span> <span class="c1"># type: SalesforceClient</span>
+<a id="line-0-55" name="line-0-55"></a><a href="#line-0-55"><span class="linenos"></span></a>
+<a id="line-0-56" name="line-0-56"></a><a href="#line-0-56"><span class="linenos"></span></a>            <span class="c1"># .. create the campaign now ..</span>
+<a id="line-0-57" name="line-0-57"></a><a href="#line-0-57"><span class="linenos"></span></a>            <span class="n">sf_response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+<a id="line-0-58" name="line-0-58"></a><a href="#line-0-58"><span class="linenos"></span></a>
+<a id="line-0-59" name="line-0-59"></a><a href="#line-0-59"><span class="linenos"></span></a>        <span class="c1"># .. build our response object ..</span>
+<a id="line-0-60" name="line-0-60"></a><a href="#line-0-60"><span class="linenos"></span></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">CreateCampaignResponse</span><span class="p">()</span>
+<a id="line-0-61" name="line-0-61"></a><a href="#line-0-61"><span class="linenos"></span></a>        <span class="n">response</span><span class="o">.</span><span class="n">campaign_id</span> <span class="o">=</span> <span class="n">sf_response</span><span class="p">[</span><span class="s1">'id'</span><span class="p">]</span>
+<a id="line-0-62" name="line-0-62"></a><a href="#line-0-62"><span class="linenos"></span></a>
+<a id="line-0-63" name="line-0-63"></a><a href="#line-0-63"><span class="linenos"></span></a>        <span class="c1"># .. and return its ID to our caller.</span>
+<a id="line-0-64" name="line-0-64"></a><a href="#line-0-64"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="n">response</span>
+<a id="line-0-65" name="line-0-65"></a><a href="#line-0-65"><span class="linenos"></span></a>
+<a id="line-0-66" name="line-0-66"></a><a href="#line-0-66"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
+</code></pre></div>
+<h2 id="creating-a-rest-channel">Creating a REST channel</h2>
+<p>Note that we assign HTTP Basic Auth credentials to the channel. In this manner, it is possible for clients of this REST
+channel to authenticate using a method that they are already familiar which simplifies everyone's work - it is Zato that deals
+with how to authenticate against Salesforce whereas your API clients use the ubiquitous HTTP Basic Auth method.</p>
+<p><img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/zato-rest-menu.png" />
+<img src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/3.2-salesforce/zato-rest-form-create.png" /></p>
+<h2 id="testing">Testing</h2>
+<p>The last step is to invoke the newly created channel:</p>
+<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a>$<span class="w"> </span>curl<span class="w"> </span>http://api:password@localhost:17010/api/campaign/create<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{&quot;name&quot;:&quot;Hello&quot;, &quot;segment&quot;:&quot;123&quot;}'</span>
+<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a><span class="o">{</span><span class="s2">&quot;campaign_id&quot;</span>:<span class="s2">&quot;8901Z3VHXDTebEJWs&quot;</span><span class="o">}</span>
+<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>$
+</code></pre></div>
+<p>That is everything - you have just integrated with Salesforce and exposed a REST channel for external applications to integrate
+with!</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
+<br />
+➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 02, 2025 08:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/salesforce-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zerotomastery.io/blog/python-monthly-newsletter-may-2025/?utm_source=python-rss-feed" class="hover:underline"
+              >[May 2025] Python Monthly Newsletter 🐍</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            66th issue of Andrei Neagoie's must-read monthly Python Newsletter: Free-Threaded Python, Pyrefly vs ty, Big Tech News, and much more. Read the full newsletter to get up-to-date with everything you need to know from last month.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 01, 2025 10:00 AM UTC by
+            <a href="https://zerotomastery.io/rss/python-rss.xml" class="link link-hover text-primary"
+              >Zero to Mastery</a
+            >
+          </div>
+          <a
+            href="https://zerotomastery.io/blog/python-monthly-newsletter-may-2025/?utm_source=python-rss-feed"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://discuss.tryton.org/t/newsletter-june-2025/8621" class="hover:underline"
               >Newsletter June 2025</a
             >
@@ -1995,138 +2230,6 @@ and understand the mapping between UI and API paths. These techniques enable rob
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/tutorials/tkinter-basic-widgets/" class="hover:underline"
-              >Tkinter Widgets — A walkthrough of Tkinter's basic widgets</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In Tkinter (and most GUI libraries), <strong>widget</strong> is the name given to a component of the GUI that the user can interact with. User interfaces are made up of multiple widgets arranged within the window to make it functional and intuitive to use.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 19, 2025 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/tutorials/tkinter-basic-widgets/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://getnikola.com/blog/nikola-v833-is-out.html" class="hover:underline"
-              >Nikola v8.3.3 is out!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>On behalf of the Nikola team, I am pleased to announce
-the immediate availability of Nikola v8.3.3. This is a bugfix release.</p>
-<p>We’ve had to release Nikola v8.3.3 immediately after releasing
-Nikola v8.3.2, as it is broken on Python 3.8. We would like to thank
-the Python packaging ecosystem for being an incomprehensible and
-incompatible trainwreck.</p>
-<section id="what-is-nikola">
-<h2>What is Nikola?</h2>
-<p>Nikola is a static site and blog generator, written in Python.
-It can use Mako and Jinja2 templates, and input in many popular markup
-formats, such as reStructuredText and Markdown — and can even turn
-Jupyter Notebooks into blog posts! It also supports image galleries,
-and is multilingual. Nikola is flexible, and page builds are extremely
-fast, courtesy of doit (which is rebuilding only what has been changed).</p>
-<p>Find out more at the website: <a class="reference external" href="https://getnikola.com/">https://getnikola.com/</a></p>
-</section>
-<section id="downloads">
-<h2>Downloads</h2>
-<p>Install using <code class="docutils literal">pip install Nikola</code>.</p>
-</section>
-<section id="changes-from-v8-3-1">
-<h2>Changes from v8.3.1</h2>
-<section id="features">
-<h3>Features</h3>
-<ul class="simple">
-<li><p>Trace template usage when an environment variable <code class="docutils literal">NIKOLA_TEMPLATES_TRACE</code>
-is set to any non-empty value.</p></li>
-<li><p>Give user control over the raw underlying template engine
-(either <code class="docutils literal">mako.lookup.TemplateLookup</code> or <code class="docutils literal">jinja2.Environment</code>)
-via an optional <code class="docutils literal">conf.py</code> method <code class="docutils literal">TEMPLATE_ENGINE_FACTORY</code>.</p></li>
-<li><p>Switch to pyproject.toml</p></li>
-<li><p>Add path handler <code class="docutils literal">slug_source</code> linking to source of post.</p></li>
-</ul>
-</section>
-<section id="bugfixes">
-<h3>Bugfixes</h3>
-<ul class="simple">
-<li><p>Ignore errors in parsing SVG files for shrinking them, copy original file to output instead
-(Issue #3785)</p></li>
-<li><p>Restore <code class="docutils literal">annotation_helper.tmpl</code> with dummy content - fix themes still mentioning it
-(Issue #3764, #3773)</p></li>
-<li><p>Fix compatibility with watchdog 4 (Issue #3766)</p></li>
-<li><p><code class="docutils literal">nikola serve</code> now works with non-root SITE_URL.</p></li>
-<li><p>Stack traces meaningless for end users now more reliably suppressed (Issue #3838).</p></li>
-</ul>
-</section>
-<section id="other">
-<h3>Other</h3>
-<ul class="simple">
-<li><p>Changed filter for tidy from  <code class="docutils literal">tidy5</code> to <code class="docutils literal">tidy</code>.</p></li>
-</ul>
-</section>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 17, 2025 05:16 PM UTC by
-            <a href="http://feeds.feedburner.com/getnikola/QBjz" class="link link-hover text-primary"
-              >Nikola</a
-            >
-          </div>
-          <a
-            href="https://getnikola.com/blog/nikola-v833-is-out.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -2138,8 +2241,8 @@ via an optional <code class="docutils literal">conf.py</code> method <code class
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9043</a></li>
-    <li><a>Unique Feeds: 417</a></li>
+    <li><a>Total Entries: 8875</a></li>
+    <li><a>Unique Feeds: 412</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
