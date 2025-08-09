@@ -53,6 +53,46 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-fearless-concurrency.html" class="hover:underline"
+              >The Python Language Summit 2025: Fearless Concurrency</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Tobias Wrigstad, Matthew Parkinson, and Fridtjof Stoldt attended their first Python Language Summit to talk about some new concurrency concepts with core developers. Their slides have great diagrams, so I recommend checking them out. Tobias delivered the presentation to core developers, opening with a “potentially contentious statement” that “[data races and concurrency bugs] were the future that free-threaded Python programmers would see if free-threading was adopted for Python programs”.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEi-gHIfPZi4EIA1RJnTrUOrDkWemTs9Vdb0dwGUoC90Ty4DO9iSDb_WX38A8LDg_9_D_pDRMMNKyuSmNfB3ERBG5yzwjHboTUQnmBtWmuul0kfXytagG8ManMR3l2O8ZeJcMvUtS-UghM_Jd-D6nM0LUhne4vg4Z5RDmkGxqw8kDRrPw2SaVQ/s1279/Screenshot%20from%202025-06-04%2008-54-46.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="180" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEi-gHIfPZi4EIA1RJnTrUOrDkWemTs9Vdb0dwGUoC90Ty4DO9iSDb_WX38A8LDg_9_D_pDRMMNKyuSmNfB3ERBG5yzwjHboTUQnmBtWmuul0kfXytagG8ManMR3l2O8ZeJcMvUtS-UghM_Jd-D6nM0LUhne4vg4Z5RDmkGxqw8kDRrPw2SaVQ/s320/Screenshot%20from%202025-06-04%2008-54-46.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;">“Off to the data races!”</td></tr></tbody></table><p>The issue is when a value, such as “A” in the above diagram, is shared across multiple threads and written concurrently. “There is no easy way to tell when an object is shared. In the worst case, you have to read the whole program”.</p><p>These data-race bugs are also difficult to resolve using existing tools like “ChatGPT or StackOverflow,” which are only able to solve “syntax-driven problems,” and only after drawing the object graph do we see problems. Tools like ThreadSanitizer (TSan) can help, “but you first need to understand that you need to use a tool”. “As a Python programmer, I’m assuming this is not in your typical toolchain”.</p><p>Tobias continued, “The PEP 703 work has shown that it’s costly for the runtime to protect itself against racing code. Can we lift this problem up and talk about this problem at the Python level and make Python data-race free? Can we get an exception instead of a race?”</p><h2 style="text-align: left;">Deep Immutability</h2><p>Referencing the “freezing” proposal that Mark Shannon had spoken about just hours ago in his Language Summit talk “An Uncontentious Talk about Contention”, “deep immutability” is one option for resolving data races in Python. Some performance improvements could be gained by adopting this model.</p><p>This model makes “all shared data immutable” so “there can be no data races” and is “trivial to check at runtime”. However, to do so would require sacrificing mutability, which is “common in Python programs”. “More immutability is great, but it’s not a solution to all our problems.”</p><h2 style="text-align: left;">Rust’s ownership model</h2><p>“If we squint a little bit, we can explain Rust’s ownership model as ‘objects with a reference count greater than 1 cannot be mutated’”, Tobias explained. Rust’s ownership model allows for mutable objects as long as an object isn’t referenced more than once.</p><p>Adopting Rust’s model would require a “move operator” which, when used, “torches the original reference” and moves the reference to a new owner. This operator provides a safe transfer of mutable objects when a reference count is exactly 1.</p><p>However, “the same rule that prevents Y being assigned to X prevents nice things that people like to do”. This approach would “massively restrict which object graphs are valid” and “many Python object graphs in practice don’t look like this”, instead usually containing “reference loops”. Adopting the Rust ownership model in Python would “require rewriting most existing Python programs”.</p><h2 style="text-align: left;">Region-based ownership model</h2><p>The group proposed instead a “region-based model” they had designed called “Lungfish” that is “more permissive than Rust’s data model” but is “still data-race free”.&nbsp;</p><p>Regions are “namespaces for data”. Regions are a group of mutable objects that are isolated from the outside, and all contained objects are shared, transferred, or frozen altogether. Regions can be nested within other regions, too.</p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg9PV7DIMN6qAHrsiZk1Vz0ybwx5ndJkfcSUzFMGi5c1WcyMNlVBzT0QAG4Yp9Ee7XNuBQwmcdbKUxyXkylC14LO39F8Sx-Qnla2_czkRAhNlcEV9WONc-65WWtaZSO_H_8G1GKwaYCt7454oz3Mu86jX-QRkjy6bU8a5P_QizcT3JyCQNlrw/s588/Screenshot%20from%202025-06-04%2017-14-42.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="259" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEg9PV7DIMN6qAHrsiZk1Vz0ybwx5ndJkfcSUzFMGi5c1WcyMNlVBzT0QAG4Yp9Ee7XNuBQwmcdbKUxyXkylC14LO39F8Sx-Qnla2_czkRAhNlcEV9WONc-65WWtaZSO_H_8G1GKwaYCt7454oz3Mu86jX-QRkjy6bU8a5P_QizcT3JyCQNlrw/s320/Screenshot%20from%202025-06-04%2017-14-42.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;"><span style="text-align: left;">Can’t move Region “r” to thread “2” because the borrow count is not 1.</span></td></tr></tbody></table><p>Regions are “an enclosure of objects” that is tracked by their “borrow count”, which is the number of references that are “pointing into a region”. Objects are “slurped” (technical term) into a Region, and the borrow count increases for each reference pointing into the region. Regions can only be “moved” when the borrow count is 1, and any moves that don’t have a borrow count of 1 indicate a data race and should raise an exception.</p><p><br /><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEi2-vE2D2yIPTfOuy2tDOlJXEfrE4XBn4c_82Aj_xdmD21XSdOrWQLdRFC6YS34Wb8Y8zXbED0krrqJMRaEaBwAlTWhDI1lV4Qw8lS-N30wZOcV8YeFwP2zGyfwS5wo3iKiISerIMxDmk3xBYtA_7PT1XhAtJEx363UO6wDkaxQZMGctafGvg/s657/Screenshot%20from%202025-06-04%2017-14-01.png" style="margin-left: auto; margin-right: auto;"><img border="0" height="311" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEi2-vE2D2yIPTfOuy2tDOlJXEfrE4XBn4c_82Aj_xdmD21XSdOrWQLdRFC6YS34Wb8Y8zXbED0krrqJMRaEaBwAlTWhDI1lV4Qw8lS-N30wZOcV8YeFwP2zGyfwS5wo3iKiISerIMxDmk3xBYtA_7PT1XhAtJEx363UO6wDkaxQZMGctafGvg/s320/Screenshot%20from%202025-06-04%2017-14-01.png" width="320" /></a></td></tr><tr><td class="tr-caption" style="text-align: center;"><span style="text-align: left;">Threads 1 and 2 share region r, where thread 1 holds the lock with access to the referenced region r, and has two references from X to A and Z to 42. Hence, the borrow count of 3.</span></td></tr></tbody></table></p><p>Another option is to share the ownership of a region between two or more threads. Doing so would “move the ownership of the region within a lock shared between threads”. “When a thread owns the lock, then that thread can create points within the region and access the data, and the borrow count increments”. This borrow count increment needs to happen to track when the thread can release the lock safely, meaning there are the correct number of references to objects within the region.</p><h2 style="text-align: left;">What’s next for Lungfish and “Fearless Python”?</h2><p>The group has a plan to introduce Lungfish and its concepts to Python through a “series of four Python Enhancement Proposals (PEPs)”. The order and current status of each PEP is the following:</p><p></p><ul style="text-align: left;"><li>The first PEP is for “deep immutability” and was “almost finished with 99% of tests passing on Python 3.12”. The team plans to upgrade to 3.13 and then submit the PEP.</li><li>The second PEP would propose “cyclic immutable garbage with reference counting” and also “adding atomic reference counting for the new immutable objects”. This PEP is around 80% done.</li><li>The third PEP would be for “sharing immutable data between threads and subinterpreters (PEP 734). Tobias added that “subinterpreters can be a good delivery model for some concurrency model on top of [subinterpreters]”. This PEP and project are around 50% done.</li><li>The fourth PEP would add sharing mutable data between threads and subinterpreters using Regions.</li></ul><p></p><p>Tobias closed by sharing why the project was named “Lungfish”: “the project can be used with or without GIL(s)” (pronounced “gills”), which was received with equal parts laughter and groans at the pun.</p><h2 style="text-align: left;">Discussion</h2><p>Barry Warsaw asked, “Would regions be a first-class data object in Python? Tobias answered “yes”, the proposal included a “<span style="font-family: courier;">Region()</span>” object that can be assigned names like so:</p><p><span style="font-family: courier;"><span style="white-space: normal;">r = Region()<br /></span>r.f = 42</span></p><p>Thomas Wouters wondered “whether regions would get used ubiquitously”, asking “which region does the sys module live in?” as a particularly difficult example. The group answered that they “are not sure what the answer is” and that there “are some concurrency issues there” and “that you want [the sys module] to be in a REPL thread”. “People in this room probably have better ideas here”.</p><p>David Hewitt, maintainer of the Rust PyO3 project, contrasted the proposed Region object with Rust’s “mutex” type and Python’s “Lock” type. Python’s Lock type doesn’t protect any data inside the lock, whereas Rust’s mutex type does protect data within the mutex. Rust’s mutex allows taking the data out of the mutex if you own the mutex, changing the mutability, and more, similar to Regions. David “has become familiar with the mutexes in Rust, and coming back to Python’s locks feels like a bit of a paper cut”.</p><p>David asked whether, instead of “introducing a new concept with Regions,” the three would introduce the concept more similar to a Rust mutex instead. Tobias answered that the protection mirrors the mutex, but that Regions uniquely allow nesting “to build a tree of regions” and a “notion of transitive closure of state in the object graph” that “transcends its use within a mutex, such as when the region is transferred or how freezing propagates within a region”. “Mutexes are one use of a Region, but not the only use”.</p><p>Donghee Na asked about the stability of existing behavior. Fridtjof answered that the three “had added tests specifically for the new behavior of immutability”, saying that the “immutability and freezing feature branches are really solid” and that the region feature branch is “more experimental”.</p><p>Donghee continued and asked whether the community would need to modify its code. Tobias answered, “Yes, if they want to take advantage of the benefits”. Matthew answered, “Pure Python can directly support regions, if you have a C library, then you’d need to add some modifications to your code to benefit”.</p><p>“C libraries would be an opt-in model at the module level”. This is similar to free-threading, where modules need to opt in; otherwise, the runtime doesn’t run with free-threading. “When you freeze an object graph, if [the runtime] encountered an object that doesn’t implement freezing, then you backtrack the freezing”. “You would need to register your types as freezeable”.</p><p>Martin DeMello asked whether freezing a region was a “one-way operation,” noting that freezing a region removes the object graph. Tobias answered that at the moment, “it does not allow [frozen objects] to be mutated until [the frozen objects] hit the finalizer, which turns objects back to be mutable again”. “We could do something like you’re proposing, I’m just worried,” with laughter at the mention of the finalizer. Tobias added a comment about “a potential copy-on-write” type to allow users to enable this use case.</p><p>Pablo Galindo Salgado asked about C extensions, “If I incref (increase a reference count), how does the region know whether this is an internal reference or an external reference?” Fridtjof replied that “there are two answers”, first being that “if the C extension had opted in, the system assumes that [the C extension author] is doing the right things” which in Pablo’s case would require a <span style="font-family: courier;">PyRegion_IncRef()</span> function or similar. The second answer is that if the C extension doesn’t opt in, the system would be able to “reestablish the borrow count” for “backwards compatibility” by “leveraging the garbage collection mechanism that’s already there”.</p><p>Overall, there was definitely interest in the trio’s proposal from core developers due to the new problems that free-threaded Python will bring to Python users regarding concurrency.</p><div><br /></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 12, 2025 01:32 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-fearless-concurrency.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-challenges-of-the-steering-council.html" class="hover:underline"
               >The Python Language Summit 2025: Challenges of the Steering Council</a
             >
@@ -993,47 +1033,6 @@ Steve Dower <br />
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/blog/pyqt6-pyside6-books-updated-2025/" class="hover:underline"
-              >6th Edition - Create GUI Applications with Python & Qt, Released — PyQt6 & PySide6 Books updated for 2025 with model view controller architecture, new Python/Qt features and more examples</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            The 6th edition of my book <em>Create GUI Applications with Python &amp; Qt</em> is now
-available, for PyQt6 &amp; PySide6.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 11, 2025 08:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/blog/pyqt6-pyside6-books-updated-2025/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/509/gpu-programming-in-pure-python" class="hover:underline"
               >#509: GPU Programming in Pure Python</a
             >
@@ -1138,93 +1137,6 @@ available, for PyQt6 &amp; PySide6.
           </div>
           <a
             href="https://blog.jetbrains.com/pycharm/2025/06/concurrency-in-async-await-and-threading/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2025/jun/10/bugfix-releases/" class="hover:underline"
-              >Django bugfix releases issued: 5.2.3, 5.1.11, and 4.2.23</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Following the June 4, 2025 security release, the Django team is issuing
-releases for
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.2.3/">Django 5.2.3</a>,
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.1.11/">Django 5.1.11</a>, and
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/4.2.23/">Django 4.2.23</a> to
-complete mitigation for CVE-2025-48432: Potential log injection via unescaped
-request path (<a class="reference external" href="https://www.djangoproject.com/weblog/2025/jun/04/security-releases/">full description</a>).</p>
-<p>These follow-up releases migrate remaining response logging paths to a safer
-logging implementation, ensuring that all untrusted input is properly escaped
-before being written to logs. This update does not introduce a new CVE but
-strengthens the original fix.</p>
-<p>We encourage all users of Django to upgrade as soon as possible.</p>
-<div class="section" id="s-affected-supported-versions">
-<h3>Affected supported versions</h3>
-<ul class="simple">
-<li>Django main</li>
-<li>Django 5.2</li>
-<li>Django 5.1</li>
-<li>Django 4.2</li>
-</ul>
-</div>
-<div class="section" id="s-resolution">
-<h3>Resolution</h3>
-<p>Patches to resolve the issue have been applied to Django's
-main, 5.2, 5.1, and 4.2 branches.
-The patches may be obtained from the following changesets.</p>
-<div class="section" id="s-cve-2025-48432-potential-log-injection-via-unescaped-request-path">
-<h4>CVE-2025-48432: Potential log injection via unescaped request path</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/957951755259b412d5113333b32bf85871d29814/">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/8fcc83953c350e158a484bf1da0aa1b79b69bb07/">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/31f4bd31fa16f7f5302f65b9b8b7a49b69a7c4a6/">5.1 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/b597d46bb19c8567615e62029210dab16c70db7d/">4.2 branch</a></li>
-</ul>
-</div>
-</div>
-<div class="section" id="s-the-following-releases-have-been-issued">
-<h3>The following releases have been issued</h3>
-<ul class="simple">
-<li>Django 5.2.3 (<a class="reference external" href="https://www.djangoproject.com/download/5.2.3/tarball/">download Django 5.2.3</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/5.2.3/checksum/">5.2.3 checksums</a>)</li>
-<li>Django 5.1.11 (<a class="reference external" href="https://www.djangoproject.com/download/5.1.11/tarball/">download Django 5.1.11</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/5.1.11/checksum/">5.1.11 checksums</a>)</li>
-<li>Django 4.2.23 (<a class="reference external" href="https://www.djangoproject.com/download/4.2.23/tarball/">download Django 4.2.23</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/4.2.23/checksum/">4.2.23 checksums</a>)</li>
-</ul>
-<p>The PGP key ID used for this release is : <a class="reference external" href="https://github.com/sarahboyce.gpg">3955B19851EA96EF</a></p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 10, 2025 08:06 AM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2025/jun/10/bugfix-releases/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1797,6 +1709,107 @@ steht zur Verfügung.<p><span style="font-weight: bold;">(Lightning) Talk Anmeld
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://wingware.com/news/2025-06-05" class="hover:underline"
+              >Wing Python IDE Version 11 - June 5, 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Wing Python IDE version 11 is now available.  It improves the AI assisted development UI and adds
+support for Claude, Grok, Gemini, OpenAI, Perplexity, Mistral, Deepseek, Ollama, and other OpenAI API
+compatible AI providers.  Wing 11 also adds package management with <tt class="literal"><span class="pre">uv</span></tt>, improves Python code analysis,
+updates the UI localizations, improves diff/merge, adds easier custom key binding assignment, and
+much more.</p>
+<p>Most of these improvements are available only in Wing Pro.  <a class="reference" href="/downloads">Compare Products</a>
+for details.</p>
+<img alt="Wing 11 Screen Shot" class="eye-candy-image unfloat-at-900" src="https://wingware.com/images/screenshots/wing11-screenshot.png" width="650px" /><h3>Downloads</h3><div class="note">
+<strong>IMPORTANT</strong> Be sure to <tt class="literal"><span class="pre">Check</span> <span class="pre">for</span> <span class="pre">Updates</span></tt> from Wing's <tt class="literal"><span class="pre">Help</span></tt> menu after installing
+so that you have the latest hot fixes.</div>
+<p><a class="reference" href="/downloads/wing-pro/11.0.1.0">Wing Pro 11.0.1</a></p>
+<p><a class="reference" href="/downloads/wing-personal/11.0.1.0">Wing Personal 11.0.1</a></p>
+<p><a class="reference" href="/downloads/wing-101/11.0.1.0">Wing 101 11.0.1</a></p>
+<p>Wing 10 and earlier versions are not affected by installation of Wing 11 and
+may be installed and used independently. However, project files for Wing 10
+and earlier are converted when opened by Wing 11 and should be saved under a
+new name, since Wing 11 projects cannot be opened by older versions of Wing.</p>
+<h2><img src="https://wingware.com/images/wing18.png" /> New in Wing 11</h2><h3>Improved AI Assisted Development</h3><p>Wing 11 improves the user interface for AI assisted development by introducing two separate
+tools <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> and <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt>. <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> can be used to write, redesign, or extend code
+in the current editor. <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt> can be used to ask about code or iterate in creating a
+design or new code without directly modifying the code in an editor.</p>
+<p>Wing 11's AI assisted development features now support not just OpenAI but also Claude, Grok,
+Gemini, Perplexity, Mistral, Deepseek, and any other OpenAI completions API compatible AI provider.</p>
+<p>This release also improves setting up AI request context, so that both automatically and
+manually selected and described context items may be paired with an AI request. AI request
+contexts can now be stored, optionally so they are shared by all projects, and may be used
+independently with different AI features.</p>
+<p>AI requests can now also be stored in the current project or shared with all projects, and Wing
+comes preconfigured with a set of commonly used requests. In addition to changing code in the
+current editor, stored requests may create a new untitled file or run instead in AI Chat. Wing
+11 also introduces options for changing code within an editor, including replacing code,
+commenting out code, or starting a diff/merge session to either accept or reject changes.</p>
+<p>Wing 11 also supports using AI to generate commit messages based on the changes being committed
+to a revision control system.</p>
+<p>You can now also configure multiple AI providers for easier access to different models.</p>
+<p>For details see <tt class="literal"><span class="pre">AI</span> <span class="pre">Assisted</span> <span class="pre">Development</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Package Management with uv </h3><p>Wing Pro 11 adds support for the <tt class="literal"><span class="pre">uv</span></tt> package manager in the New Project dialog and the
+Packages tool.</p>
+<p>For details see <tt class="literal"><span class="pre">Project</span> <span class="pre">Manager</span> <span class="pre">&gt;</span> <span class="pre">Creating</span> <span class="pre">Projects</span> <span class="pre">&gt;</span> <span class="pre">Creating</span> <span class="pre">Python</span> <span class="pre">Environments</span></tt> and <tt class="literal"><span class="pre">Package</span>
+<span class="pre">Manager</span> <span class="pre">&gt;</span> <span class="pre">Package</span> <span class="pre">Management</span> <span class="pre">with</span> <span class="pre">uv</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Improved Python Code Analysis</h3><p>Wing 11 improves code analysis of literals such as dicts and sets, parametrized type
+aliases, <tt class="literal"><span class="pre">typing.Self</span></tt>, type variables on the <tt class="literal"><span class="pre">def</span></tt> or <tt class="literal"><span class="pre">class</span></tt> line that declares
+them, generic classes with <tt class="literal"><span class="pre">[...]</span></tt>, and <tt class="literal"><span class="pre">__all__</span></tt> in <tt class="literal"><span class="pre">*.pyi</span></tt> files.</p>
+<h3>Updated Localizations</h3><p>Wing 11 updates the German, French, and Russian localizations, and introduces a new experimental
+AI-generated Spanish localization. The Spanish localization and the new AI-generated strings in the
+French and Russian localizations may be accessed with the new <tt class="literal"><span class="pre">User</span> <span class="pre">Interface</span> <span class="pre">&gt;</span> <span class="pre">Include</span> <span class="pre">AI</span>
+<span class="pre">Translated</span> <span class="pre">Strings</span></tt> preference.</p>
+<h3>Improved diff/merge</h3><p>Wing Pro 11 adds floating buttons directly between the editors to make navigating differences
+and merging easier, allows undoing previously merged changes, and does a better job managing
+scratch buffers, scroll locking, and sizing of merged ranges.</p>
+<p>For details see <tt class="literal"><span class="pre">Difference</span> <span class="pre">and</span> <span class="pre">Merge</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Other Minor Features and Improvements</h3><p>Wing 11 also improves the custom key binding assignment user interface, adds a <tt class="literal"><span class="pre">Files</span> <span class="pre">&gt;</span>
+<span class="pre">Auto-Save</span> <span class="pre">Files</span> <span class="pre">When</span> <span class="pre">Wing</span> <span class="pre">Loses</span> <span class="pre">Focus</span></tt> preference, warns immediately when opening a project with
+an invalid Python Executable configuration, allows clearing recent menus, expands the set of
+available special environment variables for project configuration, and makes a number of other
+bug fixes and usability improvements.</p>
+<h3>Changes and Incompatibilities</h3><p>Since Wing 11 replaced the <tt class="literal"><span class="pre">AI</span></tt> tool with <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> and <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt>, and AI
+configuration is completely different than in Wing 10, you will need to reconfigure your
+AI integration manually in Wing 11. This is done with <tt class="literal"><span class="pre">Manage</span> <span class="pre">AI</span> <span class="pre">Providers</span></tt> in the
+<tt class="literal"><span class="pre">AI</span></tt> menu. After adding the first provider configuration, Wing will set that provider as
+the default. You can switch between providers with <tt class="literal"><span class="pre">Switch</span> <span class="pre">to</span> <span class="pre">Provider</span></tt> in the <tt class="literal"><span class="pre">AI</span></tt> menu.</p>
+<p>If you have questions, please don't hesitate to contact us at <a class="reference" href="mailto:support&#64;wingware.com">support&#64;wingware.com</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 05, 2025 01:00 AM UTC by
+            <a href="http://wingware.com/news/rss&noheader=1" class="link link-hover text-primary"
+              >Wingware</a
+            >
+          </div>
+          <a
+            href="https://wingware.com/news/2025-06-05"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1808,8 +1821,8 @@ steht zur Verfügung.<p><span style="font-weight: bold;">(Lightning) Talk Anmeld
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8954</a></li>
-    <li><a>Unique Feeds: 410</a></li>
+    <li><a>Total Entries: 8921</a></li>
+    <li><a>Unique Feeds: 408</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
