@@ -53,206 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/enterprise-grpc-integrations.html" class="hover:underline"
-              >Enterprise gRPC Services with Python and Zato</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/enterprise-grpc-integrations.html">Enterprise gRPC Services with Python and Zato</a>
-</h1>
-<div class="article-meta">
-  2025-07-22, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<h2 id="overview">Overview</h2>
-<p>gRPC is a high-performance framework for building distributed systems and microservices. It leverages Protocol
-Buffers for serialization and HTTP/2 for transport, making it ideal for production environments
-requiring low-latency communication.</p>
-<p>This Python integration with Zato demonstrates how to build scalable gRPC services with strongly-typed schemas. The approach enables efficient API orchestration and reliable data exchange between services using type-safe contracts.</p>
-<p>Below you'll find a Protocol Buffer schema definition and an enterprise-ready API integration service showing end-to-end implementation.</p>
-<h2 id="protocol-buffer-schema-definition">Protocol Buffer Schema Definition</h2>
-<p>First, define your gRPC service contract using Protocol Buffers. This example shows a mandate registration service - a financial
-services process where a customer authorizes a merchant or service provider to automatically collect recurring payments
-from their bank account.</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="k">syntax</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;proto3&quot;</span><span class="p">;</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="kn">package</span><span class="w"> </span><span class="nn">debit_mandate</span><span class="p">;</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a><span class="kd">service</span><span class="w"> </span><span class="n">MandateRegistrationService</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a><span class="w">    </span><span class="k">rpc</span><span class="w"> </span><span class="n">RegisterMandate</span><span class="w"> </span><span class="p">(</span><span class="n">MandateRegistrationRequest</span><span class="p">)</span><span class="w"> </span><span class="k">returns</span><span class="w"> </span><span class="p">(</span><span class="n">MandateActionResponse</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="p">}</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a><span class="kd">enum</span><span class="w"> </span><span class="n">MandateCollectionFrequencyType</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a><span class="w">    </span><span class="na">MANDATE_COLLECTION_FREQUENCY_TYPE_UNSPECIFIED</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a><span class="w">    </span><span class="na">MANDATE_COLLECTION_FREQUENCY_TYPE_DAILY</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a><span class="w">    </span><span class="na">MANDATE_COLLECTION_FREQUENCY_TYPE_WEEKLY</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a><span class="w">    </span><span class="na">MANDATE_COLLECTION_FREQUENCY_TYPE_MONTHLY</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a><span class="p">}</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a><span class="kd">enum</span><span class="w"> </span><span class="n">CurrencyCode</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a><span class="w">    </span><span class="na">CURRENCY_CODE_UNSPECIFIED</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a><span class="w">    </span><span class="na">CURRENCY_CODE_EUR</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a><span class="p">}</span>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a><span class="kd">message</span><span class="w"> </span><span class="nc">MoneyObject</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a><span class="w">    </span><span class="n">CurrencyCode</span><span class="w"> </span><span class="na">currency_code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a><span class="w">    </span><span class="kt">bool</span><span class="w"> </span><span class="na">positive_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span>
-<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a><span class="w">    </span><span class="kt">uint32</span><span class="w"> </span><span class="na">units</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
-<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a><span class="w">    </span><span class="kt">uint32</span><span class="w"> </span><span class="na">nanos</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span>
-<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a><span class="p">}</span>
-<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>
-<a id="line-0-28" name="line-0-28"></a><a href="#line-0-28"><span class="linenos"></span></a><span class="kd">message</span><span class="w"> </span><span class="nc">MandateRegistrationRequest</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-29" name="line-0-29"></a><a href="#line-0-29"><span class="linenos"></span></a><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="na">debtor_name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<a id="line-0-30" name="line-0-30"></a><a href="#line-0-30"><span class="linenos"></span></a><span class="w">    </span><span class="n">MandateCollectionFrequencyType</span><span class="w"> </span><span class="na">collection_frequency</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
-<a id="line-0-31" name="line-0-31"></a><a href="#line-0-31"><span class="linenos"></span></a><span class="w">    </span><span class="n">MoneyObject</span><span class="w"> </span><span class="na">instalment_amount</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">;</span>
-<a id="line-0-32" name="line-0-32"></a><a href="#line-0-32"><span class="linenos"></span></a><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="na">debtor_identity_number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">;</span>
-<a id="line-0-33" name="line-0-33"></a><a href="#line-0-33"><span class="linenos"></span></a><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="na">bank_account_number</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span><span class="p">;</span>
-<a id="line-0-34" name="line-0-34"></a><a href="#line-0-34"><span class="linenos"></span></a><span class="p">}</span>
-<a id="line-0-35" name="line-0-35"></a><a href="#line-0-35"><span class="linenos"></span></a>
-<a id="line-0-36" name="line-0-36"></a><a href="#line-0-36"><span class="linenos"></span></a><span class="kd">message</span><span class="w"> </span><span class="nc">MandateActionResponse</span><span class="w"> </span><span class="p">{</span>
-<a id="line-0-37" name="line-0-37"></a><a href="#line-0-37"><span class="linenos"></span></a><span class="w">    </span><span class="kt">uint32</span><span class="w"> </span><span class="na">response_code</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
-<a id="line-0-38" name="line-0-38"></a><a href="#line-0-38"><span class="linenos"></span></a><span class="w">    </span><span class="kt">string</span><span class="w"> </span><span class="na">response_description</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
-<a id="line-0-39" name="line-0-39"></a><a href="#line-0-39"><span class="linenos"></span></a><span class="p">}</span>
-</code></pre></div>
-<h2 id="enabling-grpc-in-zato-projects">Enabling gRPC in Zato Projects</h2>
-<p>To use gRPC in your integration services, add the required dependencies to
-<a href="https://zato.io/en/tutorials/devops/deployment.html">your project's requirements file</a>:</p>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a># config/python-reqs/requirements.txt
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a>grpcio&gt;=1.50.0
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a>grpcio-tools&gt;=1.50.0
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a>protobuf&gt;=4.21.0
-</code></pre></div>
-<p>When your container starts, these dependencies will be automatically installed and available to your service.</p>
-<h2 id="zato-service-integration">Zato Service Integration</h2>
-<p>Create a Zato service that uses the gRPC client with proper input handling:</p>
-<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>
-<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a><span class="c1"># stdlib</span>
-<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
-<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
-<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">Model</span><span class="p">,</span> <span class="n">Service</span>
-<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>
-<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a><span class="c1"># gRPC Code</span>
-<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">debit_mandate_pb2</span><span class="w"> </span><span class="kn">import</span> <span class="n">MANDATE_COLLECTION_FREQUENCY_TYPE_MONTHLY</span>
-<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">debit_mandate_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">MandateClient</span>
-<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>
-<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-<a id="line-2-14" name="line-2-14"></a><a href="#line-2-14"><span class="linenos"></span></a>
-<a id="line-2-15" name="line-2-15"></a><a href="#line-2-15"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="line-2-16" name="line-2-16"></a><a href="#line-2-16"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MandateRegistrationRequest</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
-<a id="line-2-17" name="line-2-17"></a><a href="#line-2-17"><span class="linenos"></span></a>    <span class="n">debtor_name</span><span class="p">:</span> <span class="nb">str</span>
-<a id="line-2-18" name="line-2-18"></a><a href="#line-2-18"><span class="linenos"></span></a>    <span class="n">debtor_identity_number</span><span class="p">:</span> <span class="nb">str</span>
-<a id="line-2-19" name="line-2-19"></a><a href="#line-2-19"><span class="linenos"></span></a>    <span class="n">bank_account_number</span><span class="p">:</span> <span class="nb">str</span>
-<a id="line-2-20" name="line-2-20"></a><a href="#line-2-20"><span class="linenos"></span></a>    <span class="n">collection_frequency</span><span class="p">:</span> <span class="nb">int</span>
-<a id="line-2-21" name="line-2-21"></a><a href="#line-2-21"><span class="linenos"></span></a>    <span class="n">amount_units</span><span class="p">:</span> <span class="nb">int</span>
-<a id="line-2-22" name="line-2-22"></a><a href="#line-2-22"><span class="linenos"></span></a>
-<a id="line-2-23" name="line-2-23"></a><a href="#line-2-23"><span class="linenos"></span></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-<a id="line-2-24" name="line-2-24"></a><a href="#line-2-24"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MandateRegistrationResponse</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
-<a id="line-2-25" name="line-2-25"></a><a href="#line-2-25"><span class="linenos"></span></a>    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
-<a id="line-2-26" name="line-2-26"></a><a href="#line-2-26"><span class="linenos"></span></a>    <span class="n">details</span><span class="p">:</span> <span class="nb">str</span>
-<a id="line-2-27" name="line-2-27"></a><a href="#line-2-27"><span class="linenos"></span></a>
-<a id="line-2-28" name="line-2-28"></a><a href="#line-2-28"><span class="linenos"></span></a><span class="c1"># ###########################################################################</span>
-<a id="line-2-29" name="line-2-29"></a><a href="#line-2-29"><span class="linenos"></span></a>
-<a id="line-2-30" name="line-2-30"></a><a href="#line-2-30"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MandateRegistrationService</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-2-31" name="line-2-31"></a><a href="#line-2-31"><span class="linenos"></span></a>
-<a id="line-2-32" name="line-2-32"></a><a href="#line-2-32"><span class="linenos"></span></a>    <span class="c1"># Use API models</span>
-<a id="line-2-33" name="line-2-33"></a><a href="#line-2-33"><span class="linenos"></span></a>    <span class="nb">input</span> <span class="o">=</span> <span class="n">MandateRegistrationRequest</span>
-<a id="line-2-34" name="line-2-34"></a><a href="#line-2-34"><span class="linenos"></span></a>    <span class="n">output</span> <span class="o">=</span> <span class="n">MandateRegistrationResponse</span>
-<a id="line-2-35" name="line-2-35"></a><a href="#line-2-35"><span class="linenos"></span></a>
-<a id="line-2-36" name="line-2-36"></a><a href="#line-2-36"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-2-37" name="line-2-37"></a><a href="#line-2-37"><span class="linenos"></span></a>
-<a id="line-2-38" name="line-2-38"></a><a href="#line-2-38"><span class="linenos"></span></a>        <span class="c1"># Local variables</span>
-<a id="line-2-39" name="line-2-39"></a><a href="#line-2-39"><span class="linenos"></span></a>        <span class="nb">input</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">input</span>
-<a id="line-2-40" name="line-2-40"></a><a href="#line-2-40"><span class="linenos"></span></a>
-<a id="line-2-41" name="line-2-41"></a><a href="#line-2-41"><span class="linenos"></span></a>        <span class="c1"># Get a client for the gRPC endpoint ..</span>
-<a id="line-2-42" name="line-2-42"></a><a href="#line-2-42"><span class="linenos"></span></a>        <span class="n">client</span> <span class="o">=</span> <span class="n">MandateClient</span><span class="p">()</span>
-<a id="line-2-43" name="line-2-43"></a><a href="#line-2-43"><span class="linenos"></span></a>
-<a id="line-2-44" name="line-2-44"></a><a href="#line-2-44"><span class="linenos"></span></a>        <span class="k">try</span><span class="p">:</span>
-<a id="line-2-45" name="line-2-45"></a><a href="#line-2-45"><span class="linenos"></span></a>            <span class="c1"># .. invoke the endpoint ..</span>
-<a id="line-2-46" name="line-2-46"></a><a href="#line-2-46"><span class="linenos"></span></a>            <span class="n">grpc_response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">register_mandate</span><span class="p">(</span>
-<a id="line-2-47" name="line-2-47"></a><a href="#line-2-47"><span class="linenos"></span></a>                <span class="n">debtor_name</span><span class="o">=</span><span class="nb">input</span><span class="o">.</span><span class="n">debtor_name</span><span class="p">,</span>
-<a id="line-2-48" name="line-2-48"></a><a href="#line-2-48"><span class="linenos"></span></a>                <span class="n">debtor_identity_number</span><span class="o">=</span><span class="nb">input</span><span class="o">.</span><span class="n">debtor_identity_number</span><span class="p">,</span>
-<a id="line-2-49" name="line-2-49"></a><a href="#line-2-49"><span class="linenos"></span></a>                <span class="n">bank_account_number</span><span class="o">=</span><span class="nb">input</span><span class="o">.</span><span class="n">bank_account_number</span><span class="p">,</span>
-<a id="line-2-50" name="line-2-50"></a><a href="#line-2-50"><span class="linenos"></span></a>                <span class="n">collection_frequency</span><span class="o">=</span><span class="nb">input</span><span class="o">.</span><span class="n">collection_frequency</span><span class="p">,</span>
-<a id="line-2-51" name="line-2-51"></a><a href="#line-2-51"><span class="linenos"></span></a>                <span class="n">amount_units</span><span class="o">=</span><span class="nb">input</span><span class="o">.</span><span class="n">amount_units</span><span class="p">,</span>
-<a id="line-2-52" name="line-2-52"></a><a href="#line-2-52"><span class="linenos"></span></a>            <span class="p">)</span>
-<a id="line-2-53" name="line-2-53"></a><a href="#line-2-53"><span class="linenos"></span></a>
-<a id="line-2-54" name="line-2-54"></a><a href="#line-2-54"><span class="linenos"></span></a>            <span class="c1"># .. map its response to ours ..</span>
-<a id="line-2-55" name="line-2-55"></a><a href="#line-2-55"><span class="linenos"></span></a>            <span class="n">response</span> <span class="o">=</span> <span class="n">MandateRegistrationResponse</span><span class="p">()</span>
-<a id="line-2-56" name="line-2-56"></a><a href="#line-2-56"><span class="linenos"></span></a>            <span class="n">response</span><span class="o">.</span><span class="n">status</span> <span class="o">=</span> <span class="n">grpc_response</span><span class="o">.</span><span class="n">response_code</span>
-<a id="line-2-57" name="line-2-57"></a><a href="#line-2-57"><span class="linenos"></span></a>            <span class="n">response</span><span class="o">.</span><span class="n">details</span> <span class="o">=</span> <span class="n">grpc_response</span><span class="o">.</span><span class="n">response_description</span>
-<a id="line-2-58" name="line-2-58"></a><a href="#line-2-58"><span class="linenos"></span></a>
-<a id="line-2-59" name="line-2-59"></a><a href="#line-2-59"><span class="linenos"></span></a>            <span class="c1"># .. and return it to the caller.</span>
-<a id="line-2-60" name="line-2-60"></a><a href="#line-2-60"><span class="linenos"></span></a>            <span class="bp">self</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="n">response</span>
-<a id="line-2-61" name="line-2-61"></a><a href="#line-2-61"><span class="linenos"></span></a>
-<a id="line-2-62" name="line-2-62"></a><a href="#line-2-62"><span class="linenos"></span></a>        <span class="k">finally</span><span class="p">:</span>
-<a id="line-2-63" name="line-2-63"></a><a href="#line-2-63"><span class="linenos"></span></a>            <span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
-</code></pre></div>
-<h2 id="testing-the-integration">Testing the Integration</h2>
-<p>Once deployed, you can invoke your Zato service through a REST endpoint:</p>
-<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:17010/api/mandate/register<span class="w"> </span><span class="se">\</span>
-<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{</span>
-<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a><span class="s1">    &quot;debtor_name&quot;: &quot;John Doe&quot;,</span>
-<a id="line-3-5" name="line-3-5"></a><a href="#line-3-5"><span class="linenos"></span></a><span class="s1">    &quot;debtor_identity_number&quot;: &quot;123456789&quot;,</span>
-<a id="line-3-6" name="line-3-6"></a><a href="#line-3-6"><span class="linenos"></span></a><span class="s1">    &quot;bank_account_number&quot;: &quot;GB29NWBK60161331926819&quot;,</span>
-<a id="line-3-7" name="line-3-7"></a><a href="#line-3-7"><span class="linenos"></span></a><span class="s1">    &quot;collection_frequency&quot;: 3,</span>
-<a id="line-3-8" name="line-3-8"></a><a href="#line-3-8"><span class="linenos"></span></a><span class="s1">    &quot;amount_units&quot;: 100</span>
-<a id="line-3-9" name="line-3-9"></a><a href="#line-3-9"><span class="linenos"></span></a><span class="s1">  }'</span>
-</code></pre></div>
-<p>The service returns a structured JSON response:</p>
-<div class="highlight"><pre><span></span><code><a id="line-4-1" name="line-4-1"></a><a href="#line-4-1"><span class="linenos"></span></a><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;details&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Mandate registered successfully&quot;</span><span class="p">}</span>
-</code></pre></div>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/3.3/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 22, 2025 08:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/enterprise-grpc-integrations.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/what-does-isinstance-do-in-python/" class="hover:underline"
               >What Does isinstance() Do in Python?</a
             >
@@ -1566,6 +1366,46 @@ supporting MCP to PythonAnywhere directly.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.europython.eu/july-newsletter-cant-make-it-to-prague-join-us-online/" class="hover:underline"
+              >July Newsletter: Can’t make it to Prague? Join Us Online!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Hello, Pythonistas! &#x1f40d;</p><p>EuroPython is coming fast, and we&#x2019;re back with news about what you can yet do so you don&#x2019;t miss any opportunities to learn and enjoy even more! &#x1f389;</p><p></p><h1 id="%F0%9F%A7%91%E2%80%8D%F0%9F%92%BB-can%E2%80%99t-make-it-to-prague-join-us-online">&#x1f9d1;&#x200d;&#x1f4bb; Can&#x2019;t make it to Prague? Join us online!</h1><p>Remote tickets</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 11, 2025 06:00 AM UTC by
+            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
+              >EuroPython</a
+            >
+          </div>
+          <a
+            href="https://blog.europython.eu/july-newsletter-cant-make-it-to-prague-join-us-online/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -1577,8 +1417,8 @@ supporting MCP to PythonAnywhere directly.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9118</a></li>
-    <li><a>Unique Feeds: 411</a></li>
+    <li><a>Total Entries: 9088</a></li>
+    <li><a>Unique Feeds: 409</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
