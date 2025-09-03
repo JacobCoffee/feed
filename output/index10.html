@@ -53,660 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pypy.org/posts/2025/06/rpython-gc-allocation-speed.html" class="hover:underline"
-              >How fast can the RPython GC allocate?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>While working on a paper about <a href="https://pypy.org/posts/2025/02/pypy-gc-sampling.html">allocation profiling in
-VMProf</a> I got curious
-about how quickly the RPython GC can allocate an object. I wrote a small
-RPython benchmark program to get an idea of the order of magnitude.</p>
-<p>The basic idea is to just allocate an instance in a tight loop:</p>
-<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">A</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
-    <span class="k">pass</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-    <span class="c1"># preliminary idea, see below</span>
-    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="n">A</span><span class="p">()</span>
-        <span class="n">a</span><span class="o">.</span><span class="n">i</span> <span class="o">=</span> <span class="n">i</span>
-</pre></div>
-
-<p>The RPython type inference will find out that instances of <code>A</code> have a single
-<code>i</code> field, which is an integer. In addition to that field, every RPython object
-needs one word of GC meta-information. Therefore one instance of <code>A</code> needs 16
-bytes on a 64-bit architecture.</p>
-<p>However, measuring like this is not good enough, because the RPython static
-optimizer would remove the allocation since the object isn't used. But we can
-confuse the escape analysis sufficiently by always keeping two instances alive
-at the same time:</p>
-<div class="code"><pre class="code literal-block"><span class="k">class</span><span class="w"> </span><span class="nc">A</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
-    <span class="k">pass</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-    <span class="n">a</span> <span class="o">=</span> <span class="n">prev</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-        <span class="n">prev</span> <span class="o">=</span> <span class="n">a</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="n">A</span><span class="p">()</span>
-        <span class="n">a</span><span class="o">.</span><span class="n">i</span> <span class="o">=</span> <span class="n">i</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">a</span><span class="p">)</span> <span class="c1"># print the instances at the end</span>
-</pre></div>
-
-<p>(I confirmed that the allocation isn't being removed by looking at the C code
-that the RPython compiler generates from this.)</p>
-<p>This is doing a little bit more work than needed, because of the <code>a.i = i</code>
-instance attribute write. We can also (optionally) leave the field
-uninitialized.</p>
-<div class="code"><pre class="code literal-block"><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">initialize_field</span><span class="p">,</span> <span class="n">loops</span><span class="p">):</span>
-    <span class="n">t1</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">initialize_field</span><span class="p">:</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="n">prev</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-            <span class="n">prev</span> <span class="o">=</span> <span class="n">a</span>
-            <span class="n">a</span> <span class="o">=</span> <span class="n">A</span><span class="p">()</span>
-            <span class="n">a</span><span class="o">.</span><span class="n">i</span> <span class="o">=</span> <span class="n">i</span>
-        <span class="nb">print</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">a</span><span class="p">)</span> <span class="c1"># make sure always two objects are alive</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="n">prev</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-            <span class="n">prev</span> <span class="o">=</span> <span class="n">a</span>
-            <span class="n">a</span> <span class="o">=</span> <span class="n">A</span><span class="p">()</span>
-        <span class="nb">print</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">a</span><span class="p">)</span>
-    <span class="n">t2</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">t2</span> <span class="o">-</span> <span class="n">t1</span><span class="p">,</span> <span class="s1">'s'</span><span class="p">)</span>
-    <span class="n">object_size_in_words</span> <span class="o">=</span> <span class="mi">2</span> <span class="c1"># GC header, one integer field</span>
-    <span class="n">mem</span> <span class="o">=</span> <span class="n">loops</span> <span class="o">*</span> <span class="mi">8</span> <span class="o">*</span> <span class="n">object_size_in_words</span> <span class="o">/</span> <span class="mf">1024.0</span> <span class="o">/</span> <span class="mf">1024.0</span> <span class="o">/</span> <span class="mf">1024.0</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="s1">'GB'</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">mem</span> <span class="o">/</span> <span class="p">(</span><span class="n">t2</span> <span class="o">-</span> <span class="n">t1</span><span class="p">),</span> <span class="s1">'GB/s'</span><span class="p">)</span>
-</pre></div>
-
-<p>Then we need to add some RPython scaffolding:</p>
-<div class="code"><pre class="code literal-block"><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">):</span>
-    <span class="n">loops</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
-    <span class="n">with_init</span> <span class="o">=</span> <span class="nb">bool</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span>
-    <span class="k">if</span> <span class="n">with_init</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">"with initialization"</span><span class="p">)</span>
-    <span class="k">else</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">"without initialization"</span><span class="p">)</span>
-    <span class="n">run</span><span class="p">(</span><span class="n">with_init</span><span class="p">,</span> <span class="n">loops</span><span class="p">)</span>
-    <span class="k">return</span> <span class="mi">0</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">target</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
-    <span class="k">return</span> <span class="n">main</span>
-</pre></div>
-
-<p>To build a binary:</p>
-<div class="code"><pre class="code literal-block"><span class="go">pypy rpython/bin/rpython targetallocatealot.py</span>
-</pre></div>
-
-<p>Which will turn the RPython code into C code and use a C compiler to turn that
-into a binary, containing both our code above as well as the RPython garbage
-collector.</p>
-<p>Then we can run it (all results again from my AMD Ryzen 7 PRO 7840U, running
-Ubuntu Linux 24.04.2):</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>./targetallocatealot-c<span class="w"> </span><span class="m">1000000000</span><span class="w"> </span><span class="m">0</span>
-<span class="go">without initialization</span>
-<span class="go">&lt;A object at 0x7c71ad84cf60&gt; &lt;A object at 0x7c71ad84cf70&gt;</span>
-<span class="go">0.433825 s</span>
-<span class="go">14.901161 GB</span>
-<span class="go">34.348322 GB/s</span>
-<span class="gp">$ </span>./targetallocatealot-c<span class="w"> </span><span class="m">1000000000</span><span class="w"> </span><span class="m">1</span>
-<span class="go">with initialization</span>
-<span class="go">&lt;A object at 0x71b41c82cf60&gt; &lt;A object at 0x71b41c82cf70&gt;</span>
-<span class="go">0.501856 s</span>
-<span class="go">14.901161 GB</span>
-<span class="go">29.692100 GB/s</span>
-</pre></div>
-
-<p>Let's compare it with the Boehm GC:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>pypy<span class="w"> </span>rpython/bin/rpython<span class="w"> </span>--gc<span class="o">=</span>boehm<span class="w"> </span>--output<span class="o">=</span>targetallocatealot-c-boehm<span class="w"> </span>targetallocatealot.py<span class="w"> </span>
-<span class="go">...</span>
-<span class="gp">$ </span>./targetallocatealot-c-boehm<span class="w"> </span><span class="m">1000000000</span><span class="w"> </span><span class="m">0</span>
-<span class="go">without initialization</span>
-<span class="go">&lt;A object at 0xffff8bd058a6e3af&gt; &lt;A object at 0xffff8bd058a6e3bf&gt;</span>
-<span class="go">9.722585 s</span>
-<span class="go">14.901161 GB</span>
-<span class="go">1.532634 GB/s</span>
-<span class="gp">$ </span>./targetallocatealot-c-boehm<span class="w"> </span><span class="m">1000000000</span><span class="w"> </span><span class="m">1</span>
-<span class="go">with initialization</span>
-<span class="go">&lt;A object at 0xffff88e1132983af&gt; &lt;A object at 0xffff88e1132983bf&gt;</span>
-<span class="go">9.684149 s</span>
-<span class="go">14.901161 GB</span>
-<span class="go">1.538717 GB/s</span>
-</pre></div>
-
-<p>This is not a fair comparison, because the Boehm GC uses conservative stack
-scanning, therefore it cannot move objects, which requires much more
-complicated allocation.</p>
-<h3 id="lets-look-at-perf-stats">Let's look at <code>perf stats</code></h3>
-<p>We can use <code>perf</code> to get some statistics about the executions:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>perf<span class="w"> </span>stat<span class="w"> </span>-e<span class="w"> </span>cache-references,cache-misses,cycles,instructions,branches,faults,migrations<span class="w"> </span>./targetallocatealot-c<span class="w"> </span><span class="m">10000000000</span><span class="w"> </span><span class="m">0</span>
-<span class="go">without initialization</span>
-<span class="go">&lt;A object at 0x7aa260e35980&gt; &lt;A object at 0x7aa260e35990&gt;</span>
-<span class="go">4.301442 s</span>
-<span class="go">149.011612 GB</span>
-<span class="go">34.642245 GB/s</span>
-
-<span class="go"> Performance counter stats for './targetallocatealot-c 10000000000 0':</span>
-
-<span class="go">     7,244,117,828      cache-references                                                      </span>
-<span class="go">        23,446,661      cache-misses                     #    0.32% of all cache refs         </span>
-<span class="go">    21,074,240,395      cycles                                                                </span>
-<span class="go">   110,116,790,943      instructions                     #    5.23  insn per cycle            </span>
-<span class="go">    20,024,347,488      branches                                                              </span>
-<span class="go">             1,287      faults                                                                </span>
-<span class="go">                24      migrations                                                            </span>
-
-<span class="go">       4.303071693 seconds time elapsed</span>
-
-<span class="go">       4.297557000 seconds user</span>
-<span class="go">       0.003998000 seconds sys</span>
-
-<span class="gp">$ </span>perf<span class="w"> </span>stat<span class="w"> </span>-e<span class="w"> </span>cache-references,cache-misses,cycles,instructions,branches,faults,migrations<span class="w"> </span>./targetallocatealot-c<span class="w"> </span><span class="m">10000000000</span><span class="w"> </span><span class="m">1</span>
-<span class="go">with initialization</span>
-<span class="go">&lt;A object at 0x77ceb0235980&gt; &lt;A object at 0x77ceb0235990&gt;</span>
-<span class="go">5.016772 s</span>
-<span class="go">149.011612 GB</span>
-<span class="go">29.702688 GB/s</span>
-
-<span class="go"> Performance counter stats for './targetallocatealot-c 10000000000 1':</span>
-
-<span class="go">     7,571,461,470      cache-references                                                      </span>
-<span class="go">       241,915,266      cache-misses                     #    3.20% of all cache refs         </span>
-<span class="go">    24,503,497,532      cycles                                                                </span>
-<span class="go">   130,126,387,460      instructions                     #    5.31  insn per cycle            </span>
-<span class="go">    20,026,280,693      branches                                                              </span>
-<span class="go">             1,285      faults                                                                </span>
-<span class="go">                21      migrations                                                            </span>
-
-<span class="go">       5.019444749 seconds time elapsed</span>
-
-<span class="go">       5.012924000 seconds user</span>
-<span class="go">       0.005999000 seconds sys</span>
-</pre></div>
-
-<p>This is pretty cool, we can run this loop with &gt;5 instructions per cycle. Every
-allocation takes <code>110116790943 / 10000000000 ≈ 11</code> instructions and
-<code>21074240395 / 10000000000 ≈ 2.1</code> cycles, including the loop around it.</p>
-<h3 id="how-often-does-the-gc-run">How often does the GC run?</h3>
-<p>The RPython GC queries the L2 cache size to determine the size of the nursery.
-We can find out what it is by turning on PYPYLOG, selecting the proper logging
-categories, and printing to <code>stdout</code> via <code>:-</code>:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span><span class="nv">PYPYLOG</span><span class="o">=</span>gc-set-nursery-size,gc-hardware:-<span class="w"> </span>./targetallocatealot-c<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">1</span>
-<span class="go">[f3e6970465723] {gc-set-nursery-size</span>
-<span class="go">nursery size: 270336</span>
-<span class="go">[f3e69704758f3] gc-set-nursery-size}</span>
-<span class="go">[f3e697047b9a1] {gc-hardware</span>
-<span class="go">L2cache = 1048576</span>
-<span class="go">[f3e69705ced19] gc-hardware}</span>
-<span class="go">[f3e69705d11b5] {gc-hardware</span>
-<span class="go">memtotal = 32274210816.000000</span>
-<span class="go">[f3e69705f4948] gc-hardware}</span>
-<span class="go">[f3e6970615f78] {gc-set-nursery-size</span>
-<span class="go">nursery size: 4194304</span>
-<span class="go">[f3e697061ecc0] gc-set-nursery-size}</span>
-<span class="go">with initialization</span>
-<span class="go">NULL &lt;A object at 0x7fa7b1434020&gt;</span>
-<span class="go">0.000008 s</span>
-<span class="go">0.000000 GB</span>
-<span class="go">0.001894 GB/s</span>
-</pre></div>
-
-<p>So the nursery is 4 MiB. This means that when we allocate 14.9 GiB the GC needs to perform <code>10000000000 * 16 / 4194304 ≈ 38146</code> minor collections. Let's confirm that:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span><span class="nv">PYPYLOG</span><span class="o">=</span>gc-minor:out<span class="w"> </span>./targetallocatealot-c<span class="w"> </span><span class="m">10000000000</span><span class="w"> </span><span class="m">1</span>
-<span class="go">with initialization</span>
-<span class="go">w&lt;A object at 0x7991e3835980&gt; &lt;A object at 0x7991e3835990&gt;</span>
-<span class="go">5.315511 s</span>
-<span class="go">149.011612 GB</span>
-<span class="go">28.033356 GB/s</span>
-<span class="gp">$ </span>head<span class="w"> </span>out
-<span class="go">[f3ee482f4cd97] {gc-minor</span>
-<span class="go">[f3ee482f53874] {gc-minor-walkroots</span>
-<span class="go">[f3ee482f54117] gc-minor-walkroots}</span>
-<span class="go">minor collect, total memory used: 0</span>
-<span class="go">number of pinned objects: 0</span>
-<span class="go">total size of surviving objects: 0</span>
-<span class="go">time taken: 0.000029</span>
-<span class="go">[f3ee482f67b7e] gc-minor}</span>
-<span class="go">[f3ee4838097c5] {gc-minor</span>
-<span class="go">[f3ee48380c945] {gc-minor-walkroots</span>
-<span class="gp">$ </span>grep<span class="w"> </span><span class="s2">"{gc-minor-walkroots"</span><span class="w"> </span>out<span class="w"> </span><span class="p">|</span><span class="w"> </span>wc<span class="w"> </span>-l
-<span class="go">38147</span>
-</pre></div>
-
-<p>Each minor collection is very quick, because a minor collection is
-O(surviving objects), and in this program only one object survive each time
-(the other instance is in the process of being allocated).
-Also, the GC root shadow stack is only one entry, so walking that is super
-quick as well. The time the minor collections take is logged to the out file:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>grep<span class="w"> </span><span class="s2">"time taken"</span><span class="w"> </span>out<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000003</span>
-<span class="go">time taken: 0.000002</span>
-<span class="go">time taken: 0.000002</span>
-<span class="gp">$ </span>grep<span class="w"> </span><span class="s2">"time taken"</span><span class="w"> </span>out<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-o<span class="w"> </span><span class="s2">"0.*"</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>numsum
-<span class="go">0.0988160000000011</span>
-</pre></div>
-
-<p>(This number is super approximate due to float formatting rounding.)</p>
-<p>that means that <code>0.0988160000000011 / 5.315511 ≈ 2%</code> of the time is spent in the GC.</p>
-<h3 id="what-does-the-generated-machine-code-look-like">What does the generated machine code look like?</h3>
-<p>The allocation fast path of the RPython GC is a simple bump pointer, in Python
-pseudo-code it would look roughly like this:</p>
-<div class="code"><pre class="code literal-block"><span class="n">result</span> <span class="o">=</span> <span class="n">gc</span><span class="o">.</span><span class="n">nursery_free</span>
-<span class="c1"># Move nursery_free pointer forward by totalsize</span>
-<span class="n">gc</span><span class="o">.</span><span class="n">nursery_free</span> <span class="o">=</span> <span class="n">result</span> <span class="o">+</span> <span class="n">totalsize</span>
-<span class="c1"># Check if this allocation would exceed the nursery</span>
-<span class="k">if</span> <span class="n">gc</span><span class="o">.</span><span class="n">nursery_free</span> <span class="o">&gt;</span> <span class="n">gc</span><span class="o">.</span><span class="n">nursery_top</span><span class="p">:</span>
-    <span class="c1"># If it does =&gt; collect the nursery and al</span>
-    <span class="n">result</span> <span class="o">=</span> <span class="n">collect_and_reserve</span><span class="p">(</span><span class="n">totalsize</span><span class="p">)</span>
-<span class="n">result</span><span class="o">.</span><span class="n">hdr</span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">GC</span> <span class="n">flags</span> <span class="ow">and</span> <span class="nb">type</span> <span class="nb">id</span> <span class="n">of</span> <span class="n">A</span><span class="o">&gt;</span>
-</pre></div>
-
-<p>So we can disassemble the compiled binary <code>targetallocatealot-c</code> and try to
-find the equivalent logic in machine code. I'm super bad at reading machine
-code, but I tried to annotate what I think is the core loop (the version
-without initializing the <code>i</code> field) below:</p>
-<div class="code"><pre class="code literal-block"><span class="w">    </span><span class="p">...</span>
-<span class="w">    </span><span class="nl">cb68</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="o">%</span><span class="n">rbx</span><span class="p">,</span><span class="o">%</span><span class="n">rdi</span><span class="w"> </span>
-<span class="w">    </span><span class="nl">cb6b</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="o">%</span><span class="n">rdx</span><span class="p">,</span><span class="o">%</span><span class="n">rbx</span>
-
-<span class="w">    </span><span class="cp"># initialize object header of object allocated in previous iteration</span>
-<span class="w">    </span><span class="nl">cb6e</span><span class="p">:</span><span class="w">   </span><span class="n">movq</span><span class="w">   </span><span class="n">$0x4c8</span><span class="p">,(</span><span class="o">%</span><span class="n">rbx</span><span class="p">)</span>
-
-<span class="w">    </span><span class="cp"># loop termination check</span>
-<span class="w">    </span><span class="nl">cb75</span><span class="p">:</span><span class="w">   </span><span class="n">cmp</span><span class="w">    </span><span class="o">%</span><span class="n">rbp</span><span class="p">,</span><span class="o">%</span><span class="n">r12</span>
-<span class="w">    </span><span class="nl">cb78</span><span class="p">:</span><span class="w">   </span><span class="n">je</span><span class="w">     </span><span class="n">ccb8</span>
-
-<span class="w">    </span><span class="cp"># load nursery_free</span>
-<span class="w">    </span><span class="nl">cb7e</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="mh">0x33c13</span><span class="p">(</span><span class="o">%</span><span class="n">rip</span><span class="p">),</span><span class="o">%</span><span class="n">rdx</span>
-
-<span class="w">    </span><span class="cp"># increment loop counter</span>
-<span class="w">    </span><span class="nl">cb85</span><span class="p">:</span><span class="w">   </span><span class="n">add</span><span class="w">    </span><span class="n">$0x1</span><span class="p">,</span><span class="o">%</span><span class="n">rbp</span>
-
-<span class="w">    </span><span class="cp"># add 16 (size of object) to nursery_free</span>
-<span class="w">    </span><span class="nl">cb89</span><span class="p">:</span><span class="w">   </span><span class="n">lea</span><span class="w">    </span><span class="mh">0x10</span><span class="p">(</span><span class="o">%</span><span class="n">rdx</span><span class="p">),</span><span class="o">%</span><span class="n">rax</span>
-
-<span class="w">    </span><span class="cp"># compare nursery_top with new nursery_free</span>
-<span class="w">    </span><span class="nl">cb8d</span><span class="p">:</span><span class="w">   </span><span class="n">cmp</span><span class="w">    </span><span class="o">%</span><span class="n">rax</span><span class="p">,</span><span class="mh">0x33c24</span><span class="p">(</span><span class="o">%</span><span class="n">rip</span><span class="p">)</span>
-
-<span class="w">    </span><span class="cp"># store new nursery_free</span>
-<span class="w">    </span><span class="nl">cb94</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="o">%</span><span class="n">rax</span><span class="p">,</span><span class="mh">0x33bfd</span><span class="p">(</span><span class="o">%</span><span class="n">rip</span><span class="p">)</span>
-
-<span class="w">    </span><span class="cp"># if new nursery_free exceeds nursery_top, fall through to slow path, if not, start at top</span>
-<span class="w">    </span><span class="nl">cb9b</span><span class="p">:</span><span class="w">   </span><span class="n">jae</span><span class="w">    </span><span class="n">cb68</span>
-
-<span class="w">    </span><span class="cp"># slow path from here on:</span>
-<span class="w">    </span><span class="cp"># save live object from last iteration to GC shadow stack</span>
-<span class="w">    </span><span class="nl">cb9d</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="o">%</span><span class="n">rbx</span><span class="p">,</span><span class="mh">-0x8</span><span class="p">(</span><span class="o">%</span><span class="n">rcx</span><span class="p">)</span>
-<span class="w">    </span><span class="nl">cba1</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="o">%</span><span class="n">r13</span><span class="p">,</span><span class="o">%</span><span class="n">rdi</span>
-<span class="w">    </span><span class="nl">cba4</span><span class="p">:</span><span class="w">   </span><span class="n">mov</span><span class="w">    </span><span class="n">$0x10</span><span class="p">,</span><span class="o">%</span><span class="n">esi</span>
-<span class="w">    </span><span class="cp"># do minor collection</span>
-<span class="w">    </span><span class="nl">cba9</span><span class="p">:</span><span class="w">   </span><span class="n">call</span><span class="w">   </span><span class="mi">20800</span><span class="w"> </span><span class="o">&lt;</span><span class="n">pypy_g_IncrementalMiniMarkGC_collect_and_reserve</span><span class="o">&gt;</span>
-<span class="w">    </span><span class="p">...</span>
-</pre></div>
-
-<h3 id="running-the-benchmark-as-regular-python-code">Running the benchmark as regular Python code</h3>
-<p>So far we ran this code as <em>RPython</em>, i.e. type inference is performed and the
-program is translated to a C binary. We can also run it on top of PyPy, as a
-regular Python3 program. However, an instance of a user-defined class in regular
-Python when run on PyPy is actually a much larger object, due to <a href="https://pypy.org/posts/2010/11/efficiently-implementing-python-objects-3838329944323946932.html">dynamic
-typing</a>.
-It's at least 7 words, which is 56 bytes.</p>
-<p>However, we can simply use <code>int</code> objects instead. Integers are allocated on the
-heap and consist of two words, one for the GC and one with the
-machine-word-sized integer value, if the integer fits into a signed 64-bit
-representation (otherwise a less compact different representation is used,
-which can represent arbitrarily large integers).</p>
-<p>Therefore, we can simply use this kind of code:</p>
-<div class="code"><pre class="code literal-block"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-    <span class="n">t1</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-    <span class="n">a</span> <span class="o">=</span> <span class="n">prev</span> <span class="o">=</span> <span class="kc">None</span>
-    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">loops</span><span class="p">):</span>
-        <span class="n">prev</span> <span class="o">=</span> <span class="n">a</span>
-        <span class="n">a</span> <span class="o">=</span> <span class="n">i</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">a</span><span class="p">)</span> <span class="c1"># make sure always two objects are alive</span>
-    <span class="n">t2</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
-    <span class="n">object_size_in_words</span> <span class="o">=</span> <span class="mi">2</span> <span class="c1"># GC header, one integer field</span>
-    <span class="n">mem</span> <span class="o">=</span> <span class="n">loops</span> <span class="o">*</span> <span class="mi">28</span> <span class="o">/</span> <span class="mf">1024.0</span> <span class="o">/</span> <span class="mf">1024.0</span> <span class="o">/</span> <span class="mf">1024.0</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">mem</span><span class="p">,</span> <span class="s1">'GB'</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="n">mem</span> <span class="o">/</span> <span class="p">(</span><span class="n">t2</span> <span class="o">-</span> <span class="n">t1</span><span class="p">),</span> <span class="s1">'GB/s'</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">):</span>
-    <span class="n">loops</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
-    <span class="n">run</span><span class="p">(</span><span class="n">loops</span><span class="p">)</span>
-    <span class="k">return</span> <span class="mi">0</span>
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">'__main__'</span><span class="p">:</span>
-    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">))</span>
-</pre></div>
-
-<p>In this case we can't really leave the value uninitialized though.</p>
-<p>We can run this both with and without the JIT:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>pypy3<span class="w"> </span>allocatealot.py<span class="w"> </span><span class="m">1000000000</span>
-<span class="go">999999998 999999999</span>
-<span class="go">14.901161193847656 GB</span>
-<span class="go">17.857494904899553 GB/s</span>
-<span class="gp">$ </span>pypy3<span class="w"> </span>--jit<span class="w"> </span>off<span class="w"> </span>allocatealot.py<span class="w"> </span><span class="m">1000000000</span>
-<span class="go">999999998 999999999</span>
-<span class="go">14.901161193847656 GB</span>
-<span class="go">0.8275382375297171 GB/s</span>
-</pre></div>
-
-<p>This is obviously much less efficient than the C code, the PyPy JIT generates
-much less efficient machine code than GCC. Still, "only" twice as slow is kind
-of cool anyway.</p>
-<p>(Running it with CPython doesn't really make sense for this measurements, since
-CPython ints are bigger – <code>sys.getsizeof(5)</code> reports 28 bytes.)</p>
-<h3 id="the-machine-code-that-the-jit-generates">The machine code that the JIT generates</h3>
-<p>Unfortunately it's a bit of a journey to show the machine code that PyPy's JIT generates for this. First we need to run with all jit logging categories:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span><span class="nv">PYPYLOG</span><span class="o">=</span>jit:out<span class="w"> </span>pypy3<span class="w"> </span>allocatealot.py<span class="w"> </span><span class="m">1000000000</span>
-</pre></div>
-
-<p>Then we can read the log file to find the trace IR for the loop under the logging category <code>jit-log-opt</code>:</p>
-<div class="code"><pre class="code literal-block"><span class="o">+</span><span class="mi">532</span><span class="p">:</span><span class="w"> </span><span class="n">label</span><span class="p">(</span><span class="n">p0</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">p6</span><span class="p">,</span><span class="w"> </span><span class="n">p9</span><span class="p">,</span><span class="w"> </span><span class="n">p11</span><span class="p">,</span><span class="w"> </span><span class="n">i34</span><span class="p">,</span><span class="w"> </span><span class="n">p13</span><span class="p">,</span><span class="w"> </span><span class="n">p19</span><span class="p">,</span><span class="w"> </span><span class="n">p21</span><span class="p">,</span><span class="w"> </span><span class="n">p23</span><span class="p">,</span><span class="w"> </span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">p29</span><span class="p">,</span><span class="w"> </span><span class="n">p31</span><span class="p">,</span><span class="w"> </span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">i35</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=</span><span class="n">TargetToken</span><span class="p">(</span><span class="mi">137358545605472</span><span class="p">))</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-9~#24 FOR_ITER'</span><span class="p">)</span>
-
-<span class="c1"># are we at the end of the loop</span>
-<span class="o">+</span><span class="mi">552</span><span class="p">:</span><span class="w"> </span><span class="n">i45</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">int_lt</span><span class="p">(</span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">i35</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">555</span><span class="p">:</span><span class="w"> </span><span class="n">guard_true</span><span class="p">(</span><span class="n">i45</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">Guard0x7ced4756a160</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="n">p0</span><span class="p">,</span><span class="w"> </span><span class="n">p6</span><span class="p">,</span><span class="w"> </span><span class="n">p9</span><span class="p">,</span><span class="w"> </span><span class="n">p11</span><span class="p">,</span><span class="w"> </span><span class="n">p13</span><span class="p">,</span><span class="w"> </span><span class="n">p19</span><span class="p">,</span><span class="w"> </span><span class="n">p21</span><span class="p">,</span><span class="w"> </span><span class="n">p23</span><span class="p">,</span><span class="w"> </span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">p29</span><span class="p">,</span><span class="w"> </span><span class="n">p31</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">i35</span><span class="p">,</span><span class="w"> </span><span class="n">i34</span><span class="p">]</span>
-<span class="o">+</span><span class="mi">561</span><span class="p">:</span><span class="w"> </span><span class="n">i47</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">int_add</span><span class="p">(</span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-9~#26 STORE_FAST'</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-10~#28 LOAD_FAST'</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-10~#30 STORE_FAST'</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-11~#32 LOAD_FAST'</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-11~#34 STORE_FAST'</span><span class="p">)</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-11~#36 JUMP_ABSOLUTE'</span><span class="p">)</span>
-
-<span class="c1"># update iterator object</span>
-<span class="o">+</span><span class="mi">565</span><span class="p">:</span><span class="w"> </span><span class="n">setfield_gc</span><span class="p">(</span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">i47</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">FieldS</span><span class="w"> </span><span class="n">pypy</span><span class="o">.</span><span class="n">module</span><span class="o">.</span><span class="n">__builtin__</span><span class="o">.</span><span class="n">functional</span><span class="o">.</span><span class="n">W_IntRangeIterator</span><span class="o">.</span><span class="n">inst_current</span><span class="w"> </span><span class="mi">8</span><span class="o">&gt;</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">569</span><span class="p">:</span><span class="w"> </span><span class="n">guard_not_invalidated</span><span class="p">(</span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">Guard0x7ced4756a1b0</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="n">p0</span><span class="p">,</span><span class="w"> </span><span class="n">p6</span><span class="p">,</span><span class="w"> </span><span class="n">p9</span><span class="p">,</span><span class="w"> </span><span class="n">p11</span><span class="p">,</span><span class="w"> </span><span class="n">p19</span><span class="p">,</span><span class="w"> </span><span class="n">p21</span><span class="p">,</span><span class="w"> </span><span class="n">p23</span><span class="p">,</span><span class="w"> </span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">p29</span><span class="p">,</span><span class="w"> </span><span class="n">p31</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">i34</span><span class="p">]</span>
-
-<span class="c1"># check for signals</span>
-<span class="o">+</span><span class="mi">569</span><span class="p">:</span><span class="w"> </span><span class="n">i49</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">getfield_raw_i</span><span class="p">(</span><span class="mi">137358624889824</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">FieldS</span><span class="w"> </span><span class="n">pypysig_long_struct_inner</span><span class="o">.</span><span class="n">c_value</span><span class="w"> </span><span class="mi">0</span><span class="o">&gt;</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">582</span><span class="p">:</span><span class="w"> </span><span class="n">i51</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">int_lt</span><span class="p">(</span><span class="n">i49</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">586</span><span class="p">:</span><span class="w"> </span><span class="n">guard_false</span><span class="p">(</span><span class="n">i51</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">Guard0x7ced4754db78</span><span class="o">&gt;</span><span class="p">)</span><span class="w"> </span><span class="p">[</span><span class="n">p0</span><span class="p">,</span><span class="w"> </span><span class="n">p6</span><span class="p">,</span><span class="w"> </span><span class="n">p9</span><span class="p">,</span><span class="w"> </span><span class="n">p11</span><span class="p">,</span><span class="w"> </span><span class="n">p19</span><span class="p">,</span><span class="w"> </span><span class="n">p21</span><span class="p">,</span><span class="w"> </span><span class="n">p23</span><span class="p">,</span><span class="w"> </span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">p29</span><span class="p">,</span><span class="w"> </span><span class="n">p31</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">i34</span><span class="p">]</span>
-<span class="n">debug_merge_point</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="s1">'run;/home/cfbolz/projects/gitpypy/allocatealot.py:6-9~#24 FOR_ITER'</span><span class="p">)</span>
-
-<span class="c1"># allocate the integer (allocation sunk to the end of the trace)</span>
-<span class="o">+</span><span class="mi">592</span><span class="p">:</span><span class="w"> </span><span class="n">p52</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new_with_vtable</span><span class="p">(</span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">SizeDescr</span><span class="w"> </span><span class="mi">16</span><span class="o">&gt;</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">630</span><span class="p">:</span><span class="w"> </span><span class="n">setfield_gc</span><span class="p">(</span><span class="n">p52</span><span class="p">,</span><span class="w"> </span><span class="n">i34</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=&lt;</span><span class="n">FieldS</span><span class="w"> </span><span class="n">pypy</span><span class="o">.</span><span class="n">objspace</span><span class="o">.</span><span class="n">std</span><span class="o">.</span><span class="n">intobject</span><span class="o">.</span><span class="n">W_IntObject</span><span class="o">.</span><span class="n">inst_intval</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="n">pure</span><span class="o">&gt;</span><span class="p">)</span>
-<span class="o">+</span><span class="mi">634</span><span class="p">:</span><span class="w"> </span><span class="n">jump</span><span class="p">(</span><span class="n">p0</span><span class="p">,</span><span class="w"> </span><span class="n">p1</span><span class="p">,</span><span class="w"> </span><span class="n">p6</span><span class="p">,</span><span class="w"> </span><span class="n">p9</span><span class="p">,</span><span class="w"> </span><span class="n">p11</span><span class="p">,</span><span class="w"> </span><span class="n">i44</span><span class="p">,</span><span class="w"> </span><span class="n">p52</span><span class="p">,</span><span class="w"> </span><span class="n">p19</span><span class="p">,</span><span class="w"> </span><span class="n">p21</span><span class="p">,</span><span class="w"> </span><span class="n">p23</span><span class="p">,</span><span class="w"> </span><span class="n">p25</span><span class="p">,</span><span class="w"> </span><span class="n">p29</span><span class="p">,</span><span class="w"> </span><span class="n">p31</span><span class="p">,</span><span class="w"> </span><span class="n">i47</span><span class="p">,</span><span class="w"> </span><span class="n">i35</span><span class="p">,</span><span class="w"> </span><span class="n">descr</span><span class="o">=</span><span class="n">TargetToken</span><span class="p">(</span><span class="mi">137358545605472</span><span class="p">))</span>
-</pre></div>
-
-<p>To find the machine code address of the trace, we need to search for this line:</p>
-<div class="code"><pre class="code literal-block"><span class="nx">Loop</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="p">(</span><span class="nx">run</span><span class="p">;</span><span class="o">/</span><span class="nx">home</span><span class="o">/</span><span class="nx">cfbolz</span><span class="o">/</span><span class="nx">projects</span><span class="o">/</span><span class="nx">gitpypy</span><span class="o">/</span><span class="nx">allocatealot</span><span class="p">.</span><span class="nx">py</span><span class="p">:</span><span class="mi">6</span><span class="o">-</span><span class="mi">9</span><span class="o">~</span><span class="err">#</span><span class="mi">24</span><span class="w"> </span><span class="nx">FOR_ITER</span><span class="p">)</span><span class="w"> </span>\
-<span class="w">    </span><span class="nx">has</span><span class="w"> </span><span class="nx">address</span><span class="w"> </span><span class="mh">0x7ced473ffa0b</span><span class="w"> </span><span class="nx">to</span><span class="w"> </span><span class="mh">0x7ced473ffbb0</span><span class="w"> </span><span class="p">(</span><span class="nx">bootstrap</span><span class="w"> </span><span class="mh">0x7ced473ff980</span><span class="p">)</span>
-</pre></div>
-
-<p>Then we can use a script in the PyPy repo to disassemble the generated machine code:</p>
-<div class="code"><pre class="code literal-block"><span class="gp">$ </span>pypy<span class="w"> </span>rpython/jit/backend/tool/viewcode.py<span class="w"> </span>out
-</pre></div>
-
-<p>This will dump all the machine code to stdout, and open a <a href="https://pypy.org/posts/2021/04/ways-pypy-graphviz.html">pygame-based
-graphviz cfg</a>. In there
-we can search for the address and see this:</p>
-<p><img alt="Graphviz based visualization of the machine code the JIT generates" src="https://www.pypy.org/images/2025-allocatealot-machine-code.png" /></p>
-<p>Here's an annotated version with what I think this code does:</p>
-<div class="code"><pre class="code literal-block"><span class="x"># increment the profile counter</span>
-<span class="x">7ced473ffb40:   48 ff 04 25 20 9e 33    incq   0x38339e20</span>
-<span class="x">7ced473ffb47:   38 </span>
-
-<span class="x"># check whether the loop is done</span>
-<span class="x">7ced473ffb48:   4c 39 fe                cmp    %r15,%rsi</span>
-<span class="x">7ced473ffb4b:   0f 8d 76 01 00 00       jge    0x7ced473ffcc7</span>
-
-<span class="x"># increment iteration variable</span>
-<span class="x">7ced473ffb51:   4c 8d 66 01             lea    0x1(%rsi),%r12</span>
-
-<span class="x"># update iterator object</span>
-<span class="x">7ced473ffb55:   4d 89 61 08             mov    %r12,0x8(%r9)</span>
-
-<span class="x"># check for ctrl-c/thread switch</span>
-<span class="x">7ced473ffb59:   49 bb e0 1b 0b 4c ed    movabs $0x7ced4c0b1be0,%r11</span>
-<span class="x">7ced473ffb60:   7c 00 00 </span>
-<span class="x">7ced473ffb63:   49 8b 0b                mov    (%r11),%rcx</span>
-<span class="x">7ced473ffb66:   48 83 f9 00             cmp    $0x0,%rcx</span>
-<span class="x">7ced473ffb6a:   0f 8c 8f 01 00 00       jl     0x7ced473ffcff</span>
-
-<span class="x"># load nursery_free pointer</span>
-<span class="x">7ced473ffb70:   49 8b 8b d8 30 f6 fe    mov    -0x109cf28(%r11),%rcx</span>
-
-<span class="x"># add size (16)</span>
-<span class="x">7ced473ffb77:   48 8d 51 10             lea    0x10(%rcx),%rdx</span>
-
-<span class="x"># compare against nursery top</span>
-<span class="x">7ced473ffb7b:   49 3b 93 f8 30 f6 fe    cmp    -0x109cf08(%r11),%rdx</span>
-
-<span class="x"># jump to slow path if nursery is full</span>
-<span class="x">7ced473ffb82:   0f 87 41 00 00 00       ja     0x7ced473ffbc9</span>
-
-<span class="x"># store new value of nursery free</span>
-<span class="x">7ced473ffb88:   49 89 93 d8 30 f6 fe    mov    %rdx,-0x109cf28(%r11)</span>
-
-<span class="x"># initialize GC header</span>
-<span class="x">7ced473ffb8f:   48 c7 01 30 11 00 00    movq   $0x1130,(%rcx)</span>
-
-<span class="x"># initialize integer field</span>
-<span class="x">7ced473ffb96:   48 89 41 08             mov    %rax,0x8(%rcx)</span>
-<span class="x">7ced473ffb9a:   48 89 f0                mov    %rsi,%rax</span>
-<span class="x">7ced473ffb9d:   48 89 8d 60 01 00 00    mov    %rcx,0x160(%rbp)</span>
-<span class="x">7ced473ffba4:   4c 89 e6                mov    %r12,%rsi</span>
-<span class="x">7ced473ffba7:   e9 94 ff ff ff          jmp    0x7ced473ffb40</span>
-<span class="x">7ced473ffbac:   0f 1f 40 00             nopl   0x0(%rax)</span>
-</pre></div>
-
-<h3 id="conclusion">Conclusion</h3>
-<p>The careful design of the RPython GC's allocation fast path gives pretty good
-allocation rates. This technique isn't really new, it's a pretty typical way to
-design a GC. Apart from that, my main conclusion would be that computers are
-fast or something? Indeed, when we ran the same code on my colleague's
-two-year-old AMD, we got quite a bit worse results, so a lot of the speed seems
-to be due to the hard work of CPU architects.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 15, 2025 01:48 PM UTC by
-            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
-              >PyPy</a
-            >
-          </div>
-          <a
-            href="https://www.pypy.org/posts/2025/06/rpython-gc-allocation-speed.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/a-python-dict-that-can-report-which-keys-you-did-not-use" class="hover:underline"
-              >A Python dict that can report which keys you did not use</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Demonstrates a basic way, in Python, how to know which fields of a dict you never accessed.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 12, 2025 08:25 PM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/a-python-dict-that-can-report-which-keys-you-did-not-use"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/06/2025-psf-board-election-schedule.html" class="hover:underline"
-              >2025 PSF Board Election Schedule</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The PSF Board elections are a chance for the community to choose representatives to help the Python Software Foundation create a vision for and build the future of the Python community. This year, there are 4 seats open on the PSF Board. Check out who is currently on the board on <a href="https://www.python.org/psf/board/" target="_blank">the PSF's website</a>. (Dawn Wages, Jannis Leidel, Kushal Das, and Simon Willison are at the end of their current terms.) As <a href="https://pyfound.blogspot.com/2025/04/2025-psf-board-election-schedule-change.html" target="_blank">we previously shared</a>, the Board election will take place a little later this year to better serve our community and ease pressure on PSF Staff.&nbsp;</p><h2 style="text-align: left;">Board Election Timeline</h2><ul style="text-align: left;"><li>Nominations open: Tuesday, July 29th, 2:00 pm UTC</li><li>Nomination cut-off: Tuesday, August 12th, 2:00 pm UTC</li><li>Announce candidates: Thursday, August 14th</li><li>Voter affirmation cut-off: Tuesday, August 26th, 2:00 pm UTC</li><li>Voting start date: Tuesday, September 2nd, 2:00 pm UTC</li><li>Voting end date: Tuesday, September 16th, 2:00 pm UTC</li></ul><h2 style="text-align: left;">Voting&nbsp;</h2><p>You must be a Contributing, Supporting, or Fellow member by August 26th and affirm your intention to vote to participate in this election. If you are currently a Managing member, you will receive a communication soon notifying you that your membership type will be changed to Contributing per last year’s <a href="https://github.com/psf/bylaws/compare/a35a6071de181adbb7a160d5d1447e7b0272359c...359cbc540f2f6bf00bc46b9dbe3e00a950612c27" target="_blank">Bylaw change that merged Managing and Contributing memberships</a>.&nbsp;<br /><br />Check out the <a href="https://www.python.org/psf/membership/" target="_blank">PSF membership page</a> to learn more about membership classes and benefits. You can affirm your voting intention by following the steps in <a href="https://www.youtube.com/watch?v=lWfyvPqAAJs" target="_blank">our video tutorial</a>:<br /></p><ul style="text-align: left;"><li>Log in to psfmember.org</li><li>Check your eligibility to vote (You must be a Contributing, Supporting, or Fellow member)&nbsp;</li><li>Choose “Voting Affirmation” at the top right</li><li>Select your preferred intention for voting in 2025</li><li>Click the “Submit” button</li></ul><p>Per another recent <a href="https://github.com/python/psf-bylaws/compare/a35a6071de181adbb7a160d5d1447e7b0272359c...6bac449" target="_blank">Bylaw change that allows for simplifying the voter affirmation process by treating past voting activity as intent to continue voting</a>, if you cast your ballot last year, you will automatically be added to the 2025 voter roll. Please note that if you removed or changed your email on psfmember.org, you may not automatically be added to this year's voter roll.&nbsp;<br /><br />If you have questions about membership, please email psf-elections@pyfound.org.</p><h2 style="text-align: left;">Run for the Board</h2><p>Who runs for the board? People who care about the Python community, who want to see it flourish and grow, and also have a few hours a month to attend regular meetings, serve on committees, participate in conversations, and promote the Python community. Want to learn more about being on the PSF Board? Check out the following resources to learn more about the PSF, as well as what being a part of the PSF Board entails:<br /></p><ul style="text-align: left;"><li><a href="https://www.youtube.com/watch?v=ZLKj6FaQA4M" target="_blank">Life as Python Software Foundation Director video</a></li><li><a href="https://youtu.be/kD6cPBfR4A4?si=IizoM5mDPaUhQL_X" target="_blank">FAQs About the PSF Board video</a>&nbsp;</li><li>Our past few Annual Impact Reports:</li><ul><li><a href="https://www.python.org/psf/annual-report/2024" target="_blank">2024 Annual Impact Report</a></li><li><a href="https://www.python.org/psf/annual-report/2023/" target="_blank">2023 Annual Impact Report</a></li><li><a href="https://www.python.org/psf/annual-report/2022/" target="_blank">2022 Annual Impact Report&nbsp;</a></li></ul></ul><p>You can nominate yourself or someone else. We would encourage you to reach out to folks before you nominate them to make sure they are enthusiastic about the potential of joining the Board. Nominations open on Tuesday, July 29th, 2:00 pm UTC, so you have time to talk with potential nominees, research the role, and craft a nomination statement for yourself or others. Take a look at <a href="https://www.python.org/nominations/elections/2024-python-software-foundation-board/nominees/" target="_blank">last year’s nomination statements</a> for reference.&nbsp;</p><p></p><h2 style="text-align: left;">Learn more and join the discussion</h2><p>You are welcome to join the discussion about the PSF Board election on the <a href="https://discuss.python.org/t/2025-psf-board-election/89521" target="_blank">Discuss forum</a>. This year, we’ll also be hosting <a href="https://pyfound.blogspot.com/2024/08/ask-questions-or-tell-us-what-you-think.html" target="_blank">PSF Board Office Hours</a> on the <a href="https://discord.gg/4Hm36PPgpG" target="_blank">PSF Discord</a> in July and August to answer questions about running for and serving on the board. Subscribe to the <a href="https://pyfound.blogspot.com/" target="_blank">PSF blog</a> or, if you're a member, join the psf-member-announce mailing list to receive updates leading up to the election.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 12, 2025 06:33 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/06/2025-psf-board-election-schedule.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025.html" class="hover:underline"
-              >The Python Language Summit 2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><span style="font-size: 14.6667px;">The Python Language Summit 2025 occurred on May 14th in Pittsburgh, Pennsylvania. Core developers and special guests from around the world gathered in one room for an entire day of presentations and discussions about the future of the Python programming language.</span></p><p><span style="font-size: 14.6667px;">The summit was organized by Emily Morehouse and Łukasz Langa, and blog posts were written by Seth Larson. Thanks to Marie Nordin, the Community Communications Manager at the Python Software Foundation, for reviewing and editing the blog posts.</span></p><p><span style="font-size: 14.6667px;">This year’s set of presentations was heavily themed towards the new "free-threading" work, featuring multiple discussions about contention, concurrency, and governance.</span></p><span id="docs-internal-guid-cdb22262-7fff-2cbb-02a9-0b3e881c8dac"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"></p><table align="center" cellpadding="0" cellspacing="0" class="tr-caption-container" style="margin-left: auto; margin-right: auto;"><tbody><tr><td style="text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhhROkRpucKp5Xrk_2Rf8tX442xMo0fA4dV3Yq5kZvm5la6nZe7tb6Pjn60r0B4_Sk3sZyOK_g78E5-zmV2xRPqTkP6RxEqFKk0AD_X7ZJXC_a3vv91AQQtPEZcJ1hns6k_9lLCsuPDyTrj4gkdtPto1LZBhgm5BL-39xRyPivY-fBaKSkQkw/s6507/PyCon_US_2025_Language_Summit_Alt.jpeg" style="margin-left: auto; margin-right: auto;"><span style="font-family: inherit;"><img border="0" height="213" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhhROkRpucKp5Xrk_2Rf8tX442xMo0fA4dV3Yq5kZvm5la6nZe7tb6Pjn60r0B4_Sk3sZyOK_g78E5-zmV2xRPqTkP6RxEqFKk0AD_X7ZJXC_a3vv91AQQtPEZcJ1hns6k_9lLCsuPDyTrj4gkdtPto1LZBhgm5BL-39xRyPivY-fBaKSkQkw/s320/PyCon_US_2025_Language_Summit_Alt.jpeg" width="320" /></span></a></td></tr><tr><td class="tr-caption" style="text-align: center;"><span style="font-family: inherit;">Attendees of the Python Language Summit 2025</span></td></tr></tbody></table><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><br /></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;">Please enjoy the blog posts about each topic below:</span></p><span style="font-family: inherit;"><div><span><span style="font-family: inherit;"><br /></span></span></div></span><ul style="margin-bottom: 0px; margin-top: 0px; padding-inline-start: 48px;"><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-how-can-we-make-breaking-changes-less-painful.html">How can we make breaking changes less painful?</a>: talk by Itamar Oren</span></p></li></ul><ul style="margin-bottom: 0px; margin-top: 0px; padding-inline-start: 48px;"><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-uncontentious-talk-about-contention.html">An Uncontentious Talk about Contention</a>: talk by Mark Shannon</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-state-of-free-threaded-python.html">State of Free-Threaded Python</a>: talk by Matt Page</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-fearless-concurrency.html">Fearless Concurrency</a>: talk by Matthew Parkinson, Tobias Wrigstad, and Fridtjof Stoldt</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-challenges-of-the-steering-council.html">Challenges of the Steering Council</a>: talk by Eric Snow</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-docs-editorial-board.html">Updates from the Python Docs Editorial Board</a>: talk by Mariatta </span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-packaging-governance-process.html">PEP 772 - Packaging Governance Process</a>: talk by Barry Warsaw and Pradyun Gedam</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-python-on-mobile.html">Python on Mobile - Next Steps</a>: talk by Russell Keith-Magee</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-what-do-core-developers-want-from-rust.html">What do Python core developers want from Rust?</a>: talk by David Hewitt</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-upstreaming-the-pyodide-js-ffi.html">Upstreaming the Pyodide JS FFI</a>: talk by Hood Chatham</span></p></li><li dir="ltr" style="font-size: 11pt; vertical-align: baseline; white-space: pre;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-family: inherit; font-size: 11pt; vertical-align: baseline;"><a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-lightning-talks.html">Lightning Talks</a>: talks by Martin DeMello, Mark Shannon, Noah Kim, Gregory Smith, Guido van Rossum, Pablo Galindo Salgado, and Lysandros Nikolaou</span></p></li></ul><div><span face="Arial, sans-serif"><span style="font-size: 14.6667px;"><br /></span></span></div><div><span face="Arial, sans-serif"><span style="font-size: 14.6667px;"><br /></span></span></div></span>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 12, 2025 01:34 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-how-can-we-make-breaking-changes-less-painful.html" class="hover:underline"
-              >The Python Language Summit 2025: How can we make Breaking Changes Less Painful?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The first talk of the Python Language Summit was delivered by Itamar Oren. Itamar has plenty of experience at Meta deploying massive amounts of Python code to production. Itamar’s presentation focused on how Python core developers might make upgrades to Python versions smoother for users in the face of breaking changes to the language and standard library. Itamar shared that “not all breaking changes are equal” and suggested adopting a taxonomy of breaking changes and how much and when they would affect users.</p><p>Itamar made it clear that he was “not asking [Python core developers] to do fewer breaking changes”, but instead hoped to make breaking changes easier for users to work through during a Python version upgrade.</p><p>Users upgrading Python versions need to go through a flowchart for each breaking change:</p><p></p><ul style="text-align: left;"><li>Awareness of breaking changes</li><li>Finding the affected code</li><li>Fixing the affected code</li><li>Verifying fixes are correct</li></ul><p></p><p>Starting with “Fixing”, Itamar noted that “fixing the code tends to be the easiest step, but easy at scale is still hard” and that fixing was easiest when you know where to do the fix. This was especially straightforward if the fix only used builtins or the standard library, noting that needing to take on new dependencies like packages on PyPI for removed modules was much more difficult.</p><p>“Migration guides are great, let’s do more of them”, Itamar said while thanking Barry for the imp module migration guide. Itamar called out a few suggestions for would-be migration guide authors, such as making the guide comprehensive for all removed APIs and providing an indication “whether an API is a drop-in equivalent or requires further changes”. Itamar gave the example of imp.load_module() versus importlib.import_module(), which was recommended in the migration guide but had different function signatures and couldn’t accomplish the same tasks.</p><p>Itamar noted the difficulty in finding the documentation for deprecated and removed modules because, after a module is removed, its corresponding documentation on <a href="http://docs.python.org">docs.python.org</a> is also removed for that version. Carol Willing noted that the documentation team has been working on fixing the documentation removal issue for the “past 3 months”.</p><p>Finding code that’s affected by breaking changes was the toughest challenge, as breaking changes all had different “findability” metrics ranging between “easy" and "virtually impossible”. The easiest breaking changes to find in massive codebases are statically discoverable, such as being able to parse Python source code using an Abstract Syntax Tree (AST) or regular expressions to quickly hone in on problematic code.</p><p>The next easiest class of breaking changes to find are those that manifest at “build time”, which, since Python is an interpreted language, build time is equivalent to when PYC files are compiled. Itamar noted that “real code has good coverage for these issues”, like errors that happen on import time. The example noted for this type of breaking change was the accidental dataclasses mutables change in 3.12.</p><p>The most difficult class of breaking changes manifest during runtime, such as failures that depend on type or value information for parameters. These breaking changes are most likely to cause production outages because whether you find the affected code or not is dependent on type checking and test failures, which can be “highly variable”.</p><p>Itamar finished the presentation with a handful of suggestions for core developers on how to improve the backwards-incompatible change process. These suggestions included creating a taxonomy for breaking changes in terms of discoverability and fixability, and suggesting tools for automatically fixing backwards incompatible changes during upgrades. Ruff was suggested as a potential tool for applying these automatic fixes.</p><h2 style="text-align: left;">Discussion</h2><p>Eric Smith spoke about the dataclasses mutability change, noting that he and Raymond Hettinger had made the change and “didn’t recall getting any feedback until we released it, at which point we couldn’t fix it”. Eric wasn’t sure what he could have done for that specific case, but “thought that we are getting better at people using new versions during the beta period”. Eric also lamented that the change “would have been backed out had [he] known about the breakage”. Itamar suggested that core developers might collaborate with companies with large codebases for testing changes when core developers aren’t sure about compatibility.</p><p>Alex Waygood spoke about maintaining the typing-extensions project, which suffered from backwards compatibility issues, noting that “not many projects pin typing-extensions”, meaning the subtle changes end up breaking in surprising ways. Notably, typing-extensions broke Pydantic in the past, which caused problems for typing-extensions maintainers. Alex offered that “running the test suites of several large packages that depend on [typing-extensions] has helped catch many changes that weren’t expected to be backwards incompatible”, adding that “it would be great if there were an easier way to run the test suite of other projects”.</p><p>Carol Willing suggested working on making Python pre-releases easier to run using Continuous Integration (CI) and that this approach had been “successful” for scientific Python projects for finding and fixing breaking changes ahead of when the changes start affecting users. Itamar concurred, saying his “dream is to run global testing against [Python main branch] on a daily basis” but that this dream was “currently impossible” due to third-party dependencies. Pradyun Gedam noted that the idea of “ecosystem tests” had been discussed on the Packaging Discourse.</p><div><br /></div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 12, 2025 01:32 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-how-can-we-make-breaking-changes-less-painful.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2025/06/python-language-summit-2025-uncontentious-talk-about-contention.html" class="hover:underline"
               >The Python Language Summit 2025: An Uncontentious Talk about Contention</a
             >
@@ -1962,6 +1308,353 @@ in your <code>.envrc</code> file.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/508/program-your-own-computer-with-python" class="hover:underline"
+              >#508: Program Your Own Computer with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            If you've heard the phrase "Automate the boring things" for Python, this episode starts with that idea and takes it to another level. We have Glyph back on the podcast to talk about "Programming YOUR computer with Python." We dive into a bunch of tools and frameworks and especially spend some time on integrating with existing platform APIs (e.g. macOS's BrowserKit and Window's COM APIs) to build desktop apps in Python that make you happier and more productive. Let's dive in!
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 06, 2025 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/508/program-your-own-computer-with-python"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.egenix.com/company/news/Python-Meeting-Duesseldorf-2025-06-18" class="hover:underline"
+              >Python Meeting Düsseldorf - 2025-06-18</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span style="font-style: italic;">The following text is in German, since we're announcing a regional user group meeting in Düsseldorf, Germany.</span><br />
+</p>
+<h2>Ankündigung</h2>
+<p>Das nächste <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> findet an folgendem Termin statt:<br />
+</p>
+<p style="text-align: center; font-weight: bold;">18.06.2025, 18:00 Uhr<br />
+  <span style="font-weight: normal;">Raum 1, 2.OG im <a href="http://www.duesseldorf.de/jugendamt/fam/famfoe/bueh/ac/index.shtml">Bürgerhaus Stadtteilzentrum Bilk</a><br />
+    <a href="http://www.duesseldorf-arcaden.de/anfahrt.html">Düsseldorfer Arcaden</a>, <a href="http://maps.google.com/maps?q=51.209169,6.775339&amp;layer=c&amp;sll=51.209353,6.775272&amp;cbp=11,177.96,,0,0.79&amp;cbll=51.209412,6.77577&amp;ie=UTF8&amp;t=m&amp;vpsrc=0&amp;panoid=0NGUHHHEpGGMCcqpf3Gmbw&amp;z=17">Bachstr. 145, 40217 Düsseldorf</a><br />
+  </span></p>
+<p style="text-align: center; font-weight: bold;"><span style="font-weight: normal;"><br />
+  </span><span style="font-weight: normal;"></span></p>
+
+<h2>Programm</h2>
+<h3>Bereits angemeldete Vorträge</h3>
+<ul class="pl-5 list-disc mb-4">
+  <li>Klaus Bremer:<br />
+ <b>Using Python's argparse</b></li>
+<li>Jochen Wersdörfer:<br />
+  <b>MCP Server - Connect LLMs to your data</b></li>
+<li>Detlef Lannert:<br />
+  <b>WeasyPrint - Print from HTML/CSS to PDF</b></li>
+<li>Marc-André Lemburg:<br />
+  <b>DuckLake - Rethinking Lakehouse architectures</b></li>
+</ul>
+
+Weitere Vorträge können gerne noch angemeldet werden. Bei Interesse, bitte unter <a href="mailto:info@pyddf.de">info@pyddf.de</a> melden.
+
+
+
+
+
+
+<h3>Startzeit und Ort<br />
+</h3>
+<p>Wir treffen uns um 18:00 Uhr im Bürgerhaus in den 
+Düsseldorfer Arcaden.</p>
+<p>Das Bürgerhaus teilt sich den Eingang mit dem Schwimmbad und befindet 
+sich an der Seite der Tiefgarageneinfahrt der Düsseldorfer Arcaden.<br />
+  <br />
+Über dem Eingang steht ein großes "Schwimm’ in Bilk" Logo. Hinter der Tür
+ direkt links zu den zwei Aufzügen, dann in den 2. Stock hochfahren. Der
+ Eingang zum Raum 1 liegt direkt links, wenn man aus dem Aufzug kommt.<br />
+  <br />
+&gt;&gt;&gt; <a href="http://bit.ly/11sCfiw">Eingang in Google Street View</a></p><b>⚠️ Wichtig</b>: Bitte nur dann anmelden, wenn ihr absolut 
+sicher seid, dass ihr auch kommt. Angesichts der begrenzten Anzahl Plätze, haben
+ wir kein Verständnis für kurzfristige Absagen oder No-Shows.
+<h2>Einleitung</h2>
+
+
+
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> ist eine regelmäßige Veranstaltung in Düsseldorf, die sich an Python Begeisterte aus der Region wendet.</p>Einen guten Überblick über die Vorträge bietet unser <a href="http://www.youtube.com/pyddf/" style="font-weight: bold;">PyDDF YouTube-Kanal</a>, auf dem wir Videos der Vorträge nach den Meetings veröffentlichen.<br />
+
+
+
+<p>Veranstaltet wird das Meeting von der <a href="/">eGenix.com GmbH</a>, Langenfeld, in Zusammenarbeit mit <a href="http://www.clark-consulting.eu/">Clark Consulting &amp; Research</a>, Düsseldorf:<br />
+</p>
+<h2>Format</h2>
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> nutzt eine Mischung aus (Lightning) Talks und offener Diskussion.</p>Vorträge können vorher angemeldet werden, oder auch spontan 
+während des Treffens eingebracht werden. Ein Beamer mit HDMI und FullHD Auflösung 
+steht zur Verfügung.<p><span style="font-weight: bold;">(Lightning) Talk Anmeldung</span> bitte formlos per EMail an <a href="mailto:info@pyddf.de?subject=Anmeldung&amp;nbsp;Lightning&amp;nbsp;Talk&amp;nbsp;Python&amp;nbsp;Meeting&amp;nbsp;D&amp;uuml;sseldorf">info@pyddf.de</a></p>
+<h2>Kostenbeteiligung</h2>
+
+<p>Das <a href="http://pyddf.de/">Python Meeting Düsseldorf</a> wird von Python Nutzern für Python Nutzer veranstaltet.</p>
+<p>Tagungsraum, Beamer und Getränke produzieren Kosten. Daher bitten wir die Teilnehmer um eine Kostenbeteiligung in Höhe von <span style="font-weight: bold;">EUR 10,00</span> inkl. 
+19% Mwst. Schüler und Studenten zahlen <span style="font-weight: bold;">EUR 5,00</span> inkl. 
+19% Mwst.</p>
+<p>Wir möchten alle Teilnehmer bitten, den Betrag in bar mitzubringen.</p>
+<h2>Anmeldung</h2>
+<p>Da wir nur 25 Personen in dem angemieteten Raum empfangen können, möchten wir bitten, sich vorher anzumelden.<br />
+</p>
+<blockquote>
+  <p><b>Meeting Anmeldung</b> bitte per <a href="https://www.meetup.com/Python-Meeting-Dusseldorf/">Meetup</a><br />
+  </p>
+</blockquote>
+
+
+
+
+
+<h2>Weitere Informationen</h2>
+<p>Weitere Informationen finden Sie auf der Webseite des Meetings:<br />
+<br />
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <a href="https://pyddf.de/">https://pyddf.de/</a><br />
+</p>
+
+<p>Viel Spaß !</p>
+<p>Marc-Andre Lemburg, eGenix.com
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 06, 2025 08:00 AM UTC by
+            <a href="http://www.egenix.com/company/news/rss2" class="link link-hover text-primary"
+              >eGenix.com</a
+            >
+          </div>
+          <a
+            href="https://www.egenix.com/company/news/Python-Meeting-Duesseldorf-2025-06-18"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://labs.quansight.org/blog/there-are-lots-of-accessibility-resources" class="hover:underline"
+              >There are lots of accessibility resources</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Complications of having all these resources and methods to manage them.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 06, 2025 12:00 AM UTC by
+            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
+              >Quansight Labs Blog</a
+            >
+          </div>
+          <a
+            href="https://labs.quansight.org/blog/there-are-lots-of-accessibility-resources"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.glyph.im/2025/06/i-think-im-done-thinking-about-genai-for-now.html" class="hover:underline"
+              >I Think I’m Done Thinking About genAI For Now</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The conversation isn’t over, but I don’t think I have much to add to it.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 05, 2025 05:22 AM UTC by
+            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
+              >Glyph Lefkowitz</a
+            >
+          </div>
+          <a
+            href="https://blog.glyph.im/2025/06/i-think-im-done-thinking-about-genai-for-now.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://wingware.com/news/2025-06-05" class="hover:underline"
+              >Wing Python IDE Version 11 - June 5, 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Wing Python IDE version 11 is now available.  It improves the AI assisted development UI and adds
+support for Claude, Grok, Gemini, OpenAI, Perplexity, Mistral, Deepseek, Ollama, and other OpenAI API
+compatible AI providers.  Wing 11 also adds package management with <tt class="literal"><span class="pre">uv</span></tt>, improves Python code analysis,
+updates the UI localizations, improves diff/merge, adds easier custom key binding assignment, and
+much more.</p>
+<p>Most of these improvements are available only in Wing Pro.  <a class="reference" href="/downloads">Compare Products</a>
+for details.</p>
+<img alt="Wing 11 Screen Shot" class="eye-candy-image unfloat-at-900" src="https://wingware.com/images/screenshots/wing11-screenshot.png" width="650px" /><h3>Downloads</h3><div class="note">
+<strong>IMPORTANT</strong> Be sure to <tt class="literal"><span class="pre">Check</span> <span class="pre">for</span> <span class="pre">Updates</span></tt> from Wing's <tt class="literal"><span class="pre">Help</span></tt> menu after installing
+so that you have the latest hot fixes.</div>
+<p><a class="reference" href="/downloads/wing-pro/11.0.1.0">Wing Pro 11.0.1</a></p>
+<p><a class="reference" href="/downloads/wing-personal/11.0.1.0">Wing Personal 11.0.1</a></p>
+<p><a class="reference" href="/downloads/wing-101/11.0.1.0">Wing 101 11.0.1</a></p>
+<p>Wing 10 and earlier versions are not affected by installation of Wing 11 and
+may be installed and used independently. However, project files for Wing 10
+and earlier are converted when opened by Wing 11 and should be saved under a
+new name, since Wing 11 projects cannot be opened by older versions of Wing.</p>
+<h2><img src="https://wingware.com/images/wing18.png" /> New in Wing 11</h2><h3>Improved AI Assisted Development</h3><p>Wing 11 improves the user interface for AI assisted development by introducing two separate
+tools <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> and <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt>. <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> can be used to write, redesign, or extend code
+in the current editor. <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt> can be used to ask about code or iterate in creating a
+design or new code without directly modifying the code in an editor.</p>
+<p>Wing 11's AI assisted development features now support not just OpenAI but also Claude, Grok,
+Gemini, Perplexity, Mistral, Deepseek, and any other OpenAI completions API compatible AI provider.</p>
+<p>This release also improves setting up AI request context, so that both automatically and
+manually selected and described context items may be paired with an AI request. AI request
+contexts can now be stored, optionally so they are shared by all projects, and may be used
+independently with different AI features.</p>
+<p>AI requests can now also be stored in the current project or shared with all projects, and Wing
+comes preconfigured with a set of commonly used requests. In addition to changing code in the
+current editor, stored requests may create a new untitled file or run instead in AI Chat. Wing
+11 also introduces options for changing code within an editor, including replacing code,
+commenting out code, or starting a diff/merge session to either accept or reject changes.</p>
+<p>Wing 11 also supports using AI to generate commit messages based on the changes being committed
+to a revision control system.</p>
+<p>You can now also configure multiple AI providers for easier access to different models.</p>
+<p>For details see <tt class="literal"><span class="pre">AI</span> <span class="pre">Assisted</span> <span class="pre">Development</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Package Management with uv </h3><p>Wing Pro 11 adds support for the <tt class="literal"><span class="pre">uv</span></tt> package manager in the New Project dialog and the
+Packages tool.</p>
+<p>For details see <tt class="literal"><span class="pre">Project</span> <span class="pre">Manager</span> <span class="pre">&gt;</span> <span class="pre">Creating</span> <span class="pre">Projects</span> <span class="pre">&gt;</span> <span class="pre">Creating</span> <span class="pre">Python</span> <span class="pre">Environments</span></tt> and <tt class="literal"><span class="pre">Package</span>
+<span class="pre">Manager</span> <span class="pre">&gt;</span> <span class="pre">Package</span> <span class="pre">Management</span> <span class="pre">with</span> <span class="pre">uv</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Improved Python Code Analysis</h3><p>Wing 11 improves code analysis of literals such as dicts and sets, parametrized type
+aliases, <tt class="literal"><span class="pre">typing.Self</span></tt>, type variables on the <tt class="literal"><span class="pre">def</span></tt> or <tt class="literal"><span class="pre">class</span></tt> line that declares
+them, generic classes with <tt class="literal"><span class="pre">[...]</span></tt>, and <tt class="literal"><span class="pre">__all__</span></tt> in <tt class="literal"><span class="pre">*.pyi</span></tt> files.</p>
+<h3>Updated Localizations</h3><p>Wing 11 updates the German, French, and Russian localizations, and introduces a new experimental
+AI-generated Spanish localization. The Spanish localization and the new AI-generated strings in the
+French and Russian localizations may be accessed with the new <tt class="literal"><span class="pre">User</span> <span class="pre">Interface</span> <span class="pre">&gt;</span> <span class="pre">Include</span> <span class="pre">AI</span>
+<span class="pre">Translated</span> <span class="pre">Strings</span></tt> preference.</p>
+<h3>Improved diff/merge</h3><p>Wing Pro 11 adds floating buttons directly between the editors to make navigating differences
+and merging easier, allows undoing previously merged changes, and does a better job managing
+scratch buffers, scroll locking, and sizing of merged ranges.</p>
+<p>For details see <tt class="literal"><span class="pre">Difference</span> <span class="pre">and</span> <span class="pre">Merge</span></tt> under <tt class="literal"><span class="pre">Wing</span> <span class="pre">Manual</span></tt> in Wing 11's <tt class="literal"><span class="pre">Help</span></tt> menu.</p>
+<h3>Other Minor Features and Improvements</h3><p>Wing 11 also improves the custom key binding assignment user interface, adds a <tt class="literal"><span class="pre">Files</span> <span class="pre">&gt;</span>
+<span class="pre">Auto-Save</span> <span class="pre">Files</span> <span class="pre">When</span> <span class="pre">Wing</span> <span class="pre">Loses</span> <span class="pre">Focus</span></tt> preference, warns immediately when opening a project with
+an invalid Python Executable configuration, allows clearing recent menus, expands the set of
+available special environment variables for project configuration, and makes a number of other
+bug fixes and usability improvements.</p>
+<h3>Changes and Incompatibilities</h3><p>Since Wing 11 replaced the <tt class="literal"><span class="pre">AI</span></tt> tool with <tt class="literal"><span class="pre">AI</span> <span class="pre">Coder</span></tt> and <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt>, and AI
+configuration is completely different than in Wing 10, you will need to reconfigure your
+AI integration manually in Wing 11. This is done with <tt class="literal"><span class="pre">Manage</span> <span class="pre">AI</span> <span class="pre">Providers</span></tt> in the
+<tt class="literal"><span class="pre">AI</span></tt> menu. After adding the first provider configuration, Wing will set that provider as
+the default. You can switch between providers with <tt class="literal"><span class="pre">Switch</span> <span class="pre">to</span> <span class="pre">Provider</span></tt> in the <tt class="literal"><span class="pre">AI</span></tt> menu.</p>
+<p>If you have questions, please don't hesitate to contact us at <a class="reference" href="mailto:support&#64;wingware.com">support&#64;wingware.com</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 05, 2025 01:00 AM UTC by
+            <a href="http://wingware.com/news/rss&noheader=1" class="link link-hover text-primary"
+              >Wingware</a
+            >
+          </div>
+          <a
+            href="https://wingware.com/news/2025-06-05"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1973,12 +1666,12 @@ in your <code>.envrc</code> file.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 9150</a></li>
+    <li><a>Total Entries: 8930</a></li>
     <li><a>Unique Feeds: 410</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (517)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (447)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (343)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Test and Code (237)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (517)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (447)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (343)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (213)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
