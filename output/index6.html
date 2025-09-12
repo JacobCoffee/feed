@@ -53,6 +53,215 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/%D8%A7%D9%84%D8%A3%D9%85%D9%86%20%D8%A7%D9%84%D8%B3%D9%8A%D8%A8%D8%B1%D8%A7%D9%86%D9%8A/%D8%A8%D8%A7%D9%8A%D8%AB%D9%88%D9%86/creating-a-file-change-monitoring-system-using-python/" class="hover:underline"
+              >إنشاء نظام لمراقبة تغييرات الملفات باستخدام بايثون</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>أهلاً بكم. سنتناول اليوم محاضرة في عالم الأمن السيبراني، حيث سنقوم بمراقبة خادم أو نظام أو جزء معين من النظام. إذا حدثت عليه تغييرات، تصلنا رسالة أو صندوق رسائل. سأستخدم الطرفية (Terminal) في هذا الشرح.</p>
+
+<h3 id="مقدمة-لمحة-تاريخية">مقدمة: لمحة تاريخية</h3>
+<p>قديماً، كان هناك برنامج لمراقبة ملفات النظام يُدعى “Watchdog”. كان عبارة عن أيقونة كلب تظهر على الحاسوب عندما يقوم شخص ما بتثبيت برنامج على نظامك عن بعد، ليخبرك أنه تم تثبيت برنامج معين ويسألك إذا كنت على علم بذلك. أي أنه كان يراقب تحركات النظام بالكامل. اليوم، سنحاول بناء نظام مشابه لمراقبة الملفات، ومن ثم سنتقدم لمراقبة الخادم، وصولاً إلى مفاهيم مثل “الهوني بوت” (Honeypot) وكيفية اكتشاف المخترقين بمجرد دخولهم إلى ملفات الخادم.</p>
+
+<p>لنبدأ خطوة بخطوة لشرح كل شيء.</p>
+
+<h3 id="التحضير-وبيئة-العمل">التحضير وبيئة العمل</h3>
+
+<p>في البداية، سأقوم بإنشاء مجلد على سطح المكتب وسأطلق عليه اسم <code class="highlighter-rouge">rt</code>. بعد ذلك، سأفتح محرر الأكواد وأضيف هذا المجلد إليه. داخل المجلد <code class="highlighter-rouge">rt</code>، سأقوم بإنشاء ملف جديد باسم <code class="highlighter-rouge">1.py</code>. سأستخدم لغة البرمجة بايثون في هذا المقال.</p>
+
+<p>لأغراض الاختبار، سأقوم بإنشاء مجلد آخر سأقوم بمراقبته. على سبيل المثال، في القرص <code class="highlighter-rouge">K:</code>، سأنشئ مجلداً باسم <code class="highlighter-rouge">rakoo</code>. هذا المجلد فارغ حالياً، وسنبرمج نظام المراقبة ليعلمنا بأي تغيير يحدث بداخله.</p>
+
+<h3 id="تثبيت-المكتبة">تثبيت المكتبة</h3>
+
+<p>المكتبة التي سنستخدمها هي <code class="highlighter-rouge">watchdog</code>، وهي تحمل نفس اسم البرنامج القديم الذي ذكرته. لتثبيت المكتبة على نظامك، افتح واجهة الأوامر (CMD) واكتب الأمر التالي:</p>
+
+<div class="language-sh highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pip <span class="nb">install </span>watchdog
+</code></pre></div></div>
+
+<p>بعد الضغط على Enter، سيتم تثبيت المكتبة. يمكنك البحث عنها عبر الإنترنت لقراءة المزيد من التوثيق الخاص بها. هي متوافقة مع إصدارات ويندوز 3 وما فوق.</p>
+
+<h3 id="كتابة-الشيفرة-البرمجية">كتابة الشيفرة البرمجية</h3>
+
+<p>الآن بعد أن عرفنا كيفية تثبيت المكتبة، دعونا نبدأ بالبرمجة. سنحتاج إلى مراقبة عدة أحداث: إنشاء ملف، حذف ملف، تعديل ملف، ونقل ملف. سنحتاج أيضًا إلى التعامل مع الوقت لإرسال النتائج بشكل دوري.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">ctypes</span>
+<span class="kn">from</span> <span class="nn">watchdog.observers</span> <span class="kn">import</span> <span class="n">Observer</span>
+<span class="kn">from</span> <span class="nn">watchdog.events</span> <span class="kn">import</span> <span class="n">FileSystemEventHandler</span>
+
+<span class="k">def</span> <span class="nf">on_create</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+    <span class="s">"""دالة يتم استدعاؤها عند إنشاء ملف أو مجلد."""</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s">"File Created: </span><span class="si">{</span><span class="n">event</span><span class="p">.</span><span class="n">src_path</span><span class="si">}</span><span class="s">"</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="s">"Warning"</span>
+    <span class="c1"># إظهار صندوق رسالة للمستخدم
+</span>    <span class="n">ctypes</span><span class="p">.</span><span class="n">windll</span><span class="p">.</span><span class="n">user32</span><span class="p">.</span><span class="n">MessageBoxW</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">on_delete</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+    <span class="s">"""دالة يتم استدعاؤها عند حذف ملف أو مجلد."""</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s">"File Deleted: </span><span class="si">{</span><span class="n">event</span><span class="p">.</span><span class="n">src_path</span><span class="si">}</span><span class="s">"</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="s">"Warning"</span>
+    <span class="n">ctypes</span><span class="p">.</span><span class="n">windll</span><span class="p">.</span><span class="n">user32</span><span class="p">.</span><span class="n">MessageBoxW</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">on_modify</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+    <span class="s">"""دالة يتم استدعاؤها عند تعديل ملف."""</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s">"File Modified: </span><span class="si">{</span><span class="n">event</span><span class="p">.</span><span class="n">src_path</span><span class="si">}</span><span class="s">"</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="s">"Warning"</span>
+    <span class="n">ctypes</span><span class="p">.</span><span class="n">windll</span><span class="p">.</span><span class="n">user32</span><span class="p">.</span><span class="n">MessageBoxW</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">on_move</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+    <span class="s">"""دالة يتم استدعاؤها عند نقل ملف أو إعادة تسميته."""</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="sa">f</span><span class="s">"File Moved/Renamed: from </span><span class="si">{</span><span class="n">event</span><span class="p">.</span><span class="n">src_path</span><span class="si">}</span><span class="s"> to </span><span class="si">{</span><span class="n">event</span><span class="p">.</span><span class="n">dest_path</span><span class="si">}</span><span class="s">"</span>
+    <span class="k">print</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="s">"Warning"</span>
+    <span class="n">ctypes</span><span class="p">.</span><span class="n">windll</span><span class="p">.</span><span class="n">user32</span><span class="p">.</span><span class="n">MessageBoxW</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">"__main__"</span><span class="p">:</span>
+    <span class="c1"># تحديد المسار المراد مراقبته
+</span>    <span class="n">path</span> <span class="o">=</span> <span class="s">"K:</span><span class="se">\\</span><span class="s">rakoo"</span>
+    
+    <span class="c1"># إنشاء معالج الأحداث
+</span>    <span class="n">event_handler</span> <span class="o">=</span> <span class="n">FileSystemEventHandler</span><span class="p">()</span>
+
+    <span class="c1"># ربط الدوال المخصصة بالأحداث المقابلة
+</span>    <span class="n">event_handler</span><span class="p">.</span><span class="n">on_created</span> <span class="o">=</span> <span class="n">on_create</span>
+    <span class="n">event_handler</span><span class="p">.</span><span class="n">on_deleted</span> <span class="o">=</span> <span class="n">on_delete</span>
+    <span class="n">event_handler</span><span class="p">.</span><span class="n">on_modified</span> <span class="o">=</span> <span class="n">on_modify</span>
+    <span class="n">event_handler</span><span class="p">.</span><span class="n">on_moved</span> <span class="o">=</span> <span class="n">on_move</span>
+
+    <span class="c1"># إنشاء كائن المراقبة
+</span>    <span class="n">observer</span> <span class="o">=</span> <span class="n">Observer</span><span class="p">()</span>
+    <span class="n">observer</span><span class="p">.</span><span class="n">schedule</span><span class="p">(</span><span class="n">event_handler</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">recursive</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+
+    <span class="c1"># بدء المراقبة
+</span>    <span class="n">observer</span><span class="p">.</span><span class="n">start</span><span class="p">()</span>
+    <span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"Starting watchdog for path: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="n">time</span><span class="p">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">except</span> <span class="nb">KeyboardInterrupt</span><span class="p">:</span>
+        <span class="c1"># إيقاف المراقبة عند ضغط المستخدم على Ctrl+C
+</span>        <span class="n">observer</span><span class="p">.</span><span class="n">stop</span><span class="p">()</span>
+        <span class="k">print</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">Watchdog stopped by user."</span><span class="p">)</span>
+    
+    <span class="c1"># انتظار انتهاء عمل المراقب قبل إغلاق البرنامج
+</span>    <span class="n">observer</span><span class="p">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div></div>
+
+<h3 id="شرح-الشيفرة">شرح الشيفرة</h3>
+
+<ol>
+  <li><strong>استدعاء المكتبات</strong>:
+    <ul>
+      <li><code class="highlighter-rouge">import time</code>: للتعامل مع الوقت، وتحديداً لإبقاء السكربت قيد التشغيل.</li>
+      <li><code class="highlighter-rouge">from watchdog.observers import Observer</code>: هذا هو الكلاس الرئيسي المسؤول عن مراقبة الملفات والمجلدات.</li>
+      <li><code class="highlighter-rouge">from watchdog.events import FileSystemEventHandler</code>: هذا هو الكلاس الذي يحتوي على الأحداث التي يمكننا مراقبتها (إنشاء، حذف، تعديل، نقل).</li>
+      <li><code class="highlighter-rouge">import ctypes</code>: للتعامل مع واجهات التطبيقات في نظام ويندوز، وتحديداً لإظهار صندوق الرسائل.</li>
+    </ul>
+  </li>
+  <li><strong>تحديد المسار ومعالج الأحداث</strong>:
+    <ul>
+      <li><code class="highlighter-rouge">path = "K:\\rakoo"</code>: ننشئ متغيراً لتخزين مسار المجلد الذي نريد مراقبته.</li>
+      <li><code class="highlighter-rouge">event_handler = FileSystemEventHandler()</code>: ننشئ نسخة من معالج الأحداث.</li>
+      <li>نقوم بربط كل دالة (<code class="highlighter-rouge">on_create</code>, <code class="highlighter-rouge">on_delete</code>, <code class="highlighter-rouge">on_modify</code>, <code class="highlighter-rouge">on_move</code>) بالحدث المناسب في <code class="highlighter-rouge">event_handler</code>.</li>
+    </ul>
+  </li>
+  <li><strong>كائن المراقبة (Observer)</strong>:
+    <ul>
+      <li><code class="highlighter-rouge">observer = Observer()</code>: ننشئ كائن المراقبة.</li>
+      <li><code class="highlighter-rouge">observer.schedule(...)</code>: نستخدم هذه الدالة لجدولة المراقبة. نمرر لها ثلاثة وسائط:
+        <ol>
+          <li><code class="highlighter-rouge">event_handler</code>: معالج الأحداث الذي سيستجيب للتغييرات.</li>
+          <li><code class="highlighter-rouge">path</code>: المسار المراد مراقبته.</li>
+          <li><code class="highlighter-rouge">recursive=True</code>: لجعل المراقبة تشمل المجلدات الفرعية داخل المسار المحدد.</li>
+        </ol>
+      </li>
+    </ul>
+  </li>
+  <li><strong>بدء وإيقاف المراقبة</strong>:
+    <ul>
+      <li><code class="highlighter-rouge">observer.start()</code>: تبدأ عملية المراقبة في خيط منفصل.</li>
+      <li><code class="highlighter-rouge">try...except KeyboardInterrupt</code>: نستخدم حلقة لا نهائية مع <code class="highlighter-rouge">time.sleep(1)</code> لإبقاء البرنامج الرئيسي قيد التشغيل. إذا ضغط المستخدم على <code class="highlighter-rouge">Ctrl+C</code>، يتم التقاط الاستثناء <code class="highlighter-rouge">KeyboardInterrupt</code>.</li>
+      <li><code class="highlighter-rouge">observer.stop()</code>: يتم إيقاف المراقبة.</li>
+      <li><code class="highlighter-rouge">observer.join()</code>: ينتظر البرنامج الرئيسي حتى ينتهي خيط المراقبة تمامًا قبل الخروج.</li>
+    </ul>
+  </li>
+</ol>
+
+<h3 id="التجربة-والتشغيل">التجربة والتشغيل</h3>
+
+<p>عند تشغيل السكربت، ستبدأ المراقبة فوراً. لنقم بتجربة بعض العمليات داخل المجلد <code class="highlighter-rouge">K:\rakoo</code> ونلاحظ ما يحدث في الطرفية.</p>
+
+<ul>
+  <li><strong>إنشاء مجلد جديد</strong>:
+عند إنشاء مجلد جديد، ستظهر الرسالة التالية في الطرفية:
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>File Created: K:\rakoo\New folder
+</code></pre></div>    </div>
+  </li>
+  <li><strong>إعادة تسمية ملف</strong>:
+لنفترض أننا أنشأنا ملف <code class="highlighter-rouge">new.txt</code> ثم أعدنا تسميته إلى <code class="highlighter-rouge">rakantxt</code>. ستظهر الرسائل التالية:
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>File Created: K:\rakoo\new.txt
+File Moved/Renamed: from K:\rakoo\new.txt to K:\rakoo\rakantxt
+</code></pre></div>    </div>
+  </li>
+  <li><strong>حذف ملف</strong>:
+عند حذف المجلد <code class="highlighter-rouge">New folder</code>، ستظهر الرسالة:
+    <div class="highlighter-rouge"><div class="highlight"><pre class="highlight"><code>File Deleted: K:\rakoo\New folder
+</code></pre></div>    </div>
+  </li>
+</ul>
+
+<h3 id="إضافة-الإشعارات-المرئية">إضافة الإشعارات المرئية</h3>
+
+<p>الاعتماد على الطرفية فقط ليس عملياً دائماً. قد يكون المحرر مصغراً أو قد تتصفح الإنترنت. لذلك، أضفنا وظيفة لإظهار إشعار مرئي (صندوق رسائل) عند حدوث أي تغيير.</p>
+
+<p>لقد استخدمنا مكتبة <code class="highlighter-rouge">ctypes</code> المدمجة في بايثون لاستدعاء دالة <code class="highlighter-rouge">MessageBoxW</code> من <code class="highlighter-rouge">user32.dll</code> في ويندوز.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="n">ctypes</span><span class="p">.</span><span class="n">windll</span><span class="p">.</span><span class="n">user32</span><span class="p">.</span><span class="n">MessageBoxW</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div></div>
+
+<p>الآن، عند حدوث أي تغيير، بالإضافة إلى طباعة الرسالة في الطرفية، سيظهر صندوق رسائل تحذيري بعنوان <code class="highlighter-rouge">Warning</code> يحتوي على تفاصيل التغيير. هذا يضمن أنك ستلاحظ أي نشاط مشبوه على الفور، حتى لو لم تكن تتابع الطرفية بشكل مباشر.</p>
+
+<h3 id="الخاتمة">الخاتمة</h3>
+
+<p>بهذه الطريقة، نكون قد أنشأنا نظام مراقبة فعالاً للملفات. يمكنك تطوير هذا السكربت أكثر، على سبيل المثال، عن طريق إرسال هذه الإشعارات إلى بوت على تيليجرام أو إلى بريدك الإلكتروني. في المقالات القادمة، سنحاول مراقبة خادم حقيقي مع إضافات وخطوات جديدة.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 07, 2025 12:00 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/%D8%A7%D9%84%D8%A3%D9%85%D9%86%20%D8%A7%D9%84%D8%B3%D9%8A%D8%A8%D8%B1%D8%A7%D9%86%D9%8A/%D8%A8%D8%A7%D9%8A%D8%AB%D9%88%D9%86/creating-a-file-change-monitoring-system-using-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://efficientcoder.net/artificial%20intelligence/programming/a-simple-and-effective-roadmap-to-learn-ai/" class="hover:underline"
               >خارطة طريق بسيطة وفعالة لتعلم الذكاء الاصطناعي</a
             >
@@ -2056,46 +2265,6 @@ the default. You can switch between providers with <tt class="literal"><span cla
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.holoviz.org/posts/hvplot_release_0.12/" class="hover:underline"
-              >Plotting made easy with hvPlot: 0.12 release</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Release announcement for hvPlot 0.12, including major expansion and improvement of the reference documentation, more hover information on rasterized plots, new toolbar and legend options, and more!
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 01, 2025 12:00 AM UTC by
-            <a href="https://blog.holoviz.org/index.xml" class="link link-hover text-primary"
-              >HoloViz</a
-            >
-          </div>
-          <a
-            href="https://blog.holoviz.org/posts/hvplot_release_0.12/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -2107,8 +2276,8 @@ the default. You can switch between providers with <tt class="literal"><span cla
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8882</a></li>
-    <li><a>Unique Feeds: 408</a></li>
+    <li><a>Total Entries: 8854</a></li>
+    <li><a>Unique Feeds: 407</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
