@@ -53,6 +53,157 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html" class="hover:underline"
+              >Mistune 3 wikilink inline parser</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://mistune.lepture.com/">Mistune 3</a> has changed it's internal structure and extension mechanisms.</p>
+<p>The <a href="https://mistune.lepture.com/en/latest/advanced.html">mistune advanced documentation</a> has some examples how to create and register inline patterns. After some iterations I came up with the following solution to render wiki links:</p>
+<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>  
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Match</span>  
+  
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">Markdown</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRenderer</span><span class="p">,</span> <span class="n">InlineState</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.inline_parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">InlineParser</span>  
+  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_wikilink</span><span class="p">(</span><span class="n">inline</span><span class="p">:</span> <span class="s2">&quot;InlineParser&quot;</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">Match</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">state</span><span class="p">:</span> <span class="s2">&quot;InlineState&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse wikilink syntax [[page title]] or [[page title|display text]]&quot;&quot;&quot;</span>  
+    <span class="n">page_title</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'page'</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="n">display_text</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'display'</span><span class="p">)</span>  
+      
+    <span class="c1"># Use display text if provided, otherwise use page title  </span>
+    <span class="k">if</span> <span class="n">display_text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">display_text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="k">else</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">page_title</span>  
+      
+    <span class="c1"># Create a wikilink token  </span>
+    <span class="n">state</span><span class="o">.</span><span class="n">append_token</span><span class="p">({</span>  
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;wikilink&quot;</span><span class="p">,</span>  
+        <span class="s2">&quot;children&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;raw&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">}],</span>  
+        <span class="s2">&quot;attrs&quot;</span><span class="p">:</span> <span class="p">{</span>  
+            <span class="s2">&quot;page&quot;</span><span class="p">:</span> <span class="n">page_title</span><span class="p">,</span>  
+            <span class="s2">&quot;display&quot;</span><span class="p">:</span> <span class="n">text</span>  
+        <span class="p">}</span>  
+    <span class="p">})</span>  
+      
+    <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">render_wikilink_html</span><span class="p">(</span><span class="n">renderer</span><span class="p">:</span> <span class="s2">&quot;BaseRenderer&quot;</span><span class="p">,</span> <span class="n">children</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">page</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">display</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Render wikilink as HTML anchor tag&quot;&quot;&quot;</span>  
+    <span class="n">url_page</span> <span class="o">=</span> <span class="n">page</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">' '</span><span class="p">,</span> <span class="s1">'_'</span><span class="p">)</span>  
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">'&lt;a href=&quot;/wiki/</span><span class="si">{</span><span class="n">url_page</span><span class="si">}</span><span class="s1">&quot; class=&quot;wikilink&quot;&gt;</span><span class="si">{</span><span class="n">children</span><span class="si">}</span><span class="s1">&lt;/a&gt;'</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">wikilink_plugin</span><span class="p">(</span><span class="n">md</span><span class="p">:</span> <span class="s2">&quot;Markdown&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plugin function to add wikilink support to mistune&quot;&quot;&quot;</span>  
+    <span class="c1"># Use named groups</span>
+    <span class="n">WIKILINK_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\[\[(?P&lt;page&gt;[^|\]]+)(?:\|(?P&lt;display&gt;[^\]]+))?\]\]'</span>  
+    <span class="n">md</span><span class="o">.</span><span class="n">inline</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">WIKILINK_PATTERN</span><span class="p">,</span> <span class="n">parse_wikilink</span><span class="p">,</span> <span class="n">before</span><span class="o">=</span><span class="s2">&quot;link&quot;</span><span class="p">)</span>  
+      
+    <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span> <span class="ow">and</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">NAME</span> <span class="o">==</span> <span class="s2">&quot;html&quot;</span><span class="p">:</span>  
+        <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">render_wikilink_html</span><span class="p">)</span>
+  
+<span class="c1"># Usage example  </span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_markdown</span>  
+      
+    <span class="c1"># Create markdown parser with the wikilink plugin  </span>
+    <span class="n">md</span> <span class="o">=</span> <span class="n">create_markdown</span><span class="p">(</span><span class="n">plugins</span><span class="o">=</span><span class="p">[</span><span class="n">wikilink_plugin</span><span class="p">])</span>  
+      
+    <span class="c1"># Test examples  </span>
+    <span class="n">text1</span> <span class="o">=</span> <span class="s2">&quot;Check out [[Main Page]] for more info.&quot;</span>  
+    <span class="n">text2</span> <span class="o">=</span> <span class="s2">&quot;Visit [[Installation Guide|the installation guide]] to get started.&quot;</span>  
+    <span class="n">text3</span> <span class="o">=</span> <span class="s2">&quot;Multiple links: [[Page One]] and [[Page Two|Custom Text]].&quot;</span>  
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Example 1:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text1</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Check out &lt;a href=&quot;/wiki/Main_Page&quot; class=&quot;wikilink&quot;&gt;Main Page&lt;/a&gt; for more info.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 2:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text2</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Visit &lt;a href=&quot;/wiki/Installation_Guide&quot; class=&quot;wikilink&quot;&gt;the installation guide&lt;/a&gt; to get started.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 3:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text3</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Multiple links: &lt;a href=&quot;/wiki/Page_One&quot; class=&quot;wikilink&quot;&gt;Page One&lt;/a&gt; and &lt;a href=&quot;/wiki/Page_Two&quot; class=&quot;wikilink&quot;&gt;Custom Text&lt;/a&gt;.&lt;/p&gt;</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 20, 2025 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.dataschool.io/master-machine-learning-book-preview/" class="hover:underline"
+              >Book preview: Master Machine Learning with scikit-learn 📖</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This is a practical guide to help you transform from Machine Learning novice to skilled ML practitioner. Download the first 3 chapters for free!
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 19, 2025 04:56 PM UTC by
+            <a href="https://www.dataschool.io/tag/python/rss/" class="link link-hover text-primary"
+              >Data School</a
+            >
+          </div>
+          <a
+            href="https://www.dataschool.io/master-machine-learning-book-preview/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/266/" class="hover:underline"
               >The Real Python Podcast – Episode #266: Dangers of Automatically Converting a REST API to MCP</a
             >
@@ -1293,318 +1444,6 @@ The problem is our use of whitespace.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://efficientcoder.net/zero-to-first-dollar/" class="hover:underline"
-              >من الصفر إلى أول دولار: كيف تعلمت البرمجة وحصلت على أول عميل في 6 أشهر</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>قبل ستة أشهر من الآن، كنت أجلس مكانك تمامًا. كنت أقرأ مقالات مثل هذه، وأشاهد فيديوهات على يوتيوب، وأحلم بتغيير مسيرتي المهنية. كنت أعمل في وظيفة لا علاقة لها بالتكنولوجيا، وظيفة كانت تدفع فواتيري لكنها لم تكن تشعل في داخلي أي شغف. كنت أسمع عن عالم البرمجة المثير، عن الرواتب المرتفعة، والمرونة في العمل، والقدرة على “بناء” أشياء من لا شيء. لكن كلما حاولت أن أبدأ، كان يغمرني شعور هائل بالضياع. من أين أبدأ؟ أي لغة أتعلم؟ هل أنا ذكي بما فيه الكفاية؟</p>
-
-<p>هذا المقال ليس دليلاً نظريًا آخر. هذه هي قصتي الشخصية، الخريطة الدقيقة التي اتبعتها، بالأخطاء والنجاحات واللحظات المحبطة والانتصارات الصغيرة، والتي أخذتني من شخص لا يعرف معنى كلمة <code class="highlighter-rouge">&lt;div&gt;</code> إلى مبرمج مستقل حصل على أول عميل وتقاضى أول دولار له مقابل كتابة الكود. إذا كنت تشعر بالضياع، آمل أن تمنحك قصتي هذه بصيصًا من الأمل وخطة عمل واضحة.</p>
-
-<h2 id="الشهر-الأول-قرار-البداية-وبناء-الأساس">الشهر الأول: قرار البداية وبناء الأساس</h2>
-
-<p>كل رحلة عظيمة تبدأ بخطوة واحدة، وخطوتي الأولى كانت اتخاذ قرار حاسم: “سأمنح نفسي 6 أشهر من الالتزام التام لأرى ما إذا كان بإمكاني تحقيق ذلك”.</p>
-
-<ul>
-  <li>
-    <p><strong>الأسبوع الأول: إزالة الضباب</strong>: قضيت الأسبوع الأول في البحث فقط. غرقت في بحر من المعلومات المتضاربة. ثم قررت تبسيط الأمور. اخترت مسارًا واحدًا فقط لأركز عليه: <strong>تطوير الواجهة الأمامية (Frontend Web Development)</strong>. لماذا؟ لأنني شخص بصري، وأردت أن أرى نتائج عملي على الشاشة فورًا. هذا الإحساس بالإنجاز الفوري كان حاسمًا للحفاظ على حماسي.</p>
-  </li>
-  <li><strong>الأدوات والمصادر</strong>: قررت أن لا أنفق أي مال في البداية. كانت مصادري هي:
-    <ol>
-      <li><strong>freeCodeCamp</strong>: منصة مجانية ومنظمة، وهذا ما احتجته تمامًا كهيكل ومنهج.</li>
-      <li><strong>Visual Studio Code</strong>: محرر الأكواد الذي يستخدمه الجميع.</li>
-      <li><strong>يوتيوب</strong>: لأي مفهوم لم أفهمه جيدًا من المصدر الأول.</li>
-    </ol>
-  </li>
-  <li>
-    <p><strong>الخطة</strong>: كان هدفي لشهر الأول بسيطًا: إكمال قسمي HTML و CSS في freeCodeCamp. الأهم من الهدف كان “النظام” الذي اتبعته: <strong>ساعتان من الدراسة والممارسة كل يوم بعد العمل، بدون أي استثناء</strong>. الالتزام اليومي، حتى لو كان لوقت قصير، هو السر.</p>
-  </li>
-  <li><strong>الشعور</strong>: كان مزيجًا من الإثارة المطلقة والإحباط الشديد. كنت أقضي ساعة كاملة أحيانًا فقط لأكتشف أنني نسيت إغلاق وسم (tag) ما، أو لأفهم لماذا لا يريد عنصر ما أن يتوسط الشاشة. لكن الشعور الذي كنت أحصل عليه بعد حل المشكلة كان إدمانيًا.</li>
-</ul>
-
-<h2 id="الشهر-الثاني-إضافة-التفاعل-والتعمق-في-javascript">الشهر الثاني: إضافة التفاعل والتعمق في JavaScript</h2>
-
-<p>إذا كان HTML هو الهيكل و CSS هو المظهر، فإن JavaScript هي الروح. هنا بدأ التحدي الحقيقي.</p>
-
-<ul>
-  <li>
-    <p><strong>الانتقال إلى البرمجة الحقيقية</strong>: بدأت قسم JavaScript في freeCodeCamp. المفاهيم كانت أكثر تجريدًا: المتغيرات، الشروط، الحلقات التكرارية، الوظائف. عقلي كان يؤلمني في بعض الأيام، لكنني كنت أرى الضوء في نهاية النفق.</p>
-  </li>
-  <li>
-    <p><strong>أول مشروع “يعمل”</strong>: بعد فهم الأساسيات، بنيت أول مشروع تفاعلي لي: <strong>آلة حاسبة بسيطة</strong>. كانت قبيحة التصميم، وكودها فوضوي، لكنها كانت تعمل! عندما كتبت <code class="highlighter-rouge">2 + 2</code> وضغطت على “يساوي” وظهر الرقم <code class="highlighter-rouge">4</code>، شعرت بأنني ساحر. فورًا قمت بإنشاء حساب على GitHub ورفعت عليه هذا المشروع المتواضع. لقد كان أول قطعة في معرض أعمالي المستقبلي.</p>
-  </li>
-  <li>
-    <p><strong>التحديات والمصادر الإضافية</strong>: واجهت صعوبة في فهم بعض المفاهيم المتقدمة قليلاً مثل (Closures) و (Hoisting). هنا لجأت إلى يوتيوب وشاهدت فيديوهات قصيرة تشرح هذه المفاهيم بطرق بصرية، مما ساعد كثيرًا.</p>
-  </li>
-</ul>
-
-<h2 id="الشهر-الثالث-بناء-المشاريع-الصغيرة-الخروج-من-جحيم-الدروس">الشهر الثالث: بناء المشاريع الصغيرة (الخروج من جحيم الدروس)</h2>
-
-<p>في هذه المرحلة، أدركت أنني وقعت في فخ متابعة الدروس التعليمية. كنت جيدًا في اتباع التعليمات، لكن هل يمكنني البناء من الصفر؟ قررت أن أوقف جميع الدروس مؤقتًا وأبني ثلاثة مشاريع بمفردي.</p>
-
-<ul>
-  <li><strong>ثلاثي معرض الأعمال</strong>: اخترت ثلاثة مشاريع كلاسيكية للمبتدئين:
-    <ol>
-      <li><strong>مولّد اقتباسات عشوائية</strong>: ينقر المستخدم على زر، فيظهر اقتباس جديد يتم جلبه من واجهة برمجة تطبيقات (API) مجانية.</li>
-      <li><strong>تطبيق قائمة مهام (To-Do List)</strong>: يمكنك إضافة المهام، ووضع علامة عليها كمكتملة، وحذفها.</li>
-      <li><strong>صفحة هبوط لشركة خيالية</strong>: صفحة ويب جذابة من صفحة واحدة لشركة من نسج خيالي.</li>
-    </ol>
-  </li>
-  <li><strong>العملية الحقيقية</strong>: هذه كانت أهم مرحلة في رحلتي. كنت أبدأ كل مشروع بورقة وقلم، أخطط لما أريد بناءه، ثم أفتح محرر الأكواد الفارغ وأبدأ. كنت أتعثر كل 10 دقائق. سلاحي السري؟ جوجل و Stack Overflow. تعلمت كيف أصيغ أسئلتي، وكيف أقرأ حلول الآخرين وأفهمها لأطبقها على مشكلتي. <strong>هنا تعلمت كيف أحل المشكلات، وليس فقط كيف أكتب الكود</strong>.</li>
-</ul>
-
-<p>في نهاية الشهر، كان لدي موقع شخصي بسيط (تمت استضافته مجانًا على Netlify) يعرض هذه المشاريع الثلاثة.</p>
-
-<h2 id="الشهر-الرابع-التخصص-في-إطار-عمل-framework">الشهر الرابع: التخصص في إطار عمل (Framework)</h2>
-
-<p>أدركت أن معظم الوظائف تتطلب معرفة بأحد أطر عمل جافاسكريبت الحديثة. بعد بحث، اخترت <strong>React</strong> لشعبيتها الكبيرة والطلب المرتفع عليها.</p>
-
-<ul>
-  <li>
-    <p><strong>منحنى تعلم جديد</strong>: تعلم React كان تحديًا جديدًا. مفاهيم مثل المكونات (Components)، الحالة (State)، والخصائص (Props) كانت جديدة تمامًا. هذه المرة، استثمرت مبلغًا صغيرًا (10 دولارات) في دورة highly-rated على منصة Udemy.</p>
-  </li>
-  <li>
-    <p><strong>المشروع</strong>: أفضل طريقة لتعلم إطار عمل جديد هي إعادة بناء مشروع قديم باستخدامه. قمت بإعادة بناء “تطبيق قائمة المهام” الخاص بي، ولكن هذه المرة باستخدام React. سمح لي هذا بالتركيز على “طريقة React” في التفكير، لأن منطق التطبيق كان واضحًا لدي بالفعل.</p>
-  </li>
-</ul>
-
-<h2 id="الشهر-الخامس-البحث-عن-العميل-الأول---التحضير-والتسويق">الشهر الخامس: البحث عن العميل الأول - التحضير والتسويق</h2>
-
-<p>تحول تركيزي الآن من التعلم إلى التسويق.</p>
-
-<ul>
-  <li><strong>تلميع الواجهة</strong>: قمت بتجديد موقعي الشخصي بالكامل ليبدو احترافيًا. كتبت دراسات حالة قصيرة لكل مشروع.</li>
-  <li><strong>الانضمام إلى Upwork</strong>: أنشأت ملفًا شخصيًا مفصلاً على Upwork. لم أذكر أنني “متعلم”، بل قدمت نفسي كـ “مطور واجهة أمامية متخصص في بناء مواقع سريعة ومتجاوبة باستخدام React”.</li>
-  <li><strong>التواصل المحلي</strong>: أخبرت كل أصدقائي وأفراد عائلتي أنني بدأت في تقديم خدمات تصميم وتطوير المواقع للشركات الصغيرة.</li>
-  <li><strong>جدار الرفض</strong>: بدأت في إرسال عروض على Upwork. أرسلت 10، ثم 20 عرضًا. النتيجة؟ صمت تام أو رفض. كان الأمر محبطًا للغاية، لكنني لم أيأس. بدأت أحلل عروضي وأدركت أنها كانت عامة جدًا. تعلمت أن أخصص كل عرض للمشروع المحدد وأن أركز على حل مشكلة العميل.</li>
-</ul>
-
-<h2 id="الشهر-السادس-أول-دولار-والإنجاز-الكبير">الشهر السادس: أول دولار والإنجاز الكبير</h2>
-
-<p>جاءت الفرصة من حيث لم أتوقع.</p>
-
-<ul>
-  <li><strong>الفرصة</strong>: صديق لأحد أقاربي كان قد بدأ مشروعًا صغيرًا لتقديم الطعام المنزلي. كان يعتمد كليًا على صفحة فيسبوك، وكان يحتاج إلى واجهة أكثر احترافية. ميزانيته كانت شبه معدومة.</li>
-  <li><strong>العرض</strong>: لم أتحدث معه عن React أو CSS. تحدثت لغته. قلت له: “أنت بحاجة إلى موقع بسيط يعرض قائمة طعامك بشكل جذاب، وصور لأطباقك، ونموذج اتصال سهل ليتمكن العملاء الجدد من طلب خدماتك”. عرضت عليه صفحة الهبوط التي بنيتها للشركة الخيالية كنموذج.</li>
-  <li><strong>المشروع</strong>: اتفقنا على مبلغ رمزي (حوالي 200 دولار) لبناء موقع من صفحة واحدة. لم يكن المال هو الهدف.</li>
-  <li><strong>التجربة</strong>: كانت مرعبة ومثيرة في نفس الوقت. كنت أتعامل مع شخص حقيقي لديه توقعات. كنت أرسل له تحديثات منتظمة. واجهت مشاكل لم أواجهها من قبل. وفي النها-ية، سلمت المشروع في الوقت المحدد، وكان سعيدًا جدًا بالنتيجة.</li>
-  <li><strong>الشعور</strong>: لحظة وصول أول دفعة مالية إلى حسابي كانت لحظة لن أنساها ما حييت. لم تكن مجرد 200 دولار. كانت إثباتًا. إثباتًا على أنني أستطيع تعلم مهارة قيّمة من الصفر بنفسي، واستخدامها لخلق قيمة حقيقية لشخص آخر، والحصول على مقابل مادي لذلك.</li>
-</ul>
-
-<h2 id="الخلاصة"><strong>الخلاصة</strong></h2>
-
-<p>قصتي ليست فريدة من نوعها. سر النجاح لم يكن العبقرية، بل كان مزيجًا من ثلاثة أشياء: <strong>الاستمرارية</strong> (ساعتان كل يوم)، <strong>التعلم القائم على المشاريع</strong> (توقف عن المشاهدة وابدأ بالبناء)، و<strong>المثابرة</strong> (لا تدع الرفض يوقفك).</p>
-
-<p>إذا كنت تقرأ هذا الآن وتشعر بنفس الضياع الذي شعرت به، فاعلم أن الطريق أمامك واضح. رحلتك من الصفر إلى أول دولار تبدأ اليوم. ابدأ صغيرًا، كن منتظمًا، ولا تتوقف عن البناء أبدًا.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 15, 2025 12:00 AM UTC by
-            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
-              >Ahmed Bouchefra</a
-            >
-          </div>
-          <a
-            href="https://efficientcoder.net/zero-to-first-dollar/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://efficientcoder.net/web-desktop/" class="hover:underline"
-              >لغات الويب لتطوير برامج سطح المكتب: دليلك لاستخدام Electron و Tauri</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>لفترة طويلة، كان عالم تطوير البرمجيات مقسمًا إلى معسكرين واضحين: مطورو الويب الذين يتحدثون لغة HTML, CSS, و JavaScript، ومطورو برامج سطح المكتب (Desktop) الذين يستخدمون لغات أكثر تعقيدًا وصعوبة مثل C++ أو C# أو Java لبناء تطبيقات تعمل على أنظمة التشغيل مثل ويندوز وماك. كان الانتقال بين هذين العالمين يتطلب تعلم مجموعة جديدة كاملة من المهارات والأدوات.</p>
-
-<p>ولكن، ماذا لو أخبرتك أن هذا الجدار قد انهار تمامًا؟ ماذا لو كان بإمكانك، بنفس مهارات تطوير الويب التي تملكها بالفعل، بناء تطبيقات سطح مكتب قوية، تعمل على مختلف أنظمة التشغيل، وتبدو وكأنها تطبيقات أصلية (Native)؟ هذا ليس خيالًا علميًا، بل هو الواقع الذي تعمل به العديد من التطبيقات الشهيرة التي تستخدمها يوميًا. برامج مثل <strong>Visual Studio Code</strong>، <strong>Slack</strong>، <strong>Discord</strong>، و <strong>Figma</strong> كلها مبنية باستخدام تقنيات الويب.</p>
-
-<p>هذه الثورة أصبحت ممكنة بفضل أطر عمل (Frameworks) عبقرية تقوم بتغليف تطبيقات الويب الخاصة بك داخل حاوية سطح مكتب أصلية. في هذا المقال، سنستكشف هذا العالم المثير، ونركز على أشهر لاعبين في هذا المجال: العملاق <strong>Electron</strong> والمنافس الصاعد بقوة <strong>Tauri</strong>، لنريك كيف يمكنك توسيع نطاق مهاراتك من الويب إلى سطح المكتب.</p>
-
-<h2 id="شرح-السحر-كيف-تعمل-هذه-التقنية">شرح السحر: كيف تعمل هذه التقنية؟</h2>
-
-<p>الفكرة الأساسية بسيطة بشكل مدهش. هذه الأطر تقوم بما يلي:</p>
-<ol>
-  <li><strong>إنشاء حاوية أصلية</strong>: يتم إنشاء نافذة تطبيق عادية كما تراها في أي برنامج على ويندوز أو ماك.</li>
-  <li><strong>تضمين محرك ويب</strong>: بداخل هذه النافذة، يتم تشغيل محرك ويب (Web Rendering Engine)، وهو نفس الجزء من المتصفح المسؤول عن عرض صفحات الويب. في حالة Electron، يكون هذا المحرك هو <strong>Chromium</strong> (المحرك الذي يعمل به جوجل كروم).</li>
-  <li><strong>تشغيل الكود الخاص بك</strong>: يتم تحميل وتشغيل كود HTML, CSS, و JavaScript الخاص بك داخل محرك الويب هذا، تمامًا كما لو كان في علامة تبويب في المتصفح.</li>
-  <li><strong>بناء جسر للوصول إلى النظام</strong>: هذا هو الجزء السحري. توفر أطر العمل هذه “جسراً” أو واجهة برمجة تطبيقات (API) تسمح لكود جافاسكريبت الخاص بك بالقيام بأشياء لا يمكنه القيام بها عادةً في المتصفح، مثل قراءة وكتابة الملفات على القرص الصلب، إرسال إشعارات سطح المكتب، إنشاء قوائم مخصصة للتطبيق، وغيرها من الميزات الأصلية.</li>
-</ol>
-
-<p>باختصار، أنت تبني موقع ويب، ثم تضعه في صندوق خاص يمنحه صلاحيات وقدرات برنامج سطح المكتب الحقيقي.</p>
-
-<hr />
-
-<h2 id="العملاق-electron---القوة-والمرونة">العملاق: Electron - القوة والمرونة</h2>
-
-<p>إلكترون، الذي طورته GitHub، هو الرائد والأكثر نضجًا في هذا المجال. إنه الخيار الذي تم اختباره في معارك حقيقية، وهو القوة الدافعة وراء بعض أشهر التطبيقات الموجودة اليوم.</p>
-
-<ul>
-  <li>
-    <p><strong>كيف يعمل؟</strong>: يقوم إلكترون بتغليف نسخة كاملة من متصفح Chromium ومعه بيئة تشغيل JavaScript الخلفية Node.js داخل كل تطبيق تقوم ببنائه. هذا يعني أن تطبيقك يأتي مع “بطارياته الخاصة” ويعمل بشكل مستقل تمامًا.</p>
-  </li>
-  <li><strong>المزايا 👍</strong>:
-    <ul>
-      <li><strong>النضج والاستقرار</strong>: نظرًا لوجوده منذ فترة طويلة، فإن إلكترون مستقر للغاية، وموثق بشكل ممتاز، ويمتلك مجتمعًا ضخمًا. إذا واجهت مشكلة، فمن شبه المؤكد أن شخصًا آخر قد واجهها وحلها قبلك.</li>
-      <li><strong>قوة Node.js الكاملة</strong>: الوصول الكامل إلى واجهات برمجة تطبيقات Node.js يعني أنه يمكنك استخدام أي حزمة من نظام npm البيئي الهائل في “الواجهة الخلفية” لتطبيق سطح المكتب الخاص بك، مما يمنحك قدرات غير محدودة تقريبًا.</li>
-      <li><strong>سجل حافل بالنجاح</strong>: نجاح تطبيقات مثل VS Code يثبت أن إلكترون قادر على بناء برامج معقدة واحترافية للغاية.</li>
-    </ul>
-  </li>
-  <li><strong>العيوب 👎</strong>:
-    <ul>
-      <li><strong>حجم التطبيق الكبير</strong>: بما أن كل تطبيق يأتي مع متصفح كامل بداخله، فإن أبسط تطبيق “Hello World” يمكن أن يتجاوز حجمه 100 ميغابايت.</li>
-      <li><strong>استهلاك عالي للذاكرة (RAM)</strong>: تشغيل نسخة كاملة من Chromium لكل تطبيق يمكن أن يكون شرهًا للذاكرة، وهو الانتقاد الأكثر شيوعًا الموجه لإلكترون.</li>
-    </ul>
-  </li>
-  <li><strong>لمن هو مناسب؟</strong>: للفرق والمطورين الذين يحتاجون إلى بناء تطبيقات معقدة بسرعة، ويريدون الاستفادة من النظام البيئي الضخم لـ Node.js، وحيث لا يمثل حجم التطبيق واستهلاك الذاكرة أولوية قصوى.</li>
-</ul>
-
-<hr />
-
-<h2 id="المنافس-tauri---الأداء-والأمان">المنافس: Tauri - الأداء والأمان</h2>
-
-<p>Tauri هو البديل الحديث الذي اكتسب شعبية هائلة كحل أخف وأسرع وأكثر أمانًا من إلكترون.</p>
-
-<ul>
-  <li>
-    <p><strong>كيف يعمل؟ (الاختلاف الجوهري)</strong>: بدلاً من تغليف متصفح كامل، يستخدم Tauri <strong>مكتبة عرض الويب الأصلية (WebView)</strong> الموجودة بالفعل في نظام التشغيل (WebView2 في ويندوز، WebKit في ماك). أما بالنسبة للواجهة الخلفية، فبدلاً من Node.js، فإنه يستخدم واجهة خلفية مكتوبة بلغة <strong>Rust</strong>، وهي لغة برمجة تشتهر بسرعتها وأمانها الفائق.</p>
-  </li>
-  <li><strong>المزايا 👍</strong>:
-    <ul>
-      <li><strong>حجم تطبيق صغير جدًا</strong>: نظرًا لأنه لا يحزم متصفحًا، يمكن أن يكون حجم تطبيق Tauri صغيرًا بشكل لا يصدق، غالبًا أقل من 5 ميغابايت مقارنة بـ 100+ ميغابايت لإلكترون.</li>
-      <li><strong>استهلاك منخفض للذاكرة</strong>: استخدام WebView الأصلي للنظام أكثر كفاءة في استخدام الموارد بكثير من تشغيل نسخة كاملة من Chromium.</li>
-      <li><strong>أمان عالي</strong>: الواجهة الخلفية المكتوبة بـ Rust توفر أمانًا على مستوى الذاكرة، والتصميم الأمني لـ Tauri يتطلب منك تفعيل الصلاحيات التي يحتاجها تطبيقك بشكل صريح، مما يقلل من سطح الهجوم.</li>
-      <li><strong>أداء ممتاز</strong>: لغة Rust سريعة للغاية، مما يجعل العمليات الخلفية في تطبيقك فائقة الأداء.</li>
-    </ul>
-  </li>
-  <li><strong>العيوب 👎</strong>:
-    <ul>
-      <li><strong>نظام بيئي أحدث</strong>: على الرغم من نموه السريع، فإن مجتمعه ومكتباته ليست بحجم مجتمع إلكترون. لا يمكنك ببساطة استخدام أي مكتبة npm للقيام بمهام خلفية.</li>
-      <li><strong>احتمالية عدم التوافق</strong>: الاعتماد على WebViews مختلفة عبر أنظمة التشغيل قد يؤدي إلى اختلافات طفيفة في كيفية عرض واجهتك، مما يتطلب اختبارًا إضافيًا.</li>
-      <li><strong>يتطلب معرفة بـ Rust للمهام المعقدة</strong>: بينما تبني الواجهة الأمامية بتقنيات الويب، فإن أي تكامل عميق مع النظام يتطلب كتابة بعض الكود بلغة Rust، والتي منحنى تعلمها أكثر حدة من جافاسكريبت.</li>
-    </ul>
-  </li>
-  <li><strong>لمن هو مناسب؟</strong>: للمطورين الذين يضعون الأداء والأمان وصغر حجم التطبيق كأولوية قصوى. ممتاز لبناء أدوات مساعدة سريعة وخفيفة، ولأولئك المستعدين لتعلم بعض أساسيات Rust للاستفادة من قوته.</li>
-</ul>
-
-<hr />
-
-<h2 id="مقارنة-سريعة-electron-مقابل-tauri">مقارنة سريعة: Electron مقابل Tauri</h2>
-
-<table>
-  <thead>
-    <tr>
-      <th style="text-align: left;">الميزة</th>
-      <th style="text-align: left;">Electron</th>
-      <th style="text-align: left;">Tauri</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td style="text-align: left;"><strong>حجم التطبيق</strong></td>
-      <td style="text-align: left;">كبير جدًا (100+ MB)</td>
-      <td style="text-align: left;">صغير جدًا (أقل من 5 MB)</td>
-    </tr>
-    <tr>
-      <td style="text-align: left;"><strong>استهلاك الذاكرة</strong></td>
-      <td style="text-align: left;">عالي</td>
-      <td style="text-align: left;">منخفض جدًا</td>
-    </tr>
-    <tr>
-      <td style="text-align: left;"><strong>الأمان</strong></td>
-      <td style="text-align: left;">جيد</td>
-      <td style="text-align: left;">ممتاز (بفضل Rust)</td>
-    </tr>
-    <tr>
-      <td style="text-align: left;"><strong>لغة الواجهة الخلفية</strong></td>
-      <td style="text-align: left;">JavaScript (Node.js)</td>
-      <td style="text-align: left;">Rust</td>
-    </tr>
-    <tr>
-      <td style="text-align: left;"><strong>المجتمع والنضج</strong></td>
-      <td style="text-align: left;">ضخم وناضج جدًا</td>
-      <td style="text-align: left;">متنامٍ وسريع التطور</td>
-    </tr>
-    <tr>
-      <td style="text-align: left;"><strong>سهولة البداية</strong></td>
-      <td style="text-align: left;">سهلة جدًا لمطوري الويب</td>
-      <td style="text-align: left;">سهلة للواجهة الأمامية، تتطلب تعلم Rust للواجهة الخلفية</td>
-    </tr>
-  </tbody>
-</table>
-
-<hr />
-
-<h2 id="كيف-تبدأ">كيف تبدأ؟</h2>
-
-<p>بغض النظر عن اختيارك، فإن عملية البدء متشابهة ومألوفة لمطوري الويب.</p>
-<ol>
-  <li>يمكنك استخدام إطار عمل الواجهة الأمامية المفضل لديك (React, Vue, Svelte, أو حتى HTML و CSS فقط).</li>
-  <li>ستستخدم واجهة سطر الأوامر (CLI) التي يوفرها إلكترون أو Tauri لإنشاء مشروع جديد.</li>
-  <li>عملية التطوير تشبه إلى حد كبير تطوير الويب. ستقوم بتشغيل خادم تطوير محلي، وستظهر تغييراتك على الفور في نافذة التطبيق.</li>
-  <li>الفرق الرئيسي هو أنك ستبدأ في تعلم واجهات برمجة التطبيقات (APIs) الخاصة بالإطار الذي اخترته للتواصل بين واجهتك الأمامية (WebView) والعمليات الخلفية (Node.js أو Rust) للوصول إلى ميزات النظام.</li>
-</ol>
-
-<h2 id="الخلاصة"><strong>الخلاصة</strong></h2>
-
-<p>لقد ولّت الأيام التي كانت فيها مهاراتك كمطور ويب محصورة داخل المتصفح. اليوم، مهاراتك في HTML, CSS, و JavaScript هي أكثر قوة من أي وقت مضى، وهي تذكرتك لدخول عالم تطوير برامج سطح المكتب دون الحاجة إلى تعلم لغات صعبة ومعقدة.</p>
-
-<p>الاختيار بين <strong>Electron</strong> و <strong>Tauri</strong> يعتمد على أولوياتك: اختر <strong>Electron</strong> للقوة والمرونة والنظام البيئي الضخم إذا كان حجم التطبيق والموارد لا يمثلان مشكلة. واختر <strong>Tauri</strong> للأداء الفائق والأمان والحجم الصغير إذا كانت الكفاءة هي هدفك الأسمى. في كلتا الحالتين، أنت تستخدم الأدوات التي تعرفها وتحبها بالفعل لبناء تطبيقات يمكن أن تصل إلى ملايين المستخدمين على أي نظام تشغيل.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 15, 2025 12:00 AM UTC by
-            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
-              >Ahmed Bouchefra</a
-            >
-          </div>
-          <a
-            href="https://efficientcoder.net/web-desktop/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1616,12 +1455,12 @@ The problem is our use of whitespace.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8860</a></li>
-    <li><a>Unique Feeds: 409</a></li>
+    <li><a>Total Entries: 8856</a></li>
+    <li><a>Unique Feeds: 406</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (520)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (450)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Matt Layman (343)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (213)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (520)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (451)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Matt Layman (343)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (213)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
