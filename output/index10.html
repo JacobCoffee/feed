@@ -53,6 +53,526 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lukeplant.me.uk/blog/posts/why-im-not-letting-the-juniors-use-genai-for-coding/" class="hover:underline"
+              >Why I’m not letting the juniors use GenAI for coding</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>TLDR: because I want them to become seniors one day, and I want them to enjoy being developers</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 26, 2025 08:30 PM UTC by
+            <a href="http://lukeplant.me.uk/blog/categories/python/atom/index.xml" class="link link-hover text-primary"
+              >Luke Plant</a
+            >
+          </div>
+          <a
+            href="https://lukeplant.me.uk/blog/posts/why-im-not-letting-the-juniors-use-genai-for-coding/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2025/7/26/virtual-threads/" class="hover:underline"
+              >From Async/Await to Virtual Threads</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Last November I wrote a post about how the programming interface of threads
+<a href="/2024/11/18/threads-beat-async-await/">beats the one of async/await</a>.  In May,
+Mark Shannon brought up the idea of <a href="https://discuss.python.org/t/add-virtual-threads-to-python/91403">virtual threads for
+Python</a>
+on Python&#8217;s discussion board and also referred back to that article that I
+wrote.  At EuroPython we had a chat about that topic and that reminded me that
+I just never came around to writing part two of that article.</p>
+<h2>How We Got Here</h2>
+<p>The first thing to consider is that async/await did actually produce one
+very good outcome for Python: it has exposed many more people to concurrent
+programming.  By introducing a syntax element into the programming language, the
+problem of concurrent programming has been exposed to more people.  The
+unfortunate side effect is that it requires a very complex internal machinery
+that leaks into the programming language to the user and it requires <a href="https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/">colored
+functions</a>.</p>
+<p>Threads, on the other hand, are in many ways a much simpler concept, but the
+threading APIs that have proliferated all over the place over the last
+couple of generations leave a lot to be desired.  Without doubt, async/await
+in many ways improved on that.</p>
+<p>One key part of how async/await works in Python is that nothing really
+happens until you call await.  You&#8217;re guaranteed not to be suspended.
+Unfortunately, recent changes with
+<a href="https://docs.python.org/3/howto/free-threading-python.html">free-threading</a>
+make that guarantee rather pointless.  Because you still need to write code to
+be aware of other threads, and so now we have the complexity of both the async
+ecosystem and the threading system at all times.</p>
+<p>This is a good moment to rethink if we maybe have a better path in front of us
+by fully embracing threads.</p>
+<h2>Structured, Virtual Threads</h2>
+<p>Another really positive thing that came out of async in Python was that a lot of
+experimentation was made to improve the ergonomics of those APIs.  The most
+important innovation has been the idea of <a href="https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/">structured
+concurrency</a>.
+Structured concurrency is all about the idea of disallowing one task to outlive
+its parent. And this is also a really good feature because it allows, for
+instance, a task to also have a relationship to the parent task, which makes the
+flow of information (such as context variables) much clearer than traditional
+threads and thread local variables do, where threads have effectively no real
+relationships to their parents. </p>
+<p>Unfortunately, task groups (the implementation of structured concurrency in
+Python) are a rather recent addition, and unfortunately its rather strict
+requirements on cancellation have often not been sufficiently implemented in
+many libraries.  To understand why this matters, you have to understand how
+structured concurrency works.  Basically, when you spawn a task as a child of
+another task, then any adjacent task that fails will also cause the cancellation
+of all the other ones.  This requires robust cancellations.</p>
+<p>And robust cancellations are really hard to do when some of those tasks involve
+real threads.  For instance, the very popular <code>aiofiles</code> library uses a thread
+pool to move I/O operations into an I/O thread since there is no really good way
+on different platforms to get real async I/O behavior out of standard files.
+However, cancellations are not supported.  That causes a problem: if you spawn
+multiple tasks, some of which are blocking on a read (with <code>aiofiles</code>) that
+would only succeed if another one of those tasks concludes, you can actually end
+up deadlocking yourself in the light of cancellations.  This is not a
+hypothetical problem.  There are, in fact, quite a few ways to end up in a
+situation where the presence of <code>aiofiles</code> in a task group will cause an
+interpreter not to shut down properly.  Worse, the exception that was actually
+caught by the task group will be invisible until the blocking read on the other
+thread pool has been interrupted by a signal like a keyboard interrupt.  This is
+a pretty disappointing developer experience. </p>
+<p>In many ways, what we really want is to go back to the drawing board and say,
+&#8220;What does a world look like that only ever would have used threads with a
+better API?&#8221;</p>
+<h2>Only Threads</h2>
+<p>So if we have only threads, then we are back to some performance challenges
+that motivated asyncio in the first place.  The solution for this will involve
+virtual threads.  You can read all about them <a href="/2024/11/18/threads-beat-async-await/">in the previous
+post</a>.</p>
+<p>One of the key parts of enabling virtual threads is also a commitment to
+handling many of the challenges with async I/O directly as part of the runtime.
+That means that if there is a blocking operation, we will have to ensure that
+the virtual thread is put back to the scheduler, and another one has a chance
+to run.</p>
+<p>But that alone will feel a little bit like a regression because we also want to
+ensure that we do not lose structured concurrency.</p>
+<h2>The Better API</h2>
+<p>Let&#8217;s start simple: what does Python code look like where we download an
+arbitrary number of URLs sequentially?  It probably looks a bit like this:</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+        <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">results</span>
+</pre></div>
+<p>No, this is intentionally not using any async or await, because this is not
+what we want.  We want the most simple thing: blocking APIs.</p>
+<p>The general behavior of this is pretty simple: we are going to download a bunch
+of URLs, but if any one of them fails, we&#8217;ll basically abort and raise an
+exception, and will not continue downloading any other ones. The results that
+we have collected up to that point are lost.</p>
+<p>But how would we stick with this but introduce parallelism?  How can we
+download more than one at a time?  If a language were to support structured
+concurrency and virtual threads, we could achieve something similar with some
+imaginary syntax like this:</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">await</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="k">async</span><span class="p">:</span>
+                <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">results</span>
+</pre></div>
+<p>I&#8217;m intentionally using await and async here, but you can see from the usage
+that it&#8217;s actually inverted compared to what we have today.  Here is what this
+would do:</p>
+<ul>
+<li>await: this creates a structured thread group.  Any spawned thread
+(async) within it attaches to this thread group and is awaited.  If any of
+the threads fails, future spawns are blocked and existing threads are told to
+cancel.</li>
+<li>async: you can think of this as being a function declaration that is paired
+with a spawn.  The entire body thus runs in another task.  Because there is a
+parent/child relationship of threads, the child inherits the context of the
+parent.  This is also how edge and level cancellation can travel to threads.</li>
+</ul>
+<p>Behind the scenes, something like this would happen:</p>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">():</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">_thread</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+            <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">ThreadGroup</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">_thread</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">results</span>
+</pre></div>
+<p>Note that all threads here are virtual threads.  They behave like threads, but
+they might be scheduled on different kernel threads.  If any one of those
+spawned threads fails, the thread group itself fails and also prevents further
+spawn calls from taking place.  A spawn on a failed thread group would also no
+longer be permitted.</p>
+<p>In the grand scheme of things, this is actually quite beautiful.  Unfortunately,
+it does not match all that well to Python.  This syntax would be unexpected
+because Python does not really have an existing concept of a hidden function
+declaration.  Python&#8217;s scoping also prevents this from working all that well.
+Because Python doesn&#8217;t have syntax for variable declarations, Python actually
+only has a single scope for functions.  This is quite unfortunate because, for
+instance, it means that a helper declared in a loop body cannot really close
+over the loop iteration variable.</p>
+<p>Regardless, I think the important thing you should take away from this is that
+this type of programming does not require thinking about
+<a href="https://en.wikipedia.org/wiki/Futures_and_promises">futures</a>.  Even though it
+could support futures, you can actually express a whole lot of programming code
+without needing to defer to an abstraction like that.</p>
+<p>As a result, there are much fewer concepts that one has to consider when
+working with a system like this.  I do not have to expose a programmer to the
+concept of futures or promises, async tasks, or anything like that. </p>
+<h2>API Compromises</h2>
+<p>Now, I don&#8217;t think that such a particular syntax would fit well into Python.
+And it is somewhat debatable if automatic thread groups are the right solution.
+You could also model this after what we have with async/await and make thread
+groups explicit:</p>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+    <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">()</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">results</span>
+</pre></div>
+<p>This largely still has the same behavior, but it uses a little bit more explicit
+operations and it does require you to create more helper functions.  But it
+still fully avoids having to work with promises or futures.</p>
+<h2>Complexity Goes Where It Belongs</h2>
+<p>What is so important about this entire concept is that it moves a lot of the
+complexity of concurrent programming where it belongs: into the interpreter and
+the internal APIs.  For instance, the dictionary in <code>results</code> has to be locked
+for this to work.  Likewise, the APIs that <code>fetch_url</code> would use need to support
+cancellation and the I/O layer needs to suspend the virtual thread and go back to
+the scheduler.  But for the majority of programmers, all of this is hidden.</p>
+<p>I also think that some of the APIs really aged badly for supporting
+well-behaved concurrent systems.  For instance, I very much prefer Rust&#8217;s idea
+of enclosing values in a mutex over carrying a mutex somewhere on the side.</p>
+<p>Also, semaphores are an incredibly potent system to limit concurrency and to
+create more stable systems.  Something like this could also become a part of a
+thread group, directly limiting how many spawns can happen simultaniously.</p>
+<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results_mutex</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">results_mutex</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span> <span class="k">as</span> <span class="n">results</span><span class="p">:</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">Mutex</span><span class="p">(</span><span class="n">MyResultStore</span><span class="p">())</span>
+
+    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">(</span><span class="n">max_concurrency</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">results</span>
+</pre></div>
+<h2>Futures</h2>
+<p>There will be plenty of reasons to use futures and they would continue to hang
+around. One way to get a future is to hold on to the return value of the
+<code>spawn</code> method:</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+    <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+    <span class="n">futures</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">()</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">futures</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">url</span><span class="p">,</span> <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">))))</span>
+
+    <span class="k">return</span> <span class="p">{</span><span class="n">url</span><span class="p">:</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">()</span> <span class="k">for</span> <span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">future</span><span class="p">)</span> <span class="ow">in</span> <span class="n">futures</span><span class="p">}</span>
+</pre></div>
+<h2>Spawn Without Thread Groups</h2>
+<p>One big question is if spawn should work if there is no thread group.  For
+instance, in Trio, which is a Python async library, the decision was made that
+you have to always have the equivalent of a thread group — they call it a
+nursery — to spawn an operation.  I think that this is a very sensible policy,
+but there are situations where you cannot really do that.  I can imagine various
+different alternatives for this, such as having a default thread group hang
+around for background tasks that is implicitly joined when the process is
+shutting down.  However, I think the most important thing is to bring as much of
+the intended behavior to the default APIs.</p>
+<h2>Future of Async Await?</h2>
+<p>Inside your system, what would be the future of async/await?  Well, that is up
+for debate, but it does seem rather reasonable to find ways to continue
+asynchronous functionality for already existing code, but I do think it would
+be entirely unnecessary for code in the future.</p>
+<p>I would like you to consider this as a conversation starter about virtual
+threads and less about a fully fleshed out idea.  There are a lot of questions
+open about this, particularly in the context of Python, but the idea of no
+longer having to deal with colored functions really appeals to me and I hope we
+can explore it a bit.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 26, 2025 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2025/7/26/virtual-threads/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202507/coverage_7100_patch.html" class="hover:underline"
+              >Coverage 7.10.0: patch</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Years ago I greeted a friend returning from vacation and asked how it had
+been. She answered, &#8220;It was good, I got a lot done!&#8221; I understand that feeling.
+I just had a long vacation myself, and used the time to clean up some old issues
+and add some new features in <a href="https://pypi.org/project/coverage/" rel="external noopener">coverage.py v7.10</a>.</p><p>The major new feature is a configuration option,
+<a href="https://coverage.readthedocs.io/en/latest/config.html#run-patch" rel="external noopener"><code>[run] patch</code></a>.  With it, you specify named
+patches that coverage can use to monkey-patch some behavior that gets in the way
+of coverage measurement.</p><p>The first is <code>subprocess</code>.  Coverage works great when you start your
+program with coverage measurement, but has long had the problem of how to also
+measure the coverage of sub-processes that your program created.  The existing
+solution had been a complicated two-step process of creating obscure .pth files
+and setting environment variables.  Whole projects appeared on PyPI to handle
+this for you.</p><p>Now, <code>patch = subprocess</code> will do this for you automatically, and clean
+itself up when the program ends.  It handles sub-processes created by the
+<a href="https://docs.python.org/3/library/subprocess.html#module-subprocess" rel="external noopener">subprocess</a> module, the
+<a href="https://docs.python.org/3/library/os.html#os.system" rel="external noopener">os.system()</a> function, and any of the
+<a href="https://docs.python.org/3/library/os.html#os.execl" rel="external noopener">execv</a> or <a href="https://docs.python.org/3/library/os.html#os.spawnl" rel="external noopener">spawnv</a> families of
+functions.</p><p>This alone has spurred <a href="https://bsky.app/profile/did:plc:yj4vzsbzzkpswr7x5yagzhhx/post/3luqfffiiqk27" rel="external noopener">one user to exclaim</a>,</p><blockquote><div><p>The latest release of Coverage feels like a Christmas present!
+The native support for Python subprocesses is so good!</p></div></blockquote><p>Another patch is <code>_exit</code>.  This patches
+<a href="https://docs.python.org/3/library/os.html#os._exit" rel="external noopener">os._exit()</a> so that coverage saves its data before
+exiting. The os._exit() function is an immediate and abrupt termination of the
+program, skipping all kinds of registered clean up code.  This patch makes it
+possible to collect coverage data from programs that end this way.</p><p>The third patch is <code>execv</code>.  The <a href="https://docs.python.org/3/library/os.html#os.execl" rel="external noopener">execv</a> functions
+end the current program and replace it with a new program in the same process.
+The <code>execv</code> patch arranges for coverage to save its data before the
+current program is ended.</p><p>Now that these patches are available, it seems silly that it&#8217;s taken so long.
+They (mostly) weren&#8217;t difficult. I guess it took looking at the old issues,
+realizing the friction they caused, and thinking up a new way to let users
+control the patching.  Monkey-patching is a bit invasive, so I&#8217;ve never wanted
+to do it implicitly.  The patch option gives the user an explicit way to request
+what they need without having to get into the dirty details themselves.</p><p>Another process-oriented feature was contributed by Arkady Gilinsky: with
+<code>--save-signal=USR1</code> you can specify a user signal that coverage will
+attend to.  When you send the signal to your running coverage process, it will
+save the collected data to disk.  This gives a way to measure coverage in a
+long-running process without having to end the process.</p><p>There were some other fixes and features along the way, like better HTML
+coloring of multi-line statements, and more default exclusions
+(<code>if TYPE_CHECKING:</code> and <code>...</code>).</p><p>It feels good to finally address some of these pain points.  I also closed
+some stale issues and pull requests.  There is more to do, always more to do,
+but this feels like a real step forward.  Give <a href="https://coverage.readthedocs.io/en/7.10.0/changes.html#version-7-10-0-2025-07-24" rel="external noopener">coverage
+7.10.0</a> a try and let me know how it works for you.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 24, 2025 11:03 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202507/coverage_7100_patch.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://testdriven.io/blog/django-sevalla/" class="hover:underline"
+              >Deploying a Django App to Sevalla</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This tutorial looks at how to deploy a Django application to Sevalla.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 24, 2025 10:28 PM UTC by
+            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
+              >TestDriven.io</a
+            >
+          </div>
+          <a
+            href="https://testdriven.io/blog/django-sevalla/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonshow.com/p/writing-creating-tui-applications" class="hover:underline"
+              >Writing Creating TUI Applications with Textual and Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, Mike Driscoll talks about his latest book, Creating TUI Applications with Textual and Python.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 24, 2025 08:31 PM UTC by
+            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
+              >The Python Show</a
+            >
+          </div>
+          <a
+            href="https://www.pythonshow.com/p/writing-creating-tui-applications"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/07/psf-board-nominations-opening-july-29th.html" class="hover:underline"
+              >PSF Board Election Nominations Opening July 29th</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This year’s PSF Board Election nomination period opens next week on Tuesday, July 29th, 2:00 pm UTC and closes on Tuesday, August 12th, 2:00 pm UTC. Who runs for the board? People who care about the Python community, who want to see it flourish and grow, and also have a few hours a month to attend regular meetings, serve on committees, participate in conversations, and promote the Python community.&nbsp;</p><p>This year, there are 4 seats open on the PSF Board. Check out who is currently on the PSF Board on <a href="https://www.python.org/psf/board/" target="_blank">our website</a>. (Dawn Wages, Jannis Leidel, Kushal Das, and Simon Willison are at the end of their current terms.)&nbsp;Check out the following resources to learn more about the PSF, as well as what being a part of the PSF Board entails:<br /></p><ul style="text-align: left;"><li><a href="https://www.youtube.com/watch?v=ZLKj6FaQA4M" target="_blank">Life as Python Software Foundation Director</a> video on YouTube</li><li><a href="https://youtu.be/kD6cPBfR4A4?si=IizoM5mDPaUhQL_X" target="_blank">FAQs About the PSF Board</a> video on YouTube&nbsp;</li><li>Our past few Annual Impact Reports:</li><ul><li><a href="https://www.python.org/psf/annual-report/2024" target="_blank">2024 Annual Impact Report</a></li><li><a href="https://www.python.org/psf/annual-report/2023/" target="_blank">2023 Annual Impact Report</a></li><li><a href="https://www.python.org/psf/annual-report/2022/" target="_blank">2022 Annual Impact Report&nbsp;</a></li></ul></ul><h4 style="text-align: left;">Board Election Timeline</h4><ul style="text-align: left;"><li>Nominations open: Tuesday, July 29th, 2:00 pm UTC</li><li>Nomination cut-off: Tuesday, August 12th, 2:00 pm UTC</li><li>Announce candidates: Thursday, August 14th</li><li>Voter affirmation cut-off: Tuesday, August 26th, 2:00 pm UTC</li><li>Voting start date: Tuesday, September 2nd, 2:00 pm UTC</li><li>Voting end date: Tuesday, September 16th, 2:00 pm UTC</li></ul><p>Not sure what UTC is for you locally? Check this <a href="https://savvytime.com/converter/utc" target="_blank">UTC time converter</a>!<br /></p><h4 style="text-align: left;">Nomination details</h4><p>You can nominate yourself or someone else. We encourage you to reach out to people before you nominate them to ensure they are enthusiastic about the potential of joining the Board.&nbsp;</p><p><b>To submit a nomination for yourself or someone else, use the <a href="https://www.python.org/nominations/2025-python-software-foundation-board/create/" target="_blank">2025 PSF Board Election Nomination Form</a> on our website. The nomination form opens on Tuesday, July 29th, 2:00 pm UTC and closes on Tuesday, August 12th, 2:00 pm UTC.</b><br /><br />To support potential candidates and nominators, the 2025 PSF Board Election team has created a <a href="https://drive.google.com/file/d/1tjtfJlKGeJ3o6eeDBj5--1NZZL2v51fb/view?usp=sharing" target="_blank">nomination resource</a> (embedded below). It includes tips, formatting instructions, and guidance on what to include in a nomination. The goal is to help nominees understand what to expect and ensure that all candidates are provided the same clear and consistent standards.&nbsp;</p><p>
+
+</p><h4 style="text-align: left;">Voting Reminder!</h4><p>Every PSF Voting Member (Supporting, Contributing, and Fellow) needs to affirm their membership to vote in this year’s election. You should have received an email from "psf@psfmember.org &lt;Python Software Foundation&gt;" with the subject "[Action Required] Affirm your PSF Membership voting intention for 2025 PSF Board Election" that contains information on how to affirm your voting status.&nbsp;<br /><br />You can see your membership record and status on your <a href="https://psfmember.org/user-information" target="_blank">PSF Member User Information page</a>. If you are a voting-eligible member and do not already have a login, please <a href="https://psfmember.org/wp-login.php?action=register" target="_blank">create an account on psfmember.org</a> first and then email psf-elections@python.org so we can link your membership to your account.&nbsp;</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 24, 2025 01:55 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/07/psf-board-nominations-opening-july-29th.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://zato.io/en/blog/enterprise-grpc-integrations.html" class="hover:underline"
               >Enterprise gRPC Services with Python and Zato</a
             >
@@ -383,112 +903,6 @@ contains rows showing the binary output produced from the input configuration in
           </div>
           <a
             href="http://paddy3118.blogspot.com/2025/07/all-truth-in-truthtables.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/7/20/the-next-generation/" class="hover:underline"
-              >Welcoming The Next Generation of Programmers</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><em>This post is addressed to the Python community, one I am glad to be a member of.</em></p>
-<p>I&#8217;m product of my community.  A decade ago I <a href="/2014/2/13/programming-communities/">wrote about how much I owed the
-Python community</a>.  Recently I found
-myself reminiscing again. This year at EuroPython I even gave a brief lightning
-talk recalling my time in the community — it made me tear up a little.</p>
-<p>There were two reasons for this trip down memory lane.  First, I had the
-opportunity to be part of the <a href="https://www.youtube.com/watch?v=pqBqdNIPrbo">new Python
-documentary</a>, which brought back a
-flood of memories (good and bad).  Second, I&#8217;ve found myself accidentally
-pulled towards agentic coding and vibe coders<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup>.  Over the last month and a half
-I have spoken with so many people on AI and programming and realized that a
-growing number of them are people I might not, in the past, have described as
-“programmers.”  Even on the way to the conference I had the pleasure to engage
-in a multi-hour discussion on the train with an air traffic controller who
-ventured into programming because of ChatGPT to make his life easier.</p>
-<p>I&#8217;m not sure where I first heard it, but I like the idea that you are what you
-do. If you&#8217;re painting (even your very first painting) you are a painter.
-Consequently if you create a program, by hand or with the aid of an agent, you
-are a programmer.  Many people become programmers essentially overnight by
-picking up one of these tools.</p>
-<p>Heading to EuroPython this year I worried that the community that shaped me
-might not be receptive to AI and agentic programming.  Some of that fear felt
-warranted: over the last year I saw a number of dismissive posts in my circles
-about using AI for programming.  Yet I have also come to realize that acceptance
-of AI has shifted significantly.  More importantly there is pretty wide support
-of the notion that newcomers will and should be writing AI-generated code.</p>
-<p>That matters, because my view is that AI will not lead to <em>fewer</em> programmers.
-In fact, the opposite seems likely.  AI will bring more people into programming
-than anything else we have done in the last decade.</p>
-<p>For the Python community in particular, this is a moment to reflect.  Python has
-demonstrated its inclusivity repeatedly — think of how many people have become
-successful software engineers through outreach programs (like
-<a href="https://pyladies.com/">PyLadies</a>) and community support.  I myself can credit
-much of my early carreer from learning from others on the Python IRC channels.</p>
-<p>We need to pay close attention to vibe coding.  And that not because it might
-produce lower‑quality code, but because if we don&#8217;t intentionally welcome the
-next generation learning through these tools, they will miss out on important
-lessons many of us learned the hard way.  It would be a mistake to treat them
-as outcasts or “not real” programmers.  Remember that many of our first
-programs did not have functions, were a mess of GOTO and things copy/pasted
-together.</p>
-<p>Every day someone becomes a programmer because they figured out how to make
-ChatGPT build something.  Lucky for us: in many of those cases the AI picks
-Python.  We should treat this as an opportunity and anticipate an expansion in
-the kinds of people who might want to attend a Python conference.  Yet many of
-these new programmers are not even aware that programming communities and
-conferences exist.  It’s in the Python community’s interest to find ways to
-pull them in.</p>
-<p>Consider this: I can name the person who brought me into Python.  But if you
-were brought in via ChatGPT or a programming agent, there may be no human there
-— just the AI.  That lack of human connection is, I think, the biggest
-downside.  So we will need to compensate: to reach out, to mentor, to create
-on‑ramps.  To instil the idea that you should be looking for a community,
-because the AI won&#8217;t do that.  We need to turn a solitary interaction with an
-AI into a shared journey with a community, and to move them towards learning
-the important lessons about engineering.  We do not want to have a generation
-of developers held captive by a companies building vibe-coding tools with
-little incentive for their users to break from those shackles.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p>I&#8217;m using <a href="https://en.wikipedia.org/wiki/Vibe_coding">vibe coders</a> here
-as people that give in to having the machine program for them.  I believe
-that many programmers will start in this way before they transition to more
-traditional software engineering.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 20, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/7/20/the-next-generation/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1308,210 +1722,6 @@ iterables being reusable.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonanywhere.com/220/" class="hover:underline"
-              >Direct interaction of LLM chats with PythonAnywhere via the Model Context Protocol</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h3 id="tldr">tl;dr</h3>
-<p>Check out the <a href="https://github.com/pythonanywhere/pythonanywhere-mcp-server?tab=readme-ov-file#installation">instructions on
-GitHub</a>
-and connect your Claude Desktop, GitHub Copilot, Cursor or any similar tool
-supporting MCP to PythonAnywhere directly.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 11, 2025 10:00 AM UTC by
-            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
-              >Python Anywhere</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonanywhere.com/220/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/july-newsletter-cant-make-it-to-prague-join-us-online/" class="hover:underline"
-              >July Newsletter: Can’t make it to Prague? Join Us Online!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Hello, Pythonistas! &#x1f40d;</p><p>EuroPython is coming fast, and we&#x2019;re back with news about what you can yet do so you don&#x2019;t miss any opportunities to learn and enjoy even more! &#x1f389;</p><p></p><h1 id="%F0%9F%A7%91%E2%80%8D%F0%9F%92%BB-can%E2%80%99t-make-it-to-prague-join-us-online">&#x1f9d1;&#x200d;&#x1f4bb; Can&#x2019;t make it to Prague? Join us online!</h1><p>Remote tickets</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 11, 2025 06:00 AM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/july-newsletter-cant-make-it-to-prague-join-us-online/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.holoviz.org/posts/panel_material_ui_announcement/" class="hover:underline"
-              >Panel Material UI Announcement</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Announcing the release of panel-material-ui, a new extension that wraps Material UI components in Panel.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 11, 2025 12:00 AM UTC by
-            <a href="https://blog.holoviz.org/index.xml" class="link link-hover text-primary"
-              >HoloViz</a
-            >
-          </div>
-          <a
-            href="https://blog.holoviz.org/posts/panel_material_ui_announcement/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/europython-2025-job-ads/" class="hover:underline"
-              >EuroPython 2025: Sponsor Job Postings</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>EuroPython is approaching, and as we prepare for another great edition, we&#x2019;d like to take a moment to thank our community and sponsors for their continued support. </p><p>We&apos;re also excited to share some fantastic job opportunities from our sponsors!</p><h2 id="bloomberg">Bloomberg</h2><h3 id="senior-software-engineernetwork-production-engineer">Senior Software Engineer - Network Production</h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 08, 2025 06:31 PM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/europython-2025-job-ads/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/07/notice-of-python-software-foundation.html" class="hover:underline"
-              >Notice of Python Software Foundation Bylaws Change - Effective July 23, 2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This post serves as notice that the Board of the Python Software Foundation has resolved to amend the Bylaws, effective July 23, 2025, to remove a condition of the Bylaws that would prevent the Foundation from complying with data privacy laws including those in effect in the European Union, the United Kingdom, and the State of California.<br /><br />Section 3.8 of the Bylaws grants Voting Members the right to request the list of Voting Members’ names and email addresses. As written, this data must be given unconditionally, which would violate the previously mentioned laws. The amendment we are making grants the Foundation the ability to place conditions upon the use of that list in a way that allows us to comply with data privacy laws.<br /><br />The full change can be found at <a href="https://github.com/psf/bylaws/pull/7/files">https://github.com/psf/bylaws/pull/7/files</a><br /><br />The Board determined that this change was time-sensitive and chose to amend the Bylaws without prior consultation with Voting Members. We greatly value the input of our membership in the governance of the Foundation. Therefore, we have opted to make only the most minimal change that will enable the Foundation to comply with data privacy laws and protect our members, while preserving the spirit of the text that the membership agreed to when adopting these Bylaws.<br /><br />A future Bylaws update will be offered to the membership at a future election. As we are less than 3 months from the 2025 Board election, we are targeting the 2026 Board election to allow the membership to discuss further amendments for the membership to vote upon.<br /><br />Thanks,<br /><br />The Python Software Foundation Board<br /><br /></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 08, 2025 03:21 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/07/notice-of-python-software-foundation.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1523,8 +1733,8 @@ supporting MCP to PythonAnywhere directly.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8588</a></li>
-    <li><a>Unique Feeds: 397</a></li>
+    <li><a>Total Entries: 8434</a></li>
+    <li><a>Unique Feeds: 391</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
