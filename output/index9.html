@@ -53,6 +53,526 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2025/aug/06/litestar/" class="hover:underline"
+              >Litestar is worth a look</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>A few years ago at work, I had a project which offered an opportunity to look at the new generation of async-first, type-hint-driven Python web frameworks. For reasons which aren’t particularly relevant today, on that project I ended up choosing <a href="https://litestar.dev">Litestar</a>, which is the one that <em>doesn’t</em> have a ravenous all-consuming hype machine surrounding it. And I’m very glad I did, because today I’m more convinced than ever it was the right choice, and for the last 18 months or so every new project I’ve started at my day job has been built with&nbsp;Litestar.</p>
+<p>But even if you’re someone who does Python web apps for a living, and even if you’re someone who builds asynchronous type-hint-driven web apps, you might not be familiar with this absolute gem of the Python web ecosystem, and today I want to remedy&nbsp;that.</p>
+<h2>A&nbsp;taste</h2>
+<p>Here’s the traditional single-file-app&nbsp;demo:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">litestar</span><span class="w"> </span><span class="kn">import</span> <span class="n">Litestar</span><span class="p">,</span> <span class="n">get</span>
+
+
+<span class="nd">@get</span><span class="p">(</span><span class="s2">&quot;/greet&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Hi, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Litestar</span><span class="p">([</span><span class="n">greet</span><span class="p">])</span>
+</code></pre></div>
+
+<p>You save this&nbsp;as <code>app.py</code>, run&nbsp;with <code>litestar run</code> or hand it directly to the <abbr title="Asynchronous Server Gateway Interface"><span class="caps">ASGI</span></abbr> server of your choice, and it launches a web application. You go&nbsp;to <code>/greet?name=Bob</code> and it replies “Hi, Bob!”. Leave out&nbsp;the <code>name</code> parameter and it responds with an <span class="caps">HTTP</span> 400 telling you&nbsp;the <code>name</code> parameter is&nbsp;required.</p>
+<p>So what. Big deal. The FastAPI Evangelism Strike Force will be along soon to bury you under rocket-ship emoji while explaining that FastAPI does the same thing but a million times better. And if you’re a Java person used to Spring, or a .<span class="caps">NET</span>  person used to <span class="caps">ASP</span>.<span class="caps">NET</span> <span class="caps">MVC</span>, well, there’s nothing here that’s new to you; you’ve had this style of annotation/signature-driven framework for years (and in fact one thing I like about Litestar is how often it reminds me of the good parts of those frameworks). And did anyone tell you FastAPI does this, too!&nbsp;🚀🚀🚀🚀🚀🚀🚀🚀🚀</p>
+<p>But there are a lot of things that make Litestar stand out to me in the Python world. I’m going to pick out three to talk about today, and one of them is hiding in plain sight in that simple example&nbsp;application.</p>
+<div class="alert alert-warning">
+<p><strong>What’s in a&nbsp;name?</strong></p>
+<p>You might see older material referring to Litestar as “Starlite”, which was its original&nbsp;name.</p>
+<p><a href="https://www.starlette.io">Starlette</a> is a toolkit for doing async Python web development, which can be used standalone or as a component in a more complex library or framework. FastAPI still uses Starlette under the hood, for example. And Litestar originally was built on Starlette too, and was named “Starlite”, presumably in recognition of that. Over time, though, it dropped the Starlette dependency in favor of its own implementations for that functionality, and people on social media complained that the “Starlite” name was confusing, especially since Star<em>lette</em> was no longer being used. So the project which had been “Starlite” was renamed to Litestar for version 2.0, released in 2023, and has had that name ever&nbsp;since.</p>
+</div>
+<h3>Scaling (the other&nbsp;kind)</h3>
+<p>It’s a bit unfortunate that the term “scaling” is almost always assumed to mean handling larger and larger quantities of traffic, because that’s only one axis on which any given piece of of technology can “scale” (and, I’d argue, possibly the least important one). The type of scaling I want to talk about here is scaling of a codebase: how does something (in this case, a web framework) help or hinder you as you deal with different amounts of&nbsp;code?</p>
+<p>Django, for example, has a reputation for not scaling “down” all that well. You <em>can</em> do it if you really want to, and every so often someone will come up with a new demo of doing a Django project in a single Python file, but it’s just not something that comes naturally to Django. Quite the opposite: if you work through the official beginner Django tutorial and do things the &#8220;Django way&#8221;, you’ll have around a dozen files laid out in a specific structure of directories and subdirectories before you’ve written a single meaningful line of your own&nbsp;code. </p>
+<p>But “micro” frameworks have often had the opposite problem: they’re great at starting out with a tiny single-file application, and then get painful as your codebase grows and needs to spread out (single-file Django approaches have the same problem: you have to do a lot of work to get a “micro-Django” working, and then you have to <em>undo</em> all that work as soon as the code grows large enough to be worth splitting across multiple&nbsp;files).</p>
+<p>Let’s look at an example. Here’s a FastAPI equivalent of the basic Litestar application I showed&nbsp;above:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">FastAPI</span>
+
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">()</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/greet&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+</code></pre></div>
+
+<p>Notice that&nbsp;the <code>get()</code> decorator here is attached to the application object. This is a common pattern (Flask/Quart do the same thing, for example, and Starlette used to but has deprecated its entire decorator-based routing system), but it creates a problem once you have multiple files. You need to import the main application object into the other files in order to decorate the routes, but you need to import the other files into your “main” application file to make sure the route registrations are visible from there, and now you have a circular import, and that doesn’t&nbsp;work.</p>
+<p>The general solution these frameworks offer is some sort of alternative sub-application object which can act as a per-file route registry that’s safe to import into the file where your application object is defined. FastAPI calls this object an “<span class="caps">API</span> router”; Flask/Quart call it a “blueprint”. Either way, it’s a necessary construct for those frameworks because their route decorators are always bound to some parent object, either the application object in a single-file app or an “<span class="caps">API</span> router”/“blueprint”/etc. object in a multi-file&nbsp;app.</p>
+<p>That solves the circular-import problem, but creates a new issue: the whiz-bang quickstart demos of “micro” frameworks generally register all the example routes on the application object in a single file in order to keep everything as simple and flashy as possible, but now in order to build a real application (which will almost never stay in a single file) you’ll need to use a different mechanism, or start out following the demo and then switch later on. You also have to <em>know</em> about that different mechanism; in one framework’s documentation that I looked at, you can (at the time I&#8217;m writing this post) apparently get 40 pages into the user guide before encountering the section on how to register routes in a multi-file app&nbsp;😖😖😖.</p>
+<p>Litestar avoids this entire mess by having the route decorators be standalone functions, not bound to a parent application or application-like object. This may seem like a small thing to focus on, but if you’ve spent time with popular Python microframeworks you’ve probably had to deal with the transition from single- to multi-file&nbsp;applications.</p>
+<p>More importantly, this small change in approach frees up Litestar’s documentation to introduce route-grouping constructs early on and to present them as part of <a href="https://docs.litestar.dev/latest/usage/applications.html#layered-architecture">a coherent layered architecture/configuration concept</a> rather than as an escape hatch for avoiding circular imports. Which is great, because Litestar’s layered architecture is one of its best features: its grouping constructs, and their ability to share configuration, offer an elegant way to compose functionality. For example, a common pattern I use when writing a set of <abbr title="Create, Retrieve, Update, Delete"><span class="caps">CRUD</span></abbr> endpoints looks like&nbsp;this:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">litestar</span><span class="w"> </span><span class="kn">import</span> <span class="n">Router</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">litestar.di</span><span class="w"> </span><span class="kn">import</span> <span class="n">Provide</span>
+
+<span class="c1"># Imagine some CRUD routes for widgets defined here...</span>
+
+<span class="n">_write_widget_router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">(</span>
+    <span class="n">guards</span><span class="o">=</span><span class="p">[</span><span class="n">some_auth_function</span><span class="p">],</span>
+    <span class="n">route_handlers</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">create_widget</span><span class="p">,</span>
+        <span class="n">delete_widget</span><span class="p">,</span>
+        <span class="n">update_widget</span><span class="p">,</span>
+    <span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">widget_router</span> <span class="o">=</span> <span class="n">Router</span><span class="p">(</span>
+    <span class="n">dependencies</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;widget_dependency&quot;</span><span class="p">:</span> <span class="n">Provide</span><span class="p">(</span><span class="n">some_widget_dependency</span><span class="p">)},</span>
+    <span class="n">path</span><span class="o">=</span><span class="s2">&quot;/widgets&quot;</span><span class="p">,</span>
+    <span class="n">route_handlers</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">get_widget</span><span class="p">,</span>
+        <span class="n">get_widget_list</span><span class="p">,</span>
+        <span class="n">_write_widget_router</span><span class="p">,</span>
+    <span class="p">]</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p>This provides a single&nbsp;“public” <code>Router</code> instance with all the widget routes, all of which have access to the same core dependencies, but with the data-modifying routes also having auth applied. That composability is extremely powerful, and is less obvious if the “router” has to be introduced initially as a way to solve circular-import&nbsp;problems.</p>
+<p>Litestar’s approach also means it’s easy to do things like register a single route multiple times, each with different configuration. Which enables use cases&nbsp;like:</p>
+<ul>
+<li>Different authentication/authorization schemes for each registration. For example, a data-editing route might be written once, and registered once under a router which applies <span class="caps">API</span> key auth for machine-to-machine requests, then registered again under a router which uses session auth for interaction by a human&nbsp;user.</li>
+<li>Different sets of dependencies for each registration. For example, a route which queries and returns a list of widgets might just declare that it accepts an argument of&nbsp;type <code>WidgetRepository</code>, and leave it up to the router configuration to decide whether to dependency-inject one that sees all widgets, or perhaps only a subset, or only those which are active,&nbsp;etc.</li>
+</ul>
+<p>If you know what you’re doing, you can emulate some of this in the FastAPI/Flask style of bound route registration, but the techniques you&#8217;ll end up using for that feel to me like fighting against the framework, which is something I usually want to&nbsp;avoid.</p>
+<h2>Not to be too&nbsp;Pydantic</h2>
+<p><a href="https://docs.pydantic.dev/">Pydantic</a> is a popular package for defining schema objects which perform validation and serialization/deserialization, driven by Python type annotations, and one major use case for this is the input/output schemas of web applications. FastAPI appears to use Pydantic exclusively, which comes with both upsides and downsides. Pydantic is very useful and very powerful, of course, but it also means FastAPI is somewhat limited by what Pydantic can support: mostly, this is Pydantic’s own classes, and <a href="https://docs.python.org/3/library/dataclasses.html">the Python standard&nbsp;library’s <code>dataclasses</code></a>.</p>
+<p>One crucial limitation is an inability to derive validation/serialization behavior directly from <a href="https://www.sqlalchemy.org">SQLAlchemy</a> <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> classes, even though they both support a very similar type-annotation-based declaration format. Which means that to use SQLAlchemy with a Pydantic-only framework (and SQLAlchemy is basically <em>the</em> standard database toolkit and <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> for Python), you either have to write out the shape of your data multiple times—once for SQLAlchemy, and then at least one more time (possibly more than one time) for Pydantic—or turn to a third-party package to help bridge the gap. FastAPI’s author worked around this by writing <a href="https://sqlmodel.tiangolo.com">a new <span class="caps">DB</span> toolkit which combines SQLAlchemy and Pydantic</a>, and pushing it in FastAPI’s&nbsp;documentation.</p>
+<p>Litestar, meanwhile, <em>supports</em> Pydantic, but is not <em>tightly coupled to</em> Pydantic, which gives a bit more flexibility. By default Litestar lets you define input/output schemas using Pydantic&nbsp;models, <code>dataclasses</code>, or <a href="https://jcristharif.com/msgspec/">msgspec</a>; ships with plugins to enable the use of <a href="https://www.attrs.org/">attrs</a> and of SQLAlchemy models; and <a href="https://docs.litestar.dev/latest/usage/plugins/index.html#serializationpluginprotocol">provides a protocol for writing your own serialization plugins</a> to extend support to other kinds of&nbsp;objects.</p>
+<p>That&#8217;s very convenient already, but the convenience is amplified by Litestar’s <a href="https://docs.litestar.dev/latest/usage/dto/1-abstract-dto.html">system for automatically deriving data-transfer objects</a> from data-access or domain objects. Suppose, for example, that we have the following SQLAlchemy model&nbsp;class:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sqlalchemy.orm</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeclarativeBase</span><span class="p">,</span> <span class="n">Mapped</span><span class="p">,</span> <span class="n">mapped_column</span>
+
+<span class="n">Base</span> <span class="o">=</span> <span class="n">DeclarativeBase</span><span class="p">()</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Widget</span><span class="p">(</span><span class="n">Base</span><span class="p">):</span>
+    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s2">&quot;widget&quot;</span>
+
+    <span class="nb">id</span><span class="p">:</span> <span class="n">Mapped</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">mapped_column</span><span class="p">(</span><span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">internal_notes</span><span class="p">:</span> <span class="n">Mapped</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">sku</span><span class="p">:</span> <span class="n">Mapped</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">mapped_column</span><span class="p">(</span><span class="n">unique</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n">Mapped</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+    <span class="n">price_cents</span><span class="p">:</span> <span class="n">Mapped</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+</code></pre></div>
+
+<p>In a Pydantic-only world, we’d need to write multiple Pydantic models representing different use&nbsp;cases:</p>
+<ul>
+<li>A “read” schema for use in <span class="caps">HTTP</span> responses, which would probably not include&nbsp;the <code>internal_notes</code> field and probably also&nbsp;not <code>id</code> (since <code>sku</code> is more likely to be the public&nbsp;identifier)</li>
+<li>A “write” schema for creating widgets, which would&nbsp;exclude <code>id</code> since that likely is auto-generated on&nbsp;insert</li>
+<li>Another “write” schema for updating widgets, setting all fields optional to allow partial&nbsp;update</li>
+</ul>
+<p>As well as possibly more schemas like an admin-view “read” schema that does include the internal fields, etc. Even if you get clever and use inheritance to share field definitions among all these Pydantic classes, you still will write out the full set of fields for widgets at least twice, and the second time it will be fragmented across multiple Pydantic classes, creating the risk of making a change to the <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> model and forgetting to update all the corresponding field definitions in the Pydantic&nbsp;models.</p>
+<p>Litestar’s approach is a significant improvement on this. For example, here’s how to use Litestar’s <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> helpers to define the “read”&nbsp;schema:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">litestar.dto</span><span class="w"> </span><span class="kn">import</span> <span class="n">DTOConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">litestar.plugins.sqlalchemy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SQLAlchemyDTO</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ReadWidget</span><span class="p">(</span><span class="n">SQLAlchemyDTO</span><span class="p">[</span><span class="n">Widget</span><span class="p">]):</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">DTOConfig</span><span class="p">(</span><span class="n">exclude</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">,</span> <span class="s2">&quot;internal_notes&quot;</span><span class="p">})</span>
+</code></pre></div>
+
+<p>This will give you a <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> class containing all the fields of&nbsp;the <code>Widget</code> <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> model <em>except</em> the two explicitly excluded, and will derive that set of fields, and the correct data types, from&nbsp;introspecting <code>Widget</code>. It will also automatically handle conversion to and from instances&nbsp;of <code>Widget</code> when you specify it as the input or return <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> type of a route. Similarly, it’s possible to declare a list of fields to include, or to re-map field names for public consumption, or to declare a <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> which makes fields optional for partial updates. This means there’s only one canonical definition of the fields—on the original class, which might be a SQLAlchemy <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> model, might be&nbsp;a <code>dataclass</code>, etc.—and it doesn’t have to be repeated in the DTOs because the DTOs will always derive their field definitions directly from the source class you point them&nbsp;at.</p>
+<p>Of course, there are going to be cases where your DTOs are sufficiently different from your DAOs and domain objects that this isn’t a big help, but my own experience is that “the <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> is a subset of the <abbr title="Data Access Object"><span class="caps">DAO</span></abbr>’s fields” is extremely common in real-world applications, so Litestar’s approach really pays off in both reduced boilerplate and reduced errors from manual “transcription” of fields between different class&nbsp;definitions.</p>
+<h2>Alchemical&nbsp;architecture</h2>
+<p>I wasn’t exaggerating earlier when I said that SQLAlchemy is <em>the</em> database toolkit and <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> for Python. While there are others out there, the only one I’m aware of that sees anything close to SQLAlchemy’s usage is the Django <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr>, and only because it’s built into and tightly integrated with Django. So if you’re going to be writing a database-backed web application in Python, and you’re not doing Django, you are almost certainly going to be using&nbsp;SQLAlchemy.</p>
+<p>And Litestar makes that easy. While officially remaining agnostic as to whether you even have a persistence layer, it still includes good integrations for SQLAlchemy: the serialization plugin mentioned earlier allows the direct use of SQLAlchemy <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> classes as input and output schemas; the <abbr title="Data Transfer Object"><span class="caps">DTO</span></abbr> helpers can derive subsets and remappings of fields from SQLAlchemy <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> classes; and Litestar also ships with <a href="https://docs.litestar.dev/latest/usage/databases/sqlalchemy/plugins/sqlalchemy_init_plugin.html">a plugin that manages a SQLAlchemy engine and per-request <abbr title="Object-Relational Mapper"><span class="caps">ORM</span></abbr> session for you</a>, as well as <a href="https://docs.litestar.dev/latest/usage/databases/sqlalchemy/plugins/sqlalchemy_plugin.html">a single SQLAlchemy mega-plugin</a> combining all the SQLAlchemy plugins’&nbsp;functionality.</p>
+<p>So it’s already pretty convenient to use SQLAlchemy in Litestar applications. But there’s more! The Litestar team also maintains <a href="https://docs.advanced-alchemy.litestar.dev/latest/">the excellent Advanced Alchemy library</a> which provides a bunch of useful features on top of SQLAlchemy. While Advanced Alchemy is framework-agnostic, Litestar’s SQLAlchemy plugin makes use of it and re-exports much of its functionality, giving you access to it automatically, and it does include Litestar-specific helpers for registering certain utility classes with Litestar’s dependency&nbsp;injection.</p>
+<p>Advanced Alchemy provides a lot of quality-of-life improvements for SQLAlchemy, including a variety of base classes and mixins and data types doing useful things like database-agnostic big-integer primary keys, automatic create/update timestamps, <abbr title="Universally Unique IDentifier"><span class="caps">UUID</span></abbr>-keyed models, a proper <abbr title="Coordinated Universal Time"><span class="caps">UTC</span></abbr> timestamp type, and a <abbr title="JavaScript Object Notation"><span class="caps">JSON</span></abbr> type which chooses the best column type for your database. There are also command-line helpers for database management (including creating and working with <a href="https://alembic.sqlalchemy.org/en/latest/">Alembic migrations</a>), database dumping and seeding to/from <abbr title="JavaScript Object Notation"><span class="caps">JSON</span></abbr>, and a lot&nbsp;more.</p>
+<p>But the place where Advanced Alchemy really shines is in providing <a href="https://docs.advanced-alchemy.litestar.dev/latest/usage/repositories.html">a generic repository implementation</a> (both sync and async flavors) on top of SQLAlchemy models, along with <a href="https://docs.advanced-alchemy.litestar.dev/latest/usage/services.html">a service-layer abstraction</a> and helpers to integrate them into Litestar’s dependency injection&nbsp;system.</p>
+<p>Here’s a basic example using&nbsp;the <code>Widget</code> class from&nbsp;above:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">litestar.plugins.sqlalchemy</span><span class="w"> </span><span class="kn">import</span> <span class="n">repository</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WidgetRepository</span><span class="p">(</span><span class="n">repository</span><span class="o">.</span><span class="n">SQLAlchemyAsyncRepository</span><span class="p">[</span><span class="n">Widget</span><span class="p">]):</span>
+    <span class="n">model_type</span> <span class="o">=</span> <span class="n">Widget</span>
+</code></pre></div>
+
+<p><code>WidgetRepository</code> will have all the methods you’d&nbsp;expect—<code>list()</code>, <code>get_one()</code>, <code>add()</code>, <code>delete()</code>, etc.—automatically derived from&nbsp;the <code>Widget</code> model. And let me just say that having repository implementations automatically derived from any SQLAlchemy model, with not just basic <abbr title="Create, Retrieve, Update, Delete"><span class="caps">CRUD</span></abbr> operations but also things like paginated fetches, is a <em>massive</em> productivity boost compared to just using vanilla SQLAlchemy. It’s maybe not quite on the level of Django’s generic views, but it’s a big step in that direction, and you probably could produce something like Django’s generic views with Litestar and Advanced Alchemy if you wanted to (perhaps one day, in my copious free time, I’ll even make an attempt at&nbsp;it).</p>
+<p>I know it may seem strange to hear me saying this, since a few years ago I went on record as being strongly <em>against</em> these sorts of abstractions—specifically service layers—in Django. And I still think you absolutely should not try to retrofit repository or service-layer abstractions onto Django! They’re not the native patterns of Django’s architecture, and instead I think you should stick to <a href="/weblog/2020/mar/16/no-service/">what I recommended back then</a>, which is to leverage Django’s own architecture, especially its “manager” abstraction, rather than trying to force abstractions onto it that don’t&nbsp;fit.</p>
+<p>I also still think there are a lot of bad use cases for repositories and service layers that people should avoid, but that’s a digression which should probably become its own post, so I’ll just say for now that I think it’s fine to use repositories and service layers <em>as an organizing principle</em> when you’re using a less-structured framework which doesn’t express strong opinions about how you should lay out your code. And that’s exactly what I do when working with&nbsp;Litestar.</p>
+<h2>A lightweight star of&nbsp;Python</h2>
+<p>There are plenty of other features and conveniences in Litestar, many of which I use daily. Its auth system, supporting both <a href="https://docs.litestar.dev/latest/usage/security/guards.html">simple guard functions</a> and <a href="https://docs.litestar.dev/latest/usage/security/abstract-authentication-middleware.html">middlewares</a> for attaching identity and complex authn/authz logic to requests. Its <a href="https://docs.litestar.dev/latest/usage/stores.html">“stores” framework</a>, which makes caching and similar tasks convenient. Its <a href="https://docs.litestar.dev/latest/usage/logging.html">logging integrations</a> which support both the Python standard&nbsp;library’s <code>logging</code> module and popular third-party tools&nbsp;like <code>structlog</code>. Its built-in support for <a href="https://docs.litestar.dev/latest/usage/plugins/problem_details.html">transforming errors to standard &#8220;problem details&#8221; structures</a>. Its built-in support for <a href="https://docs.litestar.dev/latest/usage/metrics/index.html">recording and exporting metrics in standard Prometheus or OpenTelemetry formats</a>. Its <a href="https://docs.litestar.dev/latest/usage/htmx.html">htmx support</a>.</p>
+<p>You can do this stuff in other microframeworks, but it typically involves a lot of tracking down of third-party add-ons and/or writing your own glue code to integrate things. Litestar manages to keep the “microframework” feel when starting a new project while also having all these nice bits optionally available with the framework itself when and if you decide you want them, and that’s nothing to sneeze at. That’s what I was getting at earlier when I said it reminds me of the things I like in certain frameworks from other languages. Litestar doesn’t feel, to me, like it’s trying to be a replacement for any pre-existing Python web framework. It’s not trying to be the next Django or the next Flask or whatever; instead, it feels to me like a Pythonic take on the good parts of something like Spring Boot (and the way I like to set it up, doing things like using <a href="https://svcs.hynek.me/en/stable/">svcs</a> behind the scenes as a service locator to feed things to both Litestar’s and <a href="https://docs.pytest.org/">pytest’s</a> dependency injection, makes it feel even more that&nbsp;way).</p>
+<p>I could go on for a lot longer listing things I like about Litestar, and probably wind up way too far into my own subjective preferences, but hopefully I’ve given you enough of a realistic taste of what it offers that, next time you’re about to build a Python web app, you might decide to reach for 💡⭐ to carry you to the moon&nbsp;🚀🚀🚀.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 06, 2025 07:25 PM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2025/aug/06/litestar/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://mirekdlugosz.com/blog/2025/experience-report-implementing-high-volume-automated-testing-system/" class="hover:underline"
+              >Experience report: Implementing High Volume Automated Testing system</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I first heard about High Volume Automated Testing in 2017, and I&#8217;ve wanted to try it ever since. The opportunity came in 2022, when I was working on revamping a <span class="caps">UI</span> testing framework for software called Quipucords. This article focuses on the decision points I encountered, the alternatives I …</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 06, 2025 04:23 PM UTC by
+            <a href="https://mirekdlugosz.com/blog/feeds/planet-python.atom.xml" class="link link-hover text-primary"
+              >Mirek Długosz</a
+            >
+          </div>
+          <a
+            href="https://mirekdlugosz.com/blog/2025/experience-report-implementing-high-volume-automated-testing-system/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/using-dictionaries-in-python/" class="hover:underline"
+              >Using dictionaries in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python's dictionaries act as lookup tables which map keys to their values.</p>
+
+
+<div>
+  
+    <a href="https://www.pythonmorsels.com/using-dictionaries-in-python/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2044511522-a67232f61f95e1cb7cc0c28d73f35a6caa401d89570425b570bca6a594279eb6-d_1920x1080%3F%26region%3Dus&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#what-are-dictionaries-for" target="_blank">What are dictionaries for?</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#looking-up-the-value-for-a-key" target="_blank">Looking up the value for a key</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#updating-the-value-for-a-key" target="_blank">Updating the value for a key</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#adding-new-key-value-pairs" target="_blank">Adding new key-value pairs</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#checking-whether-a-dictionary-has-a-certain-key" target="_blank">Checking whether a dictionary has a certain key</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#dictionaries-verses-lists" target="_blank">Dictionaries verses lists</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/#use-dictionaries-when-you-need-a-lookup-table" target="_blank">Use dictionaries when you need a lookup table</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>What are dictionaries for?</h2>
+    
+      
+        <p>Here's a dictionary:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">rooms</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"Pink"</span><span class="p">:</span> <span class="s2">"Room 403"</span><span class="p">,</span> <span class="s2">"Ocean"</span><span class="p">:</span> <span class="s2">"Room 205"</span><span class="p">,</span> <span class="s2">"Space"</span><span class="p">:</span> <span class="s2">"Room 201"</span><span class="p">}</span>
+</code></pre></div>
+
+
+      
+        <p>Dictionaries <strong>map keys to values</strong>.</p>
+
+      
+        <p>In the above dictionary, we're mapping the names of each room to its room number.
+Our keys (the room names) are <code>Pink</code>, <code>Ocean</code>, and <code>Space</code>.</p>
+
+      
+        <p>Dictionaries are meant to make it easy to <strong>look up the value that corresponds to a particular key</strong>.</p>
+
+      
+    
+  
+    <h2>Looking up the value for a key</h2>
+    
+      <p>We can look up the …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/using-dictionaries-in-python/" target="_blank">Read the full article: https://www.pythonmorsels.com/using-dictionaries-in-python/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 05, 2025 05:45 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/using-dictionaries-in-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/08/pycharm-2025-2/" class="hover:underline"
+              >PyCharm 2025.2: AI Toolkit for AI Engineers and More!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            PyCharm 2025.2 introduces the AI Toolkit: everything AI engineers need – now natively supported in your IDE. This release’s other highlights include the last supported version of PyCharm Community, improvements to AI Assistant, Junie, and notebooks, as well as a persistent UI for updating .lock files and other enhancements. Download the latest version from our [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 05, 2025 11:04 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/08/pycharm-2025-2/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/08/the-psf-has-paused-our-grants-program.html" class="hover:underline"
+              >The PSF has paused our Grants Program</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h3 style="text-align: left;"><b>TL;DR:</b></h3><p>Effective August 1st, 2025, the PSF is temporarily pausing our Grants Program after reaching our 2025 grant budget cap earlier than expected. We know how important this program is to many in our community and making this decision was difficult. This is a necessary step to protect both the future of the program and the short- and long-term sustainability of the PSF. (If this moves you immediately to donate to the PSF, we welcome your contributions via <a href="https://www.python.org/psf/donations/" target="_blank">our donations page</a>).</p><p></p><h3 style="text-align: left;">The PSF Grants Program is paused</h3><p>As <a href="https://pyfound.blogspot.com/2024/12/psf-grants-program-charter-updates-tldr.html" target="_blank">we shared in December 2024</a> (specifically, <a href="https://pyfound.blogspot.com/2024/12/12psf-grants-program-charter-updates-part-3.html" target="_blank">part 3</a>), the PSF implemented changes to the Grants Program in March 2025 in an effort to ensure the sustainability of the program and the foundation. PSF Staff have been checking in quarterly on our award expenditure, and at the end of Q1, we were on track. When PSF Staff reviewed approved grant awards at the end of Q2, however, we had granted close to 80% of the 2025 grant budget. The grant applications received so far through July exceed the budget ceiling.&nbsp;<br /><br />What does this mean? <b>The PSF Board has voted to implement a pause, effective August 1st, 2025, on the PSF Grants Program.</b> The PSF Board and Staff explored our options thoroughly before coming to this tough, and frankly painful, decision as we deeply understand how important the grants program is to the Python community.&nbsp;<br /><br />Everyone at the PSF is constantly amazed and impressed with the creativity, drive, and ingenuity of the Python community. Supporting the community’s success with our Grants Program is at the heart of our mission—and it brings so much joy to the PSF Board, our small but mighty team of staff, and the wonderful folks in our Work Groups. We are heartbroken to have to pause that work and we know this will be challenging and create more difficult decisions in turn for the many community groups that had planned to apply for the grants program.&nbsp;<br /><br />We will be distributing the small amount of remaining funds in the 2025 PSF Grants Program budget. To honor the time and energy spent on applications already submitted and in the spirit of equity, <b>any applications that were received before August 1st, 2025 will be granted a uniform percentage of the award amount for which they are eligible.</b> If you have a grant application in the system, you will receive an email from us soon with more information. Please send any urgent inquiries to grants@python.org.<br /><br />The PSF aims to be as transparent as possible, and we want to have two-way conversations with the community about this change. We are holding an additional <a href="https://pyfound.blogspot.com/2024/02/introducing-psf-grants-office-hours.html" target="_blank">PSF Grants Program Office Hour</a> in August on the <a href="https://discord.gg/7rthGF3BBe" target="_blank">PSF Discord</a>. We welcome folks to join both or either session:<br /></p><ul style="text-align: left;"><li>August 13th, 8-9 pm UTC</li><li>August 19th, 1-2 pm UTC</li></ul><p>We also welcome your feedback, particularly how we can support you during this pause, via email to grants@python.org or on the <a href="https://discuss.python.org/t/the-psf-has-paused-our-grants-program/101288" target="_blank">thread we’ve started on discuss.python.org</a>.<br /></p><h3 style="text-align: left;">How we got here&nbsp;</h3><div style="text-align: left;">&nbsp;</div><div style="text-align: left;">Since announcing Grants program changes in December 2024, grant requests
+ have grown about 40% over last year. It’s wonderful to see long-time 
+events continue to grow. It’s been equally inspiring to see events being
+ revived as we move further from 2020 and the start of the COVID 
+pandemic, alongside brand-new initiatives from new and seasoned 
+organizers. The PSF <b>loves</b> seeing the growth, but the heart of the
+ issue is that Python and its community continue to grow exponentially, 
+while our funding has not kept pace, and in fact, has decreased.<br /><br />With Python being the <a href="https://github.blog/news-insights/octoverse/octoverse-2024/" target="_blank">number one language on GitHub</a> and <a href="https://www.tiobe.com/tiobe-index/" target="_blank">rising steadily on the TIOBE index</a>,
+ it’s no surprise that our community continues to build and grow as 
+well. You can see the TIOBE 
+index shows what the growth of Python looks like over the years, and how
+ much it’s grown in just the past year:<br />&nbsp;</div><p></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEht7GZUmYfp6B2461-DVgvVlWa5wo2t7n-p5ZOhwU6JHpLM6Nvisw7UHelNjU2P408QYUPGT0amf_zxq9q6Z8b6n0DO7tK86RPkxUQbg7puBF1cWPV3cUMbLkQgESH27-IhezznZd3HAHx6twIQ8psDLoSNZZh0I9mcB0jriqZiadlo3QTaYQ/s2953/python_tiobe.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="244" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEht7GZUmYfp6B2461-DVgvVlWa5wo2t7n-p5ZOhwU6JHpLM6Nvisw7UHelNjU2P408QYUPGT0amf_zxq9q6Z8b6n0DO7tK86RPkxUQbg7puBF1cWPV3cUMbLkQgESH27-IhezznZd3HAHx6twIQ8psDLoSNZZh0I9mcB0jriqZiadlo3QTaYQ/w400-h244/python_tiobe.png" width="400" /></a></div><p>By contrast, the PSF’s available resources have decreased over the last three years and are projected to decrease again in 2025 due to increasing PyCon US and foundation costs. Much of the growth shown before 2022 in the chart below comes from grants we received that were restricted funds dedicated to specific staffing and other programs. The result is increasing global community activity against a decreasing pool of available funds.&nbsp;</p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEiiH_a89NPF5ydqQMcvx1HaZmdKCIeGc-OX4wf23Fwirp9wqD5QSxY414NJUJW3mH9UUP6CzgkU65mrVOhDHamy5aZXJp8_b1QW0m5OkHNVknnJAQ1OXnWA0i7soEK36os6920emjp5xPGcSHlTIxKSYC09fl_LDjxXQWC8-_yzQ7vH41Gw3w/s782/psf_asset_trends.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="640" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEiiH_a89NPF5ydqQMcvx1HaZmdKCIeGc-OX4wf23Fwirp9wqD5QSxY414NJUJW3mH9UUP6CzgkU65mrVOhDHamy5aZXJp8_b1QW0m5OkHNVknnJAQ1OXnWA0i7soEK36os6920emjp5xPGcSHlTIxKSYC09fl_LDjxXQWC8-_yzQ7vH41Gw3w/w464-h640/psf_asset_trends.png" width="464" /></a></div><p></p>For example, 2023 year-end assets were $5.5M with total grants awarded 
+at $677K. The following year, 2024 assets decreased slightly to $4.3M, 
+but grants awarded jumped to $952K. You can see in the graph above how 
+that negatively impacted our assets, a trend that is not sustainable 
+even in the short term. Please check out the <a href="https://www.python.org/psf/annual-report/2024/" target="_blank">PSF’s 2024 Annual Impact Report</a> for more details of our finances and our work.<br /><br /><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjjaAwQv8CnVvh8SOOYS0mIJ-gnKY5qaaPFzdK8PjzpoN44ismaGAOQ9RBPhCsOwterbR7jrj9N0ptDKeUJ38mM6lYOnIVLzEtVkymcNC4CVwuURC-1PimQI9W9Y-3OWNGZeZJmJRoLK-JpamHENQQYVvbMPtYhOjjHhqxyAUUcmnQOCdU-oA/s828/psf_grant_trends.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="640" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjjaAwQv8CnVvh8SOOYS0mIJ-gnKY5qaaPFzdK8PjzpoN44ismaGAOQ9RBPhCsOwterbR7jrj9N0ptDKeUJ38mM6lYOnIVLzEtVkymcNC4CVwuURC-1PimQI9W9Y-3OWNGZeZJmJRoLK-JpamHENQQYVvbMPtYhOjjHhqxyAUUcmnQOCdU-oA/w456-h640/psf_grant_trends.png" width="456" /></a></div><p>The
+ <a href="https://pyfound.blogspot.com/2024/12/12psf-grants-program-charter-updates-part-3.html" target="_blank">PSF Grants Program adjustments implemented earlier this year</a> aimed to 
+reduce total grant award spending while providing a more equitable 
+approach, but the growth in new/revived grant applications outpaced the 
+lowered caps and other limits. As we reviewed Q2 spending, it became 
+clear that the unexpected influx of qualified grant proposals had 
+already almost exhausted the total amount we had budgeted for the full 
+year.&nbsp;<br /><br /></p><p></p><h3 style="text-align: left;">We’re in this together</h3><p>The
+ PSF is in a similar position to the many other organizations and NGOs 
+(and all of our volunteer conference and meetup organizers!) trying to 
+support the Python community and foundation while faced with inflation, 
+lower sponsorship, economic pressure in the tech sector, and 
+global/local uncertainty and conflict.&nbsp;<br /><br />Last year, <a href="https://pycon.blogspot.com/2024/11/important-changes-ahead-commitment-to.html" target="_blank">the PyCon US blog explained</a> that PyCon US 2024 generated a significant loss; losses 
+from PyCon US are paid for by PSF general funds that are also the 
+financial source for the PSF Grants programs. For many years, PyCon US 
+created a surplus used to fund Grants, PSF staff, and other programs. 
+Based on the current numbers for PyCon US 2025, the PSF will need to 
+fund another loss. Many factors including the lower-than-budgeted 
+attendance, higher location costs, and the current economic and 
+political situation contributed to the loss despite incredible efforts 
+by staff and volunteers to control costs.&nbsp;<br /></p><h3 style="text-align: left;">What’s the solution?</h3><p>In
+ an ideal world, we wouldn’t need to pause the Grants Program and would 
+instead be granting even MORE awards to our inspiring community. And 
+while that’s not currently the case, we do think you can help us unpause
+ the grants program and fund the PSF’s other work. <b>The PSF needs more 
+support and resources from the corporations that are built on and making
+ revenue from Python. As a community, let’s ask corporations to step up 
+and sustain the health of the community and programming language they 
+rely on.</b> The AI sector, for example, relies heavily on Python and is 
+mostly <a href="https://georgiker.com/blog/is-ai-leaving-python-community-behind/" target="_blank">untapped for the PSF, PyCon US, and our entire community</a>. If you 
+have potential sponsorship connections (in AI or otherwise) we welcome 
+you to send us leads or connect us via sponsors@python.org.&nbsp;<br /><br />The 
+PSF is ever grateful for our sponsors, past and current, and we do 
+everything we can to make their sponsorships beneficial and rewarding. 
+PSF Staff also work hard to make those sponsorship dollars stretch as 
+far as they can. Frankly, the PSF simply needs more sponsorship to 
+continue to support the astonishing growth of Python and its community.<br /><br />The
+ PSF is also incredibly grateful for our individual donors and PSF 
+members. We truly couldn’t do this without you. If you’re inspired to 
+help because of this post, we urge you to ask your employers to sponsor 
+the PSF. Send them the <a href="https://www.python.org/psf/sponsorship/" target="_blank">PSF’s sponsorship page</a>! We know times are 
+financially challenging for everyone, but if you’re feeling very 
+inspired and in a position to donate, we welcome your contributions via 
+the <a href="https://psfmember.org/civicrm/contribute/transact/?reset=1&amp;id=2" target="_blank">PSF’s donation page</a>. You can also join us as a <a href="https://psfmember.org/python-software-foundation-supporting-member-2/" target="_blank">PSF Supporting Member</a>
+ (<a href="https://psfmember.org/civicrm/contribute/transact/?reset=1&amp;id=39" target="_blank">a sliding scale is also available!</a>), to invest in the future of Python
+ and its community.</p><h3 style="text-align: left;">Some additional context</h3><p>As PSF Staff reviewed the Q2 numbers for the Grants Program, we found the following:<br /></p><ul style="text-align: left;"><li><b>Revived events. </b>10
+ out of the 75 (or about 13%) grants applications we’ve received in 2025
+ are for “revived” grant applications for events that weren’t run in 
+2024 (including one that hasn’t been run since 2015, whoa!).</li><li><b>Net new applications. </b>19
+ out of the 75 (or about 25%) grant applications we’ve received in 2025 
+are for totally new events and initiatives. While we did expect some 
+growth, this is tremendous!</li><li><b>Earlier applications.</b> We 
+encouraged folks to apply earlier—and you did, thank you! We weren’t 
+expecting this level of awarding by mid-year. We also expect that to 
+continue, so we can now plan better for that in the future.</li><li><b>Higher $$ requests.</b> Across all returning applications the amount being requested is about 13% higher than in years previous.&nbsp;</li></ul><p>While
+ we expected more interest from the community in the PSF grants program,
+ the amount of growth far exceeded our expectations.&nbsp;</p><h3 style="text-align: left;">What’s next?</h3><p>The
+ PSF is working on our strategy to balance support for the worldwide 
+Python community and funding constraints, now and in the future. The 
+unknown and rapidly growing number of new Python events and 
+initiatives—combined with the ongoing needs of existing events and 
+organizations that have historically relied on the PSF Grants Program—is
+ challenging to manage sustainably on a rolling application basis.<br /><br />So, here’s our plan:<br /></p><ul style="text-align: left;"><li>First, the PSF Board will continue to refine the grant program’s guiding principles and how they translate into program policy.&nbsp;</li><li>From
+ there, PSF Staff will research, plan, and implement a quarterly review 
+and awarding approach for the PSF Grants Program to provide an equitable
+ and financially sustainable process.</li></ul><p>Moving to a quarterly 
+review process from the rolling approval process the Grants Program 
+currently uses will be a big change! We will do our best to implement 
+processes that work well for the community, the Grants Workgroup, and 
+PSF Staff.&nbsp;</p><p>Even with our best efforts, we acknowledge that there will be
+ learning opportunities around moving to a quarterly review and most 
+likely a series of adjustments ahead of us to get things working 
+smoothly. Your feedback as grant applicants and recipients will be 
+extremely helpful as we take on this journey. During this process, we 
+will determine on what timeline we can re-open the Grants Program. You 
+can expect updates from us on the future of the PSF Grants Program in 
+early 2026.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 05, 2025 10:13 AM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/08/the-psf-has-paused-our-grants-program.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/443/patching-multiprocessing" class="hover:underline"
+              >#443 Patching Multiprocessing</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include rumdl, Coverage 7.10.0: patch, aioboto3, and You might not need a Python class.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 04, 2025 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/443/patching-multiprocessing"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.europython-society.org/europython-2025-code-of-conduct-transparency-report/" class="hover:underline"
               >EuroPython 2025 Code of Conduct Transparency Report</a
             >
@@ -1288,525 +1808,6 @@ configuration option that has done more than I would have thought.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.johndcook.com/blog/2025/07/27/moneros-elliptic-curve/" class="hover:underline"
-              >Monero’s elliptic curve</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Digital signatures often use elliptic curves. For example, Bitcoin and Ethereum use the elliptic curve secp256k1 [1]. This post will discuss the elliptic curve Ed25519 [2] using in Monero and in many other applications. Ed25519 has the equation y² − x² = 1 + d x² y² over the finite field Fq where q = 2255 − [&#8230;]</p>
-The post <a href="https://www.johndcook.com/blog/2025/07/27/moneros-elliptic-curve/">Monero’s elliptic curve</a> first appeared on <a href="https://www.johndcook.com/blog">John D. Cook</a>.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 27, 2025 01:57 PM UTC by
-            <a href="http://www.johndcook.com/blog/category/python/feed/" class="link link-hover text-primary"
-              >John Cook</a
-            >
-          </div>
-          <a
-            href="https://www.johndcook.com/blog/2025/07/27/moneros-elliptic-curve/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lukeplant.me.uk/blog/posts/why-im-not-letting-the-juniors-use-genai-for-coding/" class="hover:underline"
-              >Why I’m not letting the juniors use GenAI for coding</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>TLDR: because I want them to become seniors one day, and I want them to enjoy being developers</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 26, 2025 08:30 PM UTC by
-            <a href="http://lukeplant.me.uk/blog/categories/python/atom/index.xml" class="link link-hover text-primary"
-              >Luke Plant</a
-            >
-          </div>
-          <a
-            href="https://lukeplant.me.uk/blog/posts/why-im-not-letting-the-juniors-use-genai-for-coding/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/7/26/virtual-threads/" class="hover:underline"
-              >From Async/Await to Virtual Threads</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Last November I wrote a post about how the programming interface of threads
-<a href="/2024/11/18/threads-beat-async-await/">beats the one of async/await</a>.  In May,
-Mark Shannon brought up the idea of <a href="https://discuss.python.org/t/add-virtual-threads-to-python/91403">virtual threads for
-Python</a>
-on Python&#8217;s discussion board and also referred back to that article that I
-wrote.  At EuroPython we had a chat about that topic and that reminded me that
-I just never came around to writing part two of that article.</p>
-<h2>How We Got Here</h2>
-<p>The first thing to consider is that async/await did actually produce one
-very good outcome for Python: it has exposed many more people to concurrent
-programming.  By introducing a syntax element into the programming language, the
-problem of concurrent programming has been exposed to more people.  The
-unfortunate side effect is that it requires a very complex internal machinery
-that leaks into the programming language to the user and it requires <a href="https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/">colored
-functions</a>.</p>
-<p>Threads, on the other hand, are in many ways a much simpler concept, but the
-threading APIs that have proliferated all over the place over the last
-couple of generations leave a lot to be desired.  Without doubt, async/await
-in many ways improved on that.</p>
-<p>One key part of how async/await works in Python is that nothing really
-happens until you call await.  You&#8217;re guaranteed not to be suspended.
-Unfortunately, recent changes with
-<a href="https://docs.python.org/3/howto/free-threading-python.html">free-threading</a>
-make that guarantee rather pointless.  Because you still need to write code to
-be aware of other threads, and so now we have the complexity of both the async
-ecosystem and the threading system at all times.</p>
-<p>This is a good moment to rethink if we maybe have a better path in front of us
-by fully embracing threads.</p>
-<h2>Structured, Virtual Threads</h2>
-<p>Another really positive thing that came out of async in Python was that a lot of
-experimentation was made to improve the ergonomics of those APIs.  The most
-important innovation has been the idea of <a href="https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/">structured
-concurrency</a>.
-Structured concurrency is all about the idea of disallowing one task to outlive
-its parent. And this is also a really good feature because it allows, for
-instance, a task to also have a relationship to the parent task, which makes the
-flow of information (such as context variables) much clearer than traditional
-threads and thread local variables do, where threads have effectively no real
-relationships to their parents. </p>
-<p>Unfortunately, task groups (the implementation of structured concurrency in
-Python) are a rather recent addition, and unfortunately its rather strict
-requirements on cancellation have often not been sufficiently implemented in
-many libraries.  To understand why this matters, you have to understand how
-structured concurrency works.  Basically, when you spawn a task as a child of
-another task, then any adjacent task that fails will also cause the cancellation
-of all the other ones.  This requires robust cancellations.</p>
-<p>And robust cancellations are really hard to do when some of those tasks involve
-real threads.  For instance, the very popular <code>aiofiles</code> library uses a thread
-pool to move I/O operations into an I/O thread since there is no really good way
-on different platforms to get real async I/O behavior out of standard files.
-However, cancellations are not supported.  That causes a problem: if you spawn
-multiple tasks, some of which are blocking on a read (with <code>aiofiles</code>) that
-would only succeed if another one of those tasks concludes, you can actually end
-up deadlocking yourself in the light of cancellations.  This is not a
-hypothetical problem.  There are, in fact, quite a few ways to end up in a
-situation where the presence of <code>aiofiles</code> in a task group will cause an
-interpreter not to shut down properly.  Worse, the exception that was actually
-caught by the task group will be invisible until the blocking read on the other
-thread pool has been interrupted by a signal like a keyboard interrupt.  This is
-a pretty disappointing developer experience. </p>
-<p>In many ways, what we really want is to go back to the drawing board and say,
-&#8220;What does a world look like that only ever would have used threads with a
-better API?&#8221;</p>
-<h2>Only Threads</h2>
-<p>So if we have only threads, then we are back to some performance challenges
-that motivated asyncio in the first place.  The solution for this will involve
-virtual threads.  You can read all about them <a href="/2024/11/18/threads-beat-async-await/">in the previous
-post</a>.</p>
-<p>One of the key parts of enabling virtual threads is also a commitment to
-handling many of the challenges with async I/O directly as part of the runtime.
-That means that if there is a blocking operation, we will have to ensure that
-the virtual thread is put back to the scheduler, and another one has a chance
-to run.</p>
-<p>But that alone will feel a little bit like a regression because we also want to
-ensure that we do not lose structured concurrency.</p>
-<h2>The Better API</h2>
-<p>Let&#8217;s start simple: what does Python code look like where we download an
-arbitrary number of URLs sequentially?  It probably looks a bit like this:</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
-
-    <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-        <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-
-    <span class="k">return</span> <span class="n">results</span>
-</pre></div>
-<p>No, this is intentionally not using any async or await, because this is not
-what we want.  We want the most simple thing: blocking APIs.</p>
-<p>The general behavior of this is pretty simple: we are going to download a bunch
-of URLs, but if any one of them fails, we&#8217;ll basically abort and raise an
-exception, and will not continue downloading any other ones. The results that
-we have collected up to that point are lost.</p>
-<p>But how would we stick with this but introduce parallelism?  How can we
-download more than one at a time?  If a language were to support structured
-concurrency and virtual threads, we could achieve something similar with some
-imaginary syntax like this:</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
-
-    <span class="k">await</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="k">async</span><span class="p">:</span>
-                <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-
-    <span class="k">return</span> <span class="n">results</span>
-</pre></div>
-<p>I&#8217;m intentionally using await and async here, but you can see from the usage
-that it&#8217;s actually inverted compared to what we have today.  Here is what this
-would do:</p>
-<ul>
-<li>await: this creates a structured thread group.  Any spawned thread
-(async) within it attaches to this thread group and is awaited.  If any of
-the threads fails, future spawns are blocked and existing threads are told to
-cancel.</li>
-<li>async: you can think of this as being a function declaration that is paired
-with a spawn.  The entire body thus runs in another task.  Because there is a
-parent/child relationship of threads, the child inherits the context of the
-parent.  This is also how edge and level cancellation can travel to threads.</li>
-</ul>
-<p>Behind the scenes, something like this would happen:</p>
-<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
-
-    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">():</span>
-        <span class="k">def</span><span class="w"> </span><span class="nf">_thread</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
-            <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-
-        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">ThreadGroup</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">_thread</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
-
-    <span class="k">return</span> <span class="n">results</span>
-</pre></div>
-<p>Note that all threads here are virtual threads.  They behave like threads, but
-they might be scheduled on different kernel threads.  If any one of those
-spawned threads fails, the thread group itself fails and also prevents further
-spawn calls from taking place.  A spawn on a failed thread group would also no
-longer be permitted.</p>
-<p>In the grand scheme of things, this is actually quite beautiful.  Unfortunately,
-it does not match all that well to Python.  This syntax would be unexpected
-because Python does not really have an existing concept of a hidden function
-declaration.  Python&#8217;s scoping also prevents this from working all that well.
-Because Python doesn&#8217;t have syntax for variable declarations, Python actually
-only has a single scope for functions.  This is quite unfortunate because, for
-instance, it means that a helper declared in a loop body cannot really close
-over the loop iteration variable.</p>
-<p>Regardless, I think the important thing you should take away from this is that
-this type of programming does not require thinking about
-<a href="https://en.wikipedia.org/wiki/Futures_and_promises">futures</a>.  Even though it
-could support futures, you can actually express a whole lot of programming code
-without needing to defer to an abstraction like that.</p>
-<p>As a result, there are much fewer concepts that one has to consider when
-working with a system like this.  I do not have to expose a programmer to the
-concept of futures or promises, async tasks, or anything like that. </p>
-<h2>API Compromises</h2>
-<p>Now, I don&#8217;t think that such a particular syntax would fit well into Python.
-And it is somewhat debatable if automatic thread groups are the right solution.
-You could also model this after what we have with async/await and make thread
-groups explicit:</p>
-<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
-    <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
-
-    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">()</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
-
-    <span class="k">return</span> <span class="n">results</span>
-</pre></div>
-<p>This largely still has the same behavior, but it uses a little bit more explicit
-operations and it does require you to create more helper functions.  But it
-still fully avoids having to work with promises or futures.</p>
-<h2>Complexity Goes Where It Belongs</h2>
-<p>What is so important about this entire concept is that it moves a lot of the
-complexity of concurrent programming where it belongs: into the interpreter and
-the internal APIs.  For instance, the dictionary in <code>results</code> has to be locked
-for this to work.  Likewise, the APIs that <code>fetch_url</code> would use need to support
-cancellation and the I/O layer needs to suspend the virtual thread and go back to
-the scheduler.  But for the majority of programmers, all of this is hidden.</p>
-<p>I also think that some of the APIs really aged badly for supporting
-well-behaved concurrent systems.  For instance, I very much prefer Rust&#8217;s idea
-of enclosing values in a mutex over carrying a mutex somewhere on the side.</p>
-<p>Also, semaphores are an incredibly potent system to limit concurrency and to
-create more stable systems.  Something like this could also become a part of a
-thread group, directly limiting how many spawns can happen simultaniously.</p>
-<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results_mutex</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
-    <span class="n">result</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-    <span class="k">with</span> <span class="n">results_mutex</span><span class="o">.</span><span class="n">lock</span><span class="p">()</span> <span class="k">as</span> <span class="n">results</span><span class="p">:</span>
-        <span class="n">results</span><span class="o">.</span><span class="n">store</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">results</span> <span class="o">=</span> <span class="n">Mutex</span><span class="p">(</span><span class="n">MyResultStore</span><span class="p">())</span>
-
-    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">(</span><span class="n">max_concurrency</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">download_and_store</span><span class="p">,</span> <span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">))</span>
-
-    <span class="k">return</span> <span class="n">results</span>
-</pre></div>
-<h2>Futures</h2>
-<p>There will be plenty of reasons to use futures and they would continue to hang
-around. One way to get a future is to hold on to the return value of the
-<code>spawn</code> method:</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">download_and_store</span><span class="p">(</span><span class="n">results</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
-    <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
-    <span class="n">futures</span> <span class="o">=</span> <span class="p">[]</span>
-    <span class="k">with</span> <span class="n">ThreadGroup</span><span class="p">()</span> <span class="k">as</span> <span class="n">g</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
-            <span class="n">futures</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">url</span><span class="p">,</span> <span class="n">g</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">))))</span>
-
-    <span class="k">return</span> <span class="p">{</span><span class="n">url</span><span class="p">:</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">()</span> <span class="k">for</span> <span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">future</span><span class="p">)</span> <span class="ow">in</span> <span class="n">futures</span><span class="p">}</span>
-</pre></div>
-<h2>Spawn Without Thread Groups</h2>
-<p>One big question is if spawn should work if there is no thread group.  For
-instance, in Trio, which is a Python async library, the decision was made that
-you have to always have the equivalent of a thread group — they call it a
-nursery — to spawn an operation.  I think that this is a very sensible policy,
-but there are situations where you cannot really do that.  I can imagine various
-different alternatives for this, such as having a default thread group hang
-around for background tasks that is implicitly joined when the process is
-shutting down.  However, I think the most important thing is to bring as much of
-the intended behavior to the default APIs.</p>
-<h2>Future of Async Await?</h2>
-<p>Inside your system, what would be the future of async/await?  Well, that is up
-for debate, but it does seem rather reasonable to find ways to continue
-asynchronous functionality for already existing code, but I do think it would
-be entirely unnecessary for code in the future.</p>
-<p>I would like you to consider this as a conversation starter about virtual
-threads and less about a fully fleshed out idea.  There are a lot of questions
-open about this, particularly in the context of Python, but the idea of no
-longer having to deal with colored functions really appeals to me and I hope we
-can explore it a bit.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 26, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/7/26/virtual-threads/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202507/coverage_7100_patch.html" class="hover:underline"
-              >Coverage 7.10.0: patch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Years ago I greeted a friend returning from vacation and asked how it had
-been. She answered, &#8220;It was good, I got a lot done!&#8221; I understand that feeling.
-I just had a long vacation myself, and used the time to clean up some old issues
-and add some new features in <a href="https://pypi.org/project/coverage/" rel="external noopener">coverage.py v7.10</a>.</p><p>The major new feature is a configuration option,
-<a href="https://coverage.readthedocs.io/en/latest/config.html#run-patch" rel="external noopener"><code>[run] patch</code></a>.  With it, you specify named
-patches that coverage can use to monkey-patch some behavior that gets in the way
-of coverage measurement.</p><p>The first is <code>subprocess</code>.  Coverage works great when you start your
-program with coverage measurement, but has long had the problem of how to also
-measure the coverage of sub-processes that your program created.  The existing
-solution had been a complicated two-step process of creating obscure .pth files
-and setting environment variables.  Whole projects appeared on PyPI to handle
-this for you.</p><p>Now, <code>patch = subprocess</code> will do this for you automatically, and clean
-itself up when the program ends.  It handles sub-processes created by the
-<a href="https://docs.python.org/3/library/subprocess.html#module-subprocess" rel="external noopener">subprocess</a> module, the
-<a href="https://docs.python.org/3/library/os.html#os.system" rel="external noopener">os.system()</a> function, and any of the
-<a href="https://docs.python.org/3/library/os.html#os.execl" rel="external noopener">execv</a> or <a href="https://docs.python.org/3/library/os.html#os.spawnl" rel="external noopener">spawnv</a> families of
-functions.</p><p>This alone has spurred <a href="https://bsky.app/profile/did:plc:yj4vzsbzzkpswr7x5yagzhhx/post/3luqfffiiqk27" rel="external noopener">one user to exclaim</a>,</p><blockquote><div><p>The latest release of Coverage feels like a Christmas present!
-The native support for Python subprocesses is so good!</p></div></blockquote><p>Another patch is <code>_exit</code>.  This patches
-<a href="https://docs.python.org/3/library/os.html#os._exit" rel="external noopener">os._exit()</a> so that coverage saves its data before
-exiting. The os._exit() function is an immediate and abrupt termination of the
-program, skipping all kinds of registered clean up code.  This patch makes it
-possible to collect coverage data from programs that end this way.</p><p>The third patch is <code>execv</code>.  The <a href="https://docs.python.org/3/library/os.html#os.execl" rel="external noopener">execv</a> functions
-end the current program and replace it with a new program in the same process.
-The <code>execv</code> patch arranges for coverage to save its data before the
-current program is ended.</p><p>Now that these patches are available, it seems silly that it&#8217;s taken so long.
-They (mostly) weren&#8217;t difficult. I guess it took looking at the old issues,
-realizing the friction they caused, and thinking up a new way to let users
-control the patching.  Monkey-patching is a bit invasive, so I&#8217;ve never wanted
-to do it implicitly.  The patch option gives the user an explicit way to request
-what they need without having to get into the dirty details themselves.</p><p>Another process-oriented feature was contributed by Arkady Gilinsky: with
-<code>--save-signal=USR1</code> you can specify a user signal that coverage will
-attend to.  When you send the signal to your running coverage process, it will
-save the collected data to disk.  This gives a way to measure coverage in a
-long-running process without having to end the process.</p><p>There were some other fixes and features along the way, like better HTML
-coloring of multi-line statements, and more default exclusions
-(<code>if TYPE_CHECKING:</code> and <code>...</code>).</p><p>It feels good to finally address some of these pain points.  I also closed
-some stale issues and pull requests.  There is more to do, always more to do,
-but this feels like a real step forward.  Give <a href="https://coverage.readthedocs.io/en/7.10.0/changes.html#version-7-10-0-2025-07-24" rel="external noopener">coverage
-7.10.0</a> a try and let me know how it works for you.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 24, 2025 11:03 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202507/coverage_7100_patch.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://testdriven.io/blog/django-sevalla/" class="hover:underline"
-              >Deploying a Django App to Sevalla</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This tutorial looks at how to deploy a Django application to Sevalla.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 24, 2025 10:28 PM UTC by
-            <a href="https://testdriven.io/blog/topics/django/feed.xml" class="link link-hover text-primary"
-              >TestDriven.io</a
-            >
-          </div>
-          <a
-            href="https://testdriven.io/blog/django-sevalla/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonshow.com/p/writing-creating-tui-applications" class="hover:underline"
-              >Writing Creating TUI Applications with Textual and Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In this episode, Mike Driscoll talks about his latest book, Creating TUI Applications with Textual and Python.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 24, 2025 08:31 PM UTC by
-            <a href="https://www.pythonshow.com/feed" class="link link-hover text-primary"
-              >The Python Show</a
-            >
-          </div>
-          <a
-            href="https://www.pythonshow.com/p/writing-creating-tui-applications"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -1818,8 +1819,8 @@ but this feels like a real step forward.  Give <a href="https://coverage.readthe
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8580</a></li>
-    <li><a>Unique Feeds: 395</a></li>
+    <li><a>Total Entries: 8530</a></li>
+    <li><a>Unique Feeds: 399</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
