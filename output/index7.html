@@ -53,6 +53,157 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html" class="hover:underline"
+              >Mistune 3 wikilink inline parser</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://mistune.lepture.com/">Mistune 3</a> has changed it's internal structure and extension mechanisms.</p>
+<p>The <a href="https://mistune.lepture.com/en/latest/advanced.html">mistune advanced documentation</a> has some examples how to create and register inline patterns. After some iterations I came up with the following solution to render wiki links:</p>
+<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>  
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Match</span>  
+  
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">Markdown</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRenderer</span><span class="p">,</span> <span class="n">InlineState</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.inline_parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">InlineParser</span>  
+  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_wikilink</span><span class="p">(</span><span class="n">inline</span><span class="p">:</span> <span class="s2">&quot;InlineParser&quot;</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">Match</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">state</span><span class="p">:</span> <span class="s2">&quot;InlineState&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse wikilink syntax [[page title]] or [[page title|display text]]&quot;&quot;&quot;</span>  
+    <span class="n">page_title</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'page'</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="n">display_text</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'display'</span><span class="p">)</span>  
+      
+    <span class="c1"># Use display text if provided, otherwise use page title  </span>
+    <span class="k">if</span> <span class="n">display_text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">display_text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="k">else</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">page_title</span>  
+      
+    <span class="c1"># Create a wikilink token  </span>
+    <span class="n">state</span><span class="o">.</span><span class="n">append_token</span><span class="p">({</span>  
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;wikilink&quot;</span><span class="p">,</span>  
+        <span class="s2">&quot;children&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;raw&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">}],</span>  
+        <span class="s2">&quot;attrs&quot;</span><span class="p">:</span> <span class="p">{</span>  
+            <span class="s2">&quot;page&quot;</span><span class="p">:</span> <span class="n">page_title</span><span class="p">,</span>  
+            <span class="s2">&quot;display&quot;</span><span class="p">:</span> <span class="n">text</span>  
+        <span class="p">}</span>  
+    <span class="p">})</span>  
+      
+    <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">render_wikilink_html</span><span class="p">(</span><span class="n">renderer</span><span class="p">:</span> <span class="s2">&quot;BaseRenderer&quot;</span><span class="p">,</span> <span class="n">children</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">page</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">display</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Render wikilink as HTML anchor tag&quot;&quot;&quot;</span>  
+    <span class="n">url_page</span> <span class="o">=</span> <span class="n">page</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">' '</span><span class="p">,</span> <span class="s1">'_'</span><span class="p">)</span>  
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">'&lt;a href=&quot;/wiki/</span><span class="si">{</span><span class="n">url_page</span><span class="si">}</span><span class="s1">&quot; class=&quot;wikilink&quot;&gt;</span><span class="si">{</span><span class="n">children</span><span class="si">}</span><span class="s1">&lt;/a&gt;'</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">wikilink_plugin</span><span class="p">(</span><span class="n">md</span><span class="p">:</span> <span class="s2">&quot;Markdown&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plugin function to add wikilink support to mistune&quot;&quot;&quot;</span>  
+    <span class="c1"># Use named groups</span>
+    <span class="n">WIKILINK_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\[\[(?P&lt;page&gt;[^|\]]+)(?:\|(?P&lt;display&gt;[^\]]+))?\]\]'</span>  
+    <span class="n">md</span><span class="o">.</span><span class="n">inline</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">WIKILINK_PATTERN</span><span class="p">,</span> <span class="n">parse_wikilink</span><span class="p">,</span> <span class="n">before</span><span class="o">=</span><span class="s2">&quot;link&quot;</span><span class="p">)</span>  
+      
+    <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span> <span class="ow">and</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">NAME</span> <span class="o">==</span> <span class="s2">&quot;html&quot;</span><span class="p">:</span>  
+        <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">render_wikilink_html</span><span class="p">)</span>
+  
+<span class="c1"># Usage example  </span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_markdown</span>  
+      
+    <span class="c1"># Create markdown parser with the wikilink plugin  </span>
+    <span class="n">md</span> <span class="o">=</span> <span class="n">create_markdown</span><span class="p">(</span><span class="n">plugins</span><span class="o">=</span><span class="p">[</span><span class="n">wikilink_plugin</span><span class="p">])</span>  
+      
+    <span class="c1"># Test examples  </span>
+    <span class="n">text1</span> <span class="o">=</span> <span class="s2">&quot;Check out [[Main Page]] for more info.&quot;</span>  
+    <span class="n">text2</span> <span class="o">=</span> <span class="s2">&quot;Visit [[Installation Guide|the installation guide]] to get started.&quot;</span>  
+    <span class="n">text3</span> <span class="o">=</span> <span class="s2">&quot;Multiple links: [[Page One]] and [[Page Two|Custom Text]].&quot;</span>  
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Example 1:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text1</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Check out &lt;a href=&quot;/wiki/Main_Page&quot; class=&quot;wikilink&quot;&gt;Main Page&lt;/a&gt; for more info.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 2:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text2</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Visit &lt;a href=&quot;/wiki/Installation_Guide&quot; class=&quot;wikilink&quot;&gt;the installation guide&lt;/a&gt; to get started.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 3:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text3</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Multiple links: &lt;a href=&quot;/wiki/Page_One&quot; class=&quot;wikilink&quot;&gt;Page One&lt;/a&gt; and &lt;a href=&quot;/wiki/Page_Two&quot; class=&quot;wikilink&quot;&gt;Custom Text&lt;/a&gt;.&lt;/p&gt;</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 20, 2025 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.dataschool.io/master-machine-learning-book-preview/" class="hover:underline"
+              >Book preview: Master Machine Learning with scikit-learn 📖</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This is a practical guide to help you transform from Machine Learning novice to skilled ML practitioner. Download the first 3 chapters for free!
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 19, 2025 04:56 PM UTC by
+            <a href="https://www.dataschool.io/tag/python/rss/" class="link link-hover text-primary"
+              >Data School</a
+            >
+          </div>
+          <a
+            href="https://www.dataschool.io/master-machine-learning-book-preview/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/266/" class="hover:underline"
               >The Real Python Podcast – Episode #266: Dangers of Automatically Converting a REST API to MCP</a
             >
@@ -1573,270 +1724,6 @@ the default. You can switch between providers with <tt class="literal"><span cla
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/django-software-foundation-at-europython-2025-celebrating-20-years-of-the-django-framework/" class="hover:underline"
-              >Django Software Foundation at EuroPython 2025: Celebrating 20 Years of the Django framework</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>At EuroPython, we&#x2019;re always glad to welcome friends from other foundations. This year, the Django Software Foundation (DSF) joined us to showcase the framework and the vibrant community around it.</p><p>The DSF had a booth in the community area where attendees could learn more about Django and meet</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 05, 2025 09:09 AM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/django-software-foundation-at-europython-2025-celebrating-20-years-of-the-django-framework/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2025/09/customizing-your-python-repl-color-scheme/" class="hover:underline"
-              >Customizing your Python REPL's color scheme (Python 3.14+)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Did you know that Python 3.14 will include <a href="https://docs.python.org/3.14/whatsnew/3.14.html#whatsnew314-pyrepl-highlighting">syntax highlighting</a> in the REPL?</p>
-
-<p>Python 3.14 is due to be <a href="https://peps.python.org/pep-0745/">officially released</a> in about a month.
-I recommended tweaking your Python setup now so you&rsquo;ll have your ideal color scheme on release day.</p>
-
-<p><img src="https://treyhunner.com/images/python3.14-repl-syntax-highlighting.png" title="Python 3.14 REPL with syntax highlighting using custom color scheme" /></p>
-
-<p>But&hellip; what if the default syntax colors don&rsquo;t match the colors that your text editor uses?</p>
-
-<p>Well, fortunately you can customize your color scheme!</p>
-
-<p><strong>Warning</strong>: I am recommending using an undocumented private module (it has an <code>_</code>-prefixed name) which may change in future Python versions.
-Do not use this module in production code.</p>
-
-<h2>Installing Python 3.14</h2>
-
-<p>Don&rsquo;t have Python 3.14 installed yet?</p>
-
-<p>If you have <a href="https://docs.astral.sh/uv/">uv</a> installed, you can run this command to launch Python 3.14:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="nv">$ </span>uv run --python 3.14 python
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>That will automatically install 3.14 (if you don&rsquo;t have it yet) and run it.</p>
-
-<h2>Setting a theme</h2>
-
-<p>I have my terminal colors set to the Solarized Light color palette and I have Vim use a Solarized Light color scheme as well.</p>
-
-<p>The REPL doesn&rsquo;t <em>quite</em> match my text editor by default:</p>
-
-<p><img src="https://treyhunner.com/images/python3.14-repl-default-color-scheme.png" title="Python 3.14 REPL with default syntax highlighting" /></p>
-
-<p>The numbers, comments, strings, and keywords are all different colors than my text editor.</p>
-
-<p>This code makes the Python REPL use <em>nearly</em> the same syntax highlighting as my text editor:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-<span class="line-number">15</span>
-</pre></td><td class="code"><pre><code class="python"><span class="line"><span class="kn">from</span> <span class="nn">_colorize</span> <span class="kn">import</span> <span class="n">set_theme</span><span class="p">,</span> <span class="n">default_theme</span><span class="p">,</span> <span class="n">Syntax</span><span class="p">,</span> <span class="n">ANSIColors</span>
-</span><span class="line">
-</span><span class="line"><span class="n">set_theme</span><span class="p">(</span><span class="n">default_theme</span><span class="o">.</span><span class="n">copy_with</span><span class="p">(</span>
-</span><span class="line">    <span class="n">syntax</span><span class="o">=</span><span class="n">Syntax</span><span class="p">(</span>
-</span><span class="line">        <span class="n">keyword</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">GREEN</span><span class="p">,</span>
-</span><span class="line">        <span class="n">builtin</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BLUE</span><span class="p">,</span>
-</span><span class="line">        <span class="n">comment</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_BLUE</span><span class="p">,</span>
-</span><span class="line">        <span class="n">string</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">CYAN</span><span class="p">,</span>
-</span><span class="line">        <span class="n">number</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">CYAN</span><span class="p">,</span>
-</span><span class="line">        <span class="n">definition</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BLUE</span><span class="p">,</span>
-</span><span class="line">        <span class="n">soft_keyword</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BOLD_GREEN</span><span class="p">,</span>
-</span><span class="line">        <span class="n">op</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_GREEN</span><span class="p">,</span>
-</span><span class="line">        <span class="n">reset</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">RESET</span> <span class="o">+</span> <span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_GREEN</span><span class="p">,</span>
-</span><span class="line">    <span class="p">),</span>
-</span><span class="line"><span class="p">))</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Check it out:</p>
-
-<p><img src="https://treyhunner.com/images/python3.14-repl-syntax-highlighting.png" title="Python 3.14 REPL with syntax highlighting using custom color scheme" /></p>
-
-<p>Neat, right?</p>
-
-<p>But&hellip; I want this to be enabled by default!</p>
-
-<h2>Using a <code>PYTHONSTARTUP</code> file</h2>
-
-<p>You can use a <code>PYTHONSTARTUP</code> file to run code every time a new Python process starts.</p>
-
-<p>If Python sees a <code>PYTHONSTARTUP</code> environment variable when it starts up, it will open that file and evaluate the code within it.</p>
-
-<p>I have this in my <code>~/.zshrc</code> file to set the <code>PYTHONSTARTUP</code> environment variable to <code>~/.startup.py</code>:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-</pre></td><td class="code"><pre><code class="bash"><span class="line"><span class="c"># Setup python-launcher to use startup file</span>
-</span><span class="line"><span class="nb">export </span><span class="nv">PYTHONSTARTUP</span><span class="o">=</span><span class="nv">$HOME</span>/.startup.py
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>In my <code>~/.startup.py</code> file, I have this code:</p>
-
-<figure class="code"><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class="line-number">1</span>
-<span class="line-number">2</span>
-<span class="line-number">3</span>
-<span class="line-number">4</span>
-<span class="line-number">5</span>
-<span class="line-number">6</span>
-<span class="line-number">7</span>
-<span class="line-number">8</span>
-<span class="line-number">9</span>
-<span class="line-number">10</span>
-<span class="line-number">11</span>
-<span class="line-number">12</span>
-<span class="line-number">13</span>
-<span class="line-number">14</span>
-<span class="line-number">15</span>
-<span class="line-number">16</span>
-<span class="line-number">17</span>
-<span class="line-number">18</span>
-<span class="line-number">19</span>
-<span class="line-number">20</span>
-<span class="line-number">21</span>
-<span class="line-number">22</span>
-<span class="line-number">23</span>
-<span class="line-number">24</span>
-<span class="line-number">25</span>
-</pre></td><td class="code"><pre><code class="python"><span class="line"><span class="k">def</span> <span class="nf">_main</span><span class="p">():</span>
-</span><span class="line">    <span class="sd">&quot;&quot;&quot;Everything's in a function to avoid polluting the global scope.&quot;&quot;&quot;</span>
-</span><span class="line">    <span class="k">try</span><span class="p">:</span>
-</span><span class="line">        <span class="kn">from</span> <span class="nn">_colorize</span> <span class="kn">import</span> <span class="n">set_theme</span><span class="p">,</span> <span class="n">default_theme</span><span class="p">,</span> <span class="n">Syntax</span><span class="p">,</span> <span class="n">ANSIColors</span>
-</span><span class="line">    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
-</span><span class="line">        <span class="k">pass</span>  <span class="c"># Python 3.13 and below</span>
-</span><span class="line">    <span class="k">else</span><span class="p">:</span>
-</span><span class="line">        <span class="c"># Define Solarized Light colors</span>
-</span><span class="line">        <span class="n">solarized_light_theme</span> <span class="o">=</span> <span class="n">default_theme</span><span class="o">.</span><span class="n">copy_with</span><span class="p">(</span>
-</span><span class="line">            <span class="n">syntax</span><span class="o">=</span><span class="n">Syntax</span><span class="p">(</span>
-</span><span class="line">                <span class="n">keyword</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">GREEN</span><span class="p">,</span>
-</span><span class="line">                <span class="n">builtin</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BLUE</span><span class="p">,</span>
-</span><span class="line">                <span class="n">comment</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_BLUE</span><span class="p">,</span>
-</span><span class="line">                <span class="n">string</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">CYAN</span><span class="p">,</span>
-</span><span class="line">                <span class="n">number</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">CYAN</span><span class="p">,</span>
-</span><span class="line">                <span class="n">definition</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BLUE</span><span class="p">,</span>
-</span><span class="line">                <span class="n">soft_keyword</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">BOLD_GREEN</span><span class="p">,</span>
-</span><span class="line">                <span class="n">op</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_GREEN</span><span class="p">,</span>
-</span><span class="line">                <span class="n">reset</span><span class="o">=</span><span class="n">ANSIColors</span><span class="o">.</span><span class="n">RESET</span> <span class="o">+</span> <span class="n">ANSIColors</span><span class="o">.</span><span class="n">INTENSE_GREEN</span><span class="p">,</span>
-</span><span class="line">            <span class="p">),</span>
-</span><span class="line">        <span class="p">)</span>
-</span><span class="line">        <span class="n">set_theme</span><span class="p">(</span><span class="n">solarized_light_theme</span><span class="p">)</span>
-</span><span class="line">
-</span><span class="line"><span class="n">_main</span><span class="p">()</span>  <span class="c"># _main avoids name collision, in case python -i is used</span>
-</span><span class="line"><span class="k">del</span> <span class="n">_main</span>  <span class="c"># Delete _main from global scope</span>
-</span></code></pre></td></tr></table></div></figure>
-
-
-<p>Note that:</p>
-
-<ol>
-<li>I put all relevant code within a <code>_main</code> function so that the variables I set don&rsquo;t remain in the global scope of the Python REPL (they will by default)</li>
-<li>I call the <code>_main</code> function and then delete the function afterward, again so the <code>_main</code> variable doesn&rsquo;t stay floating around in my REPL</li>
-<li>I use <code>try</code>-<code>except</code>-<code>else</code> to ensure errors don&rsquo;t occur on Python 3.13 and below</li>
-</ol>
-
-
-<p>Also note that the syntax highlighting in the new REPL is <a href="https://github.com/python/cpython/issues/134953">not as fine-grained</a> as many other syntax highlighting tools.
-I suspect that it may become a bit more granular over time, <strong>which may break the above code</strong>.</p>
-
-<p>The <code>_colorize</code> module is currently an internal implementation detail and is deliberately undocumented.
-Its API may change at any time, so <strong>the above code may break in Python 3.15</strong>.
-If that happens, I&rsquo;ll just update my <code>PYTHONSTARTUP</code> file at that point.</p>
-
-<h2>Packaging themes</h2>
-
-<p>I&rsquo;ve stuck all of the above code in a <code>~/.startup.py</code> file and I set the <code>PYTHONSTARTUP</code> environment variable on my system to point to this file.</p>
-
-<p>Instead of manually updating a startup file, is there any way to make these themes <em>installable</em>?</p>
-
-<p>Well, if a <code>.pth</code> file is included in Python&rsquo;s <code>site-packages</code> directory, that file (which must be a single line) will be run whenever Python starts up.
-In theory, a package could use such a file to import a module and then call a function that would set the color scheme for the REPL.
-My <a href="https://github.com/treyhunner/dramatic">dramatic</a> package uses (<em>cough</em> abuses <em>cough</em>) <code>.pth</code> files in this way.</p>
-
-<p>This sounds like a somewhat bad idea, but maybe not a <em>horrible</em> idea.</p>
-
-<p>If you do this, let me know.</p>
-
-<h2>What&rsquo;s your theme?</h2>
-
-<p>Have you played with setting a theme in your own Python REPL?</p>
-
-<p>What theme are you using?</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2025 09:00 PM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2025/09/customizing-your-python-repl-color-scheme/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index6.html" class="btn">«</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</button><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index8.html" class="btn">»</a></div></div>
 </div>
@@ -1848,8 +1735,8 @@ My <a href="https://github.com/treyhunner/dramatic">dramatic</a> package uses (<
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8573</a></li>
-    <li><a>Unique Feeds: 397</a></li>
+    <li><a>Total Entries: 8586</a></li>
+    <li><a>Unique Feeds: 393</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
