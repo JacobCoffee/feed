@@ -53,6 +53,133 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202511/why_your_mock_breaks_later.html" class="hover:underline"
+              >Why your mock breaks later</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In <a href="https://nedbatchelder.com/blog/201908/why_your_mock_doesnt_work.html">Why your mock doesn’t work</a> I explained this rule of
+mocking:</p><blockquote><div><p>Mock where the object is used, <strong>not</strong> where it&#8217;s
+defined.</p></div></blockquote><p>That blog post explained why that rule was important: often a mock doesn&#8217;t
+work at all if you do it wrong.  But in some cases, the mock will work even if
+you don&#8217;t follow this rule, and then it can break much later. Why?</p><p>Let&#8217;s say you have code like this:</p><blockquote class="code"><pre class="python"><div class="source"><span class="c1">#&#xa0;user.py</span>
+<br />
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">get_user_settings</span><span class="p">()</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">str</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">with</span>&#xa0;<span class="nb">open</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;~/settings.json&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>&#xa0;<span class="k">as</span>&#xa0;<span class="n">f</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<br />
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">add_two_settings</span><span class="p">()</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">int</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">settings</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">get_user_settings</span><span class="p">()</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">settings</span><span class="p">[</span><span class="s2">&quot;opt1&quot;</span><span class="p">]</span>&#xa0;<span class="o">+</span>&#xa0;<span class="n">settings</span><span class="p">[</span><span class="s2">&quot;opt2&quot;</span><span class="p">]</span>
+<br /></div>
+</pre></blockquote><p>You write a simple test:</p><blockquote class="code"><pre class="python"><div class="source"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">():</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;NOTE:&#xa0;need&#xa0;to&#xa0;create&#xa0;~/settings.json&#xa0;for&#xa0;this&#xa0;to&#xa0;work:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;&#xa0;&#xa0;{&quot;opt1&quot;:&#xa0;10,&#xa0;&quot;opt2&quot;:&#xa0;7}</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">add_two_settings</span><span class="p">()</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">17</span>
+<br /></div>
+</pre></blockquote><p>As the comment in the test points out, the test will only pass if you create
+the correct settings.json file in your home directory. This is bad: you don&#8217;t
+want to require finicky environments for your tests to pass.</p><p>The thing we want to avoid is opening a real file, so it&#8217;s a natural impulse
+to mock out <code>open()</code>:</p><blockquote class="code"><pre class="python"><div class="source"><span class="c1">#&#xa0;test_user.py</span>
+<br />
+<br /><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">io</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">StringIO</span>
+<br /><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">unittest.mock</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">patch</span>
+<br />
+<br /><span class="nd">@patch</span><span class="p">(</span><span class="s2">&quot;builtins.open&quot;</span><span class="p">)</span>
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">(</span><span class="n">mock_open</span><span class="p">):</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">mock_open</span><span class="o">.</span><span class="n">return_value</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">StringIO</span><span class="p">(</span><span class="s1">'{&quot;opt1&quot;:&#xa0;10,&#xa0;&quot;opt2&quot;:&#xa0;7}'</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">add_two_settings</span><span class="p">()</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">17</span>
+<br /></div>
+</pre></blockquote><p>Nice, the test works without needing to create a file in our home
+directory!</p><h1 id="h_much_later">Much later...<a class="headerlink" href="#h_much_later"></a></h1><p>One day your test suite <a href="https://github.com/coveragepy/coveragepy/issues/2083" rel="external noopener">fails with an error</a> like:</p><blockquote class="code"><pre class="pytb"><div class="source"><span class="x">...</span>
+<br />&#xa0;&#xa0;File&#xa0;<span class="nb">&quot;.../site-packages/coverage/python.py&quot;</span>,&#xa0;line&#xa0;<span class="m">55</span>,&#xa0;in&#xa0;<span class="n">get_python_source</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="n">source_bytes</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">read_python_source</span><span class="p">(</span><span class="n">try_filename</span><span class="p">)</span>
+<br />&#xa0;&#xa0;File&#xa0;<span class="nb">&quot;.../site-packages/coverage/python.py&quot;</span>,&#xa0;line&#xa0;<span class="m">39</span>,&#xa0;in&#xa0;<span class="n">read_python_source</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>&#xa0;<span class="n">source</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\r\n</span><span class="s2">&quot;</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\r</span><span class="s2">&quot;</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="pm">~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^</span>
+<br /><span class="gr">TypeError</span>:&#xa0;<span class="n">replace()&#xa0;argument&#xa0;1&#xa0;must&#xa0;be&#xa0;str,&#xa0;not&#xa0;bytes</span>
+<br /></div>
+</pre></blockquote><p>What happened!? Coverage.py code runs during your tests, invoked by the
+Python interpreter.  The mock in the test changed the builtin <code>open</code>, so
+any use of it anywhere during the test is affected. In some cases, coverage.py
+needs to read your source code to record the execution properly.  When that
+happens, coverage.py unknowingly uses the mocked <code>open</code>, and bad things
+happen.</p><p>When you use a mock, patch it where it&#8217;s used, not where it&#8217;s defined.  In
+this case, the patch would be:</p><blockquote class="code"><pre class="python"><div class="source"><span class="nd">@patch</span><span class="p">(</span><span class="s2">&quot;myproduct.user.open&quot;</span><span class="p">)</span>
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">(</span><span class="n">mock_open</span><span class="p">):</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="o">...</span>&#xa0;<span class="n">etc</span>&#xa0;<span class="o">...</span>
+<br /></div>
+</pre></blockquote><p>With a mock like this, the coverage.py code would be unaffected.</p><p>Keep in mind: it&#8217;s not just coverage.py that could trip over this mock. There
+could be other libraries used by your code, or you might use <code>open</code>
+yourself in another part of your product.  Mocking the definition means
+<em>anything</em> using the object will be affected.  Your intent is to only
+mock in one place, so target that place.</p><h1 id="h_postscript">Postscript<a class="headerlink" href="#h_postscript"></a></h1><p>I decided to add some code to coverage.py to defend against this kind of
+over-mocking.  There is <a href="https://github.com/search?type=code&amp;q=patch+builtins.open+language%3APython+path%3A%22test%22" rel="external noopener">a lot of over-mocking out
+there</a>, and this problem only shows up in coverage.py with Python 3.14. It&#8217;s
+not happening to many people yet, but it will happen more and more as people
+start testing with 3.14. I didn&#8217;t want to have to answer this question many
+times, and I didn&#8217;t want to force people to fix their mocks.</p><p>From a certain perspective, I shouldn&#8217;t have to do this. They are in the
+wrong, not me.  But this will reduce the overall friction in the universe. And
+<a href="https://github.com/coveragepy/coveragepy/commit/961fc5b4a1c40bec6e0d1908b6fb43b84a5d8c6b#diff-7a060a25115604cc3bc99075e1366afb84075101dcb0aef22d80f8f67c0c4593R30" rel="external noopener">the fix</a> was really simple:</p><blockquote class="code"><pre class="python"><div class="source"><span class="nb">open</span>&#xa0;<span class="o">=</span>&#xa0;<span class="nb">open</span>
+<br /></div>
+</pre></blockquote><p>This is a top-level statement in my module, so it runs when the module is
+imported, long before any tests are run.  The assignment to <code>open</code> will
+create a global in my module, using the current value of <code>open</code>, the one
+found in the builtins. This saves the original <code>open</code> for use in my module
+later, isolated from how builtins might be changed later.</p><p>This is an ad-hoc fix: it only defends one builtin. Mocking other builtins
+could still break coverage.py.  But <code>open</code> is a common one, and this will
+keep things working smoothly for those cases. And there&#8217;s precedent: I&#8217;ve
+already been using a more involved technique to <a href="https://github.com/coveragepy/coveragepy/commit/3b8f4a0b86f8796f1e7925b9c6593a9d5198b437" rel="external noopener">defend
+against mocking of the <code>os</code> module</a> for ten years.</p><h1 id="h_even_better">Even better!<a class="headerlink" href="#h_even_better"></a></h1><p>No blog post about mocking is complete without encouraging a number of other
+best practices, some of which could get you out of the mocking mess:</p><ul>
+
+<li>Use <code>autospec=True</code> to make your mocks strictly behave like the
+original object: see <a href="https://nedbatchelder.com/blog/202202/why_your_mock_still_doesnt_work.html">Why your mock still doesn’t work</a>.</li>
+
+<li>Make assertions about how your mock was called to be sure everything is
+connected up properly.</li>
+
+<li>Use verified fakes instead of auto-generated mocks: <a href="https://pythonspeed.com/articles/verified-fakes/" rel="external noopener">Fast
+tests for slow services: why you should use verified fakes</a>.</li>
+
+<li>Dependency injection lets you explicitly pass test-specific objects where
+they are needed instead of relying on implicit access to a mock.</li>
+
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 16, 2025 12:55 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202511/why_your_mock_breaks_later.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://nuitka.net/posts/nuitka-release-28.html" class="hover:underline"
               >Nuitka Release 2.8</a
             >
@@ -158,6 +285,46 @@
           </div>
           <a
             href="https://www.europython-society.org/recognising-michael-foord-as-an-honorary-europython-society-fellow/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/" class="hover:underline"
+              >How to use UUIDv7 in Python, Django and PostgreSQL</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Learn how to use UUIDv7 today with stable releases of Python 3.14, Django 5.2 and PostgreSQL 18. A step by step guide showing how to generate UUIDv7 in Python, store them in Django models, use PostgreSQL native functions and build time ordered primary keys without writing <span class="caps">SQL</span>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 13, 2025 11:00 PM UTC by
+            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
+              >Paolo Melchiorre</a
+            >
+          </div>
+          <a
+            href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1671,399 +1838,6 @@ sudo chmod -x /etc/update-motd.d/*
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://efficientcoder.net/python-books-clean-professional-code/" class="hover:underline"
-              >Python Books Clean Professional Code</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="story-heading anim-slide-up" id="الكود-الذي-يفضح-المطور-المبتدئ-7-كتب-لتحترف-الأنماط-المتقدمة-في-بايثون">الكود الذي يفضح المطور المبتدئ: 7 كتب لتحترف الأنماط المتقدمة في بايثون</h1>
-
-<p class="story-content page-1 page-type-text anim-fade-in">هل تساءلت يومًا لماذا يُعرض على مطور ما راتبًا ضخمًا ومنصبًا رفيعًا، بينما يبقى آخر، بنفس عدد سنوات الخبرة تقريبًا، عالقًا في مهام بسيطة؟ الجواب ليس دائمًا في معرفة خوارزمية سرية أو إطار عمل غامض. غالبًا ما يكون الجواب <strong>مخفيًا على مرأى من الجميع</strong>: في <strong>أسلوب</strong> كتابة الكود.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="الحقيقة-الصادمة">الحقيقة الصادمة</h2>
-
-<p class="story-content page-2 page-type-text anim-fade-in">معظم المعسكرات التدريبية والدورات التعليمية تعلمك كيف تجعل الكود <strong>يعمل</strong>. لكنها نادرًا ما تعلمك كيف تجعله <strong>جيدًا</strong>. كبار المطورين لا يقضون وقتهم في كتابة كود معقد، بل في كتابة كود <strong>بسيط</strong>، <strong>واضح</strong>، و<strong>قابل للصيانة</strong>. هذا هو ما يسمى بالكود “البايثوني” (Pythonic) - وهو ليس مجرد مجموعة من القواعد، بل فلسفة كاملة.</p>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: الكود الذي تكتبه هو سيرتك الذاتية الحقيقية. يمكن لأي شخص أن يتعلم بناء الجملة، لكن القلائل فقط هم من يتقنون فن كتابة كود نظيف يتحدث عن نفسه. هذه المهارة هي الفاصل الحقيقي بين المبرمج ومهندس البرمجيات.</p>
-</blockquote>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="الفجوة-الخفية">الفجوة الخفية</h2>
-
-<p class="story-content page-3 page-type-text anim-fade-in">الفجوة تكمن في فهم <strong>“لماذا”</strong> وليس فقط <strong>“كيف”</strong>. لماذا نستخدم <code class="highlighter-rouge">generator</code> بدلاً من <code class="highlighter-rouge">list</code>؟ متى يكون استخدام <code class="highlighter-rouge">metaclass</code> فكرة جيدة (ومتى يكون كارثة)؟ كيف تبني تطبيقًا لا ينهار تحت وطأة تعقيده بعد ستة أشهر؟ هذه هي الأسرار التي تكتسبها بالخبرة… أو بقراءة الكتب الصحيحة.</p>
-
-<p class="story-sticker anim-fade-in">هذه القائمة ليست مجرد كتب، بل هي خارطة طريق لتجاوز مستوى المبتدئ والمتوسط، والدخول إلى عالم المحترفين الحقيقي.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="1-fluent-python-clear-concise-and-effective-programming">1. Fluent Python: Clear, Concise, and Effective Programming</h2>
-
-<p><strong>العنوان العربي:</strong> “بايثون بطلاقة: برمجة واضحة، موجزة، وفعالة”
-<strong>المؤلف:</strong> لوتشيانو راماليو (Luciano Ramalho)</p>
-
-<p>هذا ليس كتابًا للمبتدئين، بل هو “الكتاب المقدس” لفهم روح بايثون. لا يعلمك الكتاب بناء الجملة، بل يعلمك <strong>التفكير</strong> بلغة بايثون. إنه يكشف القوة الكامنة وراء ميزات اللغة التي غالبًا ما يتم تجاهلها.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>الغوص العميق:</strong> يشرح هياكل البيانات الأساسية في بايثون وكيفية عملها داخليًا، مما يجعلك تستخدمها بكفاءة لا مثيل لها.</li>
-  <li><strong>النموذج البياني لبايثون (Python Data Model):</strong> يكشف سر “سحر” بايثون من خلال شرح الـ <code class="highlighter-rouge">magic methods</code> (مثل <code class="highlighter-rouge">__getitem__</code>, <code class="highlighter-rouge">__len__</code>) وكيف تمكنك من جعل كائناتك تتصرف مثل الأنواع المدمجة.</li>
-  <li><strong>البرمجة المتزامنة:</strong> يقدم شرحًا من أفضل ما كُتب عن المولدات (generators)، الكوروتين (coroutines)، و <code class="highlighter-rouge">asyncio</code>.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> كبار المطورين لا يحفظون الدوال، بل يفهمون <strong>البروتوكولات</strong> التي تعمل بها اللغة. هذا الكتاب يعلمك تلك البروتوكولات، مما يمنحك القدرة على كتابة كود “بايثوني” أصيل وفعال.</p>
-
-<p class="story-content page-4 page-type-list anim-fade-in"><strong>كيف تحصل عليه مجانًا:</strong> الكتاب ليس مجانيًا، ولكن يمكنك الوصول إليه عبر اشتراك في منصة O’Reilly التعليمية (التي تقدم غالبًا فترة تجريبية مجانية).</p>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: إذا كان عليك شراء كتاب واحد فقط لتطوير مستواك في بايثون، فليكن هذا الكتاب. كل صفحة فيه تحتوي على معلومة ثمينة ستغير نظرتك للغة.</p>
-</blockquote>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="2-python-cookbook-3rd-edition">2. Python Cookbook, 3rd Edition</h2>
-
-<p><strong>العنوان العربي:</strong> “كتاب طبخ بايثون، الإصدار الثالث”
-<strong>المؤلفون:</strong> ديفيد بيزلي (David Beazley) و براين ك. جونز (Brian K. Jones)</p>
-
-<p>تخيل أنك تواجه مشكلة برمجية شائعة، وبدلاً من البحث في Stack Overflow عن حلول متضاربة، تفتح كتابًا يقدم لك وصفة (recipe) أنيقة، فعالة، و”بايثونية” لحل المشكلة، مع شرح تفصيلي لسبب نجاح هذا الحل. هذا هو بالضبط ما يقدمه هذا الكتاب.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>موجه نحو الحلول:</strong> يركز الكتاب على مشاكل عملية واقعية، من معالجة البيانات إلى البرمجة المتزامنة.</li>
-  <li><strong>كود حديث:</strong> جميع الوصفات مكتوبة لبايثون 3 وتستغل أحدث ميزات اللغة.</li>
-  <li><strong>شروحات عميقة:</strong> كل وصفة لا تقدم الحل فقط، بل تشرح الآليات الكامنة وراءه، مما يعمق فهمك للغة.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> المطورون الخبراء لديهم “صندوق أدوات” عقلي من الأنماط والحلول الجاهزة. هذا الكتاب يملأ صندوق أدواتك بوصفات مجربة ومختبرة، مما يوفر عليك ساعات من التجربة والخطأ ويضمن أن حلك للمشكلات ليس فقط صحيحًا، بل وأنيقًا أيضًا.</p>
-
-<p class="story-content page-5 page-type-list anim-fade-in"><strong>كيف تحصل عليه:</strong> مثل الكتاب السابق، أفضل طريقة للوصول إليه هي عبر منصة O’Reilly.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="3-architecture-patterns-with-python">3. Architecture Patterns with Python</h2>
-
-<p><strong>العنوان العربي:</strong> “أنماط الهيكلة مع بايثون”
-<strong>المؤلفون:</strong> هاري بيرسيفال (Harry Percival) و بوب غريغوري (Bob Gregory)</p>
-
-<p>هذا الكتاب ينقلك من مستوى كتابة الأكواد والاسكربتات إلى مستوى <strong>بناء الأنظمة</strong>. يركز على كيفية تطبيق أنماط تصميم عالية المستوى مثل (Domain-Driven Design (DDD و Clean Architecture في سياق بايثون.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>التطبيق العملي:</strong> يأخذك في رحلة بناء تطبيق حقيقي من الصفر، مطبقًا الأنماط خطوة بخطوة.</li>
-  <li><strong>فصل الاهتمامات (Separation of Concerns):</strong> يعلمك كيف تفصل منطق العمل الأساسي (domain logic) عن تفاصيل البنية التحتية (قواعد البيانات، واجهات برمجة التطبيقات)، مما يجعل الكود قابلاً للاختبار والصيانة.</li>
-  <li><strong>الاختبار أولاً (TDD):</strong> يستخدم نهج التطوير الموجه بالاختبار (Test-Driven Development) كأساس لبناء النظام.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> الكود الذي يعمل اليوم قد يصبح كابوس الصيانة غدًا. كبار المطورين لا يفكرون فقط في ميزة اليوم، بل في كيفية تطور النظام على مدى سنوات. هذا الكتاب يعلمك التفكير كمهندس معماري للبرمجيات، وليس مجرد بنّاء.</p>
-
-<p class="story-content page-6 page-type-list anim-fade-in"><strong>كيف تحصل عليه مجانًا:</strong> هذا الكتاب <strong>متاح بالكامل ومجانًا</strong> على الإنترنت على الموقع الرسمي <code class="highlighter-rouge">cosmicpython.com</code>. إنها فرصة لا تقدر بثمن.</p>
-
-<blockquote class="story-sticker anim-fade-in">
-  <p>هذا الكتاب هو الجسر المفقود بين معرفة بايثون وبناء تطبيقات مؤسسية قوية.</p>
-</blockquote>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="4-clean-code-in-python">4. Clean Code in Python</h2>
-
-<p><strong>العنوان العربي:</strong> “الكود النظيف في بايثون”
-<strong>المؤلف:</strong> ماريانو أنايا (Mariano Anaya)</p>
-
-<p>يأخذ هذا الكتاب المبادئ الخالدة من كتاب “Clean Code” الشهير لـ Robert C. Martin ويطبقها خصيصًا على عالم بايثون. إنه دليل عملي لكتابة كود ليس فقط فعالًا، بل أيضًا مقروءًا وقابلاً للصيانة والتوسيع.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>تكييف المبادئ لبايثون:</strong> يشرح كيف تبدو مبادئ مثل SOLID، DRY، KISS في سياق بايثون، مع الأخذ في الاعتبار طبيعة اللغة الديناميكية.</li>
-  <li><strong>أمثلة “بايثونية”:</strong> مليء بأمثلة “قبل وبعد” التي توضح كيف تحول الكود من فوضوي إلى نظيف باستخدام ميزات بايثون.</li>
-  <li><strong>تغطية شاملة:</strong> يغطي كل شيء من تسمية المتغيرات والدوال إلى التعامل مع الأخطاء وتصميم الكائنات.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> “الكود الذي يعمل” هو الحد الأدنى المتوقع. القيمة الحقيقية للمطور تكمن في كتابة كود يمكن لفريق كامل أن يفهمه ويعمل عليه بكفاءة. هذا الكتاب يعلمك كيف تكتب كودًا يراعي “القارئ” المستقبلي (الذي قد يكون أنت بعد ستة أشهر).</p>
-
-<p class="story-content page-7 page-type-list anim-fade-in"><strong>كيف تحصل عليه:</strong> متوفر للشراء، ويمكن الوصول إليه عبر اشتراكات مثل Packt أو O’Reilly.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="5-effective-python-90-specific-ways-to-write-better-python">5. Effective Python: 90 Specific Ways to Write Better Python</h2>
-
-<p><strong>العنوان العربي:</strong> “بايثون الفعالة: 90 طريقة محددة لكتابة بايثون أفضل”
-<strong>المؤلف:</strong> بريت سلاتكين (Brett Slatkin)</p>
-
-<p>إذا كان “Fluent Python” هو الرواية العميقة، فإن “Effective Python” هو مجموعة من الحكم القصيرة والمكثفة. كل “طريقة” في الكتاب هي نصيحة محددة وقابلة للتنفيذ يمكنك تطبيقها فورًا لتحسين الكود الخاص بك.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>نصائح مركزة:</strong> كل فصل قصير، ويعالج نقطة واحدة محددة، مما يجعله سهل الهضم والتطبيق.</li>
-  <li><strong>تغطية واسعة:</strong> يغطي مجموعة واسعة من المواضيع، من التعبيرات البايثونية (Pythonic expressions) إلى التزامن (concurrency) والمتانة (robustness).</li>
-  <li><strong>أمثلة واضحة:</strong> كل نصيحة مدعومة بأمثلة توضح “الطريقة السيئة” و”الطريقة الأفضل”.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> الاحتراف هو نتيجة تراكم العادات الجيدة الصغيرة. هذا الكتاب يزودك بـ 90 عادة صغيرة ومحددة، والتي بتطبيقها المستمر، ستحول جودة الكود الذي تكتبه بشكل جذري. إنه يعلمك أن التميز يكمن في التفاصيل.</p>
-
-<p class="story-content page-8 page-type-list anim-fade-in"><strong>كيف تحصل عليه:</strong> الكتاب جزء من سلسلة “Effective Software Development” الشهيرة، ومتوفر للشراء أو عبر اشتراك O’Reilly.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="6-python-tricks-a-buffet-of-awesome-python-features">6. Python Tricks: A Buffet of Awesome Python Features</h2>
-
-<p><strong>العنوان العربي:</strong> “خدع بايثون: بوفيه من ميزات بايثون الرائعة”
-<strong>المؤلف:</strong> دان بادر (Dan Bader)</p>
-
-<p>هذا الكتاب هو احتفال بجمال وقوة بايثون. يركز دان بادر، مؤسس موقع Real Python الشهير، على الميزات والأنماط التي تجعل الكود أكثر تعبيرًا و”بايثونية”. إنه أقل أكاديمية وأكثر متعة، لكنه لا يقل أهمية.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>اكتشافات ممتعة:</strong> يكشف عن طرق أنيقة لاستخدام ميزات قد تعرفها بالفعل، بالإضافة إلى جواهر خفية في اللغة.</li>
-  <li><strong>تركيز على الوضوح:</strong> الهدف من كل “خدعة” هو جعل الكود ليس فقط أقصر، بل أكثر وضوحًا في القصد.</li>
-  <li><strong>أمثلة عملية:</strong> كل خدعة تأتي مع مثال عملي يوضح كيف ومتى تستخدمها.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> أفضل المطورين يستمتعون بعملهم. هذا الكتاب يعيد إشعال شغفك باللغة من خلال إظهار الطرق المبتكرة والأنيقة التي يمكنك من خلالها التعبير عن أفكارك. إنه يعلمك أن الكود الفعال يمكن أن يكون جميلاً أيضًا.</p>
-
-<p class="story-content page-9 page-type-list anim-fade-in"><strong>كيف تحصل عليه:</strong> متوفر للشراء مباشرة من المؤلف، وغالبًا ما يأتي مع محتوى إضافي مثل مقاطع الفيديو.</p>
-
-<blockquote class="story-sticker anim-fade-in">
-  <p>هذا الكتاب يجعلك تقع في حب بايثون من جديد.</p>
-</blockquote>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="7-the-pythonic-way-write-more-idiomatic-python">7. The Pythonic Way: Write More Idiomatic Python</h2>
-
-<p><strong>العنوان العربي:</strong> “الطريقة البايثونية: اكتب كود بايثون أكثر اصطلاحية”
-<strong>المؤلف:</strong> إيان لي (Ian Lee)</p>
-
-<p>كما يوحي الاسم، هذا الكتاب مكرس بالكامل لمفهوم الكود “البايثوني”. إنه يأخذ الأنماط الشائعة من لغات أخرى (مثل C++ أو Java) ويوضح لك كيف يمكن تحقيق نفس الهدف بطريقة أكثر طبيعية وأناقة في بايثون.</p>
-
-<p><strong>أهم الميزات:</strong></p>
-<ul>
-  <li><strong>مقارنات مباشرة:</strong> يقارن بشكل مباشر بين الأنماط “غير البايثونية” والبدائل “البايثونية”، مما يجعل الفروق واضحة جدًا.</li>
-  <li><strong>فلسفة اللغة:</strong> يتعمق في “لماذا” تفضل بايثون أسلوبًا على آخر، ويربط ذلك بفلسفة “The Zen of Python”.</li>
-  <li><strong>موجز وعملي:</strong> الكتاب ليس ضخمًا، ولكنه مليء بالنصائح العملية التي يمكنك البدء في استخدامها على الفور.</li>
-</ul>
-
-<p><strong>السر الذي يكشفه:</strong> أن تكون مطور بايثون لا يعني فقط كتابة كود يعمل في مفسر بايثون. بل يعني تبني فلسفة اللغة وأسلوبها. هذا الكتاب هو دليلك لترجمة أفكارك البرمجية إلى “لهجة” بايثون الأصلية، بدلاً من التحدث بلكنة لغة أخرى.</p>
-
-<p class="story-content page-10 page-type-list anim-fade-in"><strong>كيف تحصل عليه:</strong> الكتاب متاح للشراء ككتاب إلكتروني، مما يجعله سهل الوصول.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="الخلاصة-من-كاتب-كود-إلى-مهندس-برمجيات">الخلاصة: من كاتب كود إلى مهندس برمجيات</h2>
-
-<p class="story-content page-final page-type-text anim-fade-in">القفزة من مطور متوسط إلى خبير لا تحدث بتعلم إطار عمل جديد كل أسبوع. إنها تحدث عندما تبدأ في الاهتمام بـ <strong>جودة</strong> الكود الذي تتركه وراءك. هذه الكتب ليست مجرد أدوات تعليمية؛ إنها مرشدون يغيرون طريقة تفكيرك، ويحولونك من شخص يكتب الأوامر إلى مهندس يصمم الحلول. الاستثمار في هذه المعرفة هو الاستثمار الأكثر ربحية في مسيرتك المهنية.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 07, 2025 12:00 AM UTC by
-            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
-              >Ahmed Bouchefra</a
-            >
-          </div>
-          <a
-            href="https://efficientcoder.net/python-books-clean-professional-code/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://efficientcoder.net/python-api-design-books/" class="hover:underline"
-              >Python API Design Books</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="story-heading anim-slide-up" id="ما-لا-يخبرك-به-المحترفون-7-كتب-لتصميم-واجهات-برمجية-apis-لا-تقهر-في-بايثون">ما لا يخبرك به المحترفون: 7 كتب لتصميم واجهات برمجية (APIs) لا تقهر في بايثون</h1>
-
-<p class="story-content page-1 page-type-text anim-fade-in">لقد تخرجت من معسكر تدريبي، أو ربما تعلمت بايثون عبر الإنترنت. أنت تعرف كيف تستخدم <strong>Flask</strong> أو <strong>FastAPI</strong> لإنشاء نقطة نهاية (endpoint). تهانينا، لقد أنجزت 10% من العمل. لكن الـ 90% المتبقية هي السر الذي يفصل بين المطور المبتدئ وكبير المطورين الذي يتقاضى راتباً من ستة أرقام. هذا السر هو <strong>فن تصميم الواجهات البرمجية (API Design)</strong>.</p>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>الحقيقة الصادمة هي أن معظم المطورين يبنون واجهات برمجية هشة، صعبة الصيانة، ومحكوم عليها بالفشل عند أول ضغط حقيقي. إنهم يركزون على جعلها ‘تعمل’، متجاهلين أنها ‘عقد’ رقمي يجب أن يكون قوياً، واضحاً، ومقاوماً للزمن.</p>
-</blockquote>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="الفجوة-القاتلة-في-معرفتك">الفجوة القاتلة في معرفتك</h2>
-
-<p class="story-content page-2 page-type-text anim-fade-in">المعسكرات التدريبية تعلمك بناء الجملة، لكنها لا تعلمك <strong>الفلسفة</strong>. تعلمك كيفية استخدام أداة، لكن ليس كيفية بناء نظام متكامل. واجهة برمجة التطبيقات ليست مجرد مجموعة من الدوال التي يمكن استدعاؤها عبر الشبكة؛ إنها واجهة منتجك الرقمي. إذا كانت سيئة التصميم، فمنتجك بأكمله سيء، بغض النظر عن مدى روعة الكود خلفها.</p>
-
-<p class="story-sticker anim-fade-in">كبار المطورين يعرفون هذا. إنهم يقضون وقتاً في التفكير في <strong>أنماط التصميم</strong>، <strong>معالجة الأخطاء</strong>، <strong>التوافقية مع الإصدارات السابقة</strong>، و<strong>قابلية التوسع</strong> أكثر من الوقت الذي يقضونه في كتابة الكود الفعلي. هذه هي المعرفة الخفية التي تمنحهم القوة. وهذه هي الكتب التي يقرؤونها سراً لاكتساب تلك القوة.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="السر-الأول-إتقان-اللغة-نفسها-وليس-فقط-إطار-العمل">السر الأول: إتقان اللغة نفسها، وليس فقط إطار العمل</h2>
-
-<h2 class="story-subheading anim-type-out" id="1-بايثون-السلس-fluent-python">1. “بايثون السلس” (Fluent Python)</h2>
-
-<p><strong>المؤلف:</strong> لوتشيانو راماليو (Luciano Ramalho)</p>
-
-<p><strong>لماذا هو سر؟</strong>
-يعتقد الكثيرون أنهم يعرفون بايثون، لكنهم في الحقيقة يعرفون “جافا المكتوبة ببايثون” أو “جافاسكريبت المكتوبة ببايثون”. هذا الكتاب هو الترياق. إنه لا يعلمك فقط <strong>ماذا</strong> تفعله ميزات بايثون، بل <strong>لماذا</strong> توجد وكيف تستخدمها بفعالية لإنشاء كود “بايثوني” حقيقي: واضح، موجز، وفعال.</p>
-
-<p><strong>ماذا ستتعلم لبناء APIs أفضل؟</strong></p>
-<ul>
-  <li><strong>نماذج البيانات (Data Models):</strong> كيف تجعل كائناتك تتصرف مثل الأنواع المضمنة في بايثون، مما يجعل واجهاتك البرمجية الداخلية بديهية.</li>
-  <li><strong>الدوال ككائنات من الدرجة الأولى:</strong> فهم عميق للمُزخرفات (Decorators) والإغلاقات (Closures)، وهي أدوات لا غنى عنها في أطر عمل الويب الحديثة مثل Flask و FastAPI.</li>
-  <li><strong>البرمجة المتزامنة (Concurrency):</strong> يغوص الكتاب في <code class="highlighter-rouge">asyncio</code>، مما يمنحك فهماً أساسياً لبناء APIs عالية الأداء يمكنها التعامل مع آلاف الطلبات في وقت واحد.</li>
-</ul>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: هذا الكتاب هو الفارق بين من يكتب كود بايثون، ومن يفكر ببايثون. عند تصميم API، التفكير ‘البايثوني’ يؤدي إلى واجهات أكثر نظافة وقابلية للقراءة.</p>
-</blockquote>
-
-<p class="story-content page-3 page-type-text anim-fade-in"><strong>أين تجده؟</strong>
-يمكنك شراؤه من O’Reilly أو Amazon. لا توجد نسخة مجانية رسمية، لكن الاستثمار فيه يعادل سنوات من الخبرة.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="السر-الثاني-التوقف-عن-التفكير-في-نقاط-النهاية-والبدء-في-التفكير-في-الهندسة">السر الثاني: التوقف عن التفكير في “نقاط النهاية” والبدء في التفكير في “الهندسة”</h2>
-
-<h2 class="story-subheading anim-type-out" id="2-أنماط-الهندسة-المعمارية-مع-بايثون-architecture-patterns-with-python">2. “أنماط الهندسة المعمارية مع بايثون” (Architecture Patterns with Python)</h2>
-
-<p><strong>المؤلفون:</strong> هاري بيرسيفال (Harry Percival) وبوب غريغوري (Bob Gregory)</p>
-
-<p><strong>لماذا هو سر؟</strong>
-هذا الكتاب يأخذك بعيداً عن عالم “البرامج النصية” و “التطبيقات البسيطة” إلى عالم <strong>هندسة البرمجيات الحقيقية</strong>. السر الذي لا يخبرك به أحد هو أن أفضل الواجهات البرمجية ليست مجرد طبقة فوق قاعدة البيانات؛ إنها انعكاس لنطاق العمل (Business Domain). هذا الكتاب يعلمك كيفية تحقيق ذلك باستخدام <strong>التصميم الموجه بالمجال (Domain-Driven Design - DDD)</strong> و<strong>الهندسة النظيفة (Clean Architecture)</strong>.</p>
-
-<p><strong>ماذا ستتعلم لبناء APIs أفضل؟</strong></p>
-<ul>
-  <li><strong>فصل الاهتمامات:</strong> كيف تفصل منطق عملك الأساسي عن تفاصيل إطار العمل (مثل Flask) وقاعدة البيانات. هذا يعني أنه يمكنك تغيير قاعدة بياناتك أو حتى إطار عمل الويب دون إعادة كتابة قلب تطبيقك.</li>
-  <li><strong>نمط المستودع (Repository Pattern):</strong> طريقة مجربة لعزل طبقة البيانات، مما يجعل اختبار منطق عملك سهلاً للغاية.</li>
-  <li><strong>الخدمات المصغرة (Microservices):</strong> يقدم الكتاب مقدمة عملية لكيفية تقسيم تطبيق متجانس (Monolith) إلى خدمات أصغر وأكثر قابلية للإدارة، وهو أمر حاسم للأنظمة الكبيرة.</li>
-</ul>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: هذا الكتاب هو أهم كتاب قرأته في السنوات الخمس الماضية. لقد غير تماماً طريقتي في بناء التطبيقات. قبل هذا الكتاب، كنت أبني تطبيقات ويب. بعده، أصبحت أبني أنظمة برمجية.</p>
-</blockquote>
-
-<p class="story-content page-4 page-type-text anim-fade-in"><strong>أين تجده؟</strong>
-<strong>خبر سار!</strong> الكتاب متاح للقراءة <strong>مجاناً</strong> بالكامل عبر الإنترنت على <a href="https://www.cosmicpython.com/book/preface.html">cosmicpython.com</a>. يمكنك أيضاً شراء نسخة مطبوعة لدعم المؤلفين.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="السر-الثالث-فهم-فلسفة-الأنظمة-الموزعة">السر الثالث: فهم فلسفة الأنظمة الموزعة</h2>
-
-<h2 class="story-subheading anim-type-out" id="3-بناء-الخدمات-المصغرة-building-microservices-designing-fine-grained-systems">3. “بناء الخدمات المصغرة” (Building Microservices: Designing Fine-Grained Systems)</h2>
-
-<p><strong>المؤلف:</strong> سام نيومان (Sam Newman)</p>
-
-<p><strong>لماذا هو سر؟</strong>
-عندما تبدأ في بناء أكثر من API واحد، فإنك تدخل عالم الأنظمة الموزعة، سواء أدركت ذلك أم لا. هذا العالم له قواعده الخاصة وتحدياته الخفية. يتجاهل معظم المطورين هذه التعقيدات حتى تنهار أنظمتهم. هذا الكتاب هو الدليل الشامل لفلسفة الخدمات المصغرة، وهو أمر ضروري لأي شخص يصمم APIs تتفاعل مع بعضها البعض.</p>
-
-<p><strong>ماذا ستتعلم لبناء APIs أفضل؟</strong></p>
-<ul>
-  <li><strong>حجم الخدمة المناسب:</strong> متى وكيف تقسم نظامك إلى خدمات؟ (تلميح: ليس دائماً أصغر هو الأفضل).</li>
-  <li><strong>استراتيجيات التكامل:</strong> كيف تتواصل الخدمات مع بعضها البعض بشكل موثوق؟ (REST, gRPC, Message Queues). هذا هو جوهر تصميم الـ API في بيئة الخدمات المصغرة.</li>
-  <li><strong>المراقبة والتحمل:</strong> كيف تصمم واجهات برمجية يمكنها التعامل مع فشل الخدمات الأخرى بأمان (باستخدام أنماط مثل Circuit Breaker).</li>
-  <li><strong>الأمان:</strong> استراتيجيات تأمين الاتصالات بين الخدمات.</li>
-</ul>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: بناء API واحدة شيء، وبناء نظام من واجهات APIs المتعددة شيء آخر تماماً. هذا الكتاب يمنحك العقلية اللازمة للنجاح في السيناريو الثاني، وهو ما يميز المهندسين الكبار.</p>
-</blockquote>
-
-<p class="story-content page-5 page-type-text anim-fade-in"><strong>أين تجده؟</strong>
-متوفر للشراء على Amazon وموقع O’Reilly. يعتبر استثماراً أساسياً لأي مهندس برمجيات جاد.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="السر-الرابع-أنماط-التصميم-المخصصة-للواجهات-البرمجية">السر الرابع: أنماط التصميم المخصصة للواجهات البرمجية</h2>
-
-<h2 class="story-subheading anim-type-out" id="4-أنماط-تصميم-الواجهات-البرمجية-api-design-patterns">4. “أنماط تصميم الواجهات البرمجية” (API Design Patterns)</h2>
-
-<p><strong>المؤلف:</strong> جي جي جيواكس (JJ Geewax)</p>
-
-<p><strong>لماذا هو سر؟</strong>
-تماماً كما توجد أنماط تصميم للكائنات (Object-Oriented Design Patterns)، توجد أنماط مثبتة لبناء واجهات برمجية قوية ومرنة. معظم المطورين يرتجلون، ويعيدون اختراع العجلة (غالباً بشكل سيء). هذا الكتاب يجمع عقوداً من الخبرة في تصميم الـ API في Google ويقدمها لك في شكل كتالوج من الأنماط العملية.</p>
-
-<p><strong>ماذا ستتعلم لبناء APIs أفضل؟</strong></p>
-<ul>
-  <li><strong>أنماط تصميم الموارد:</strong> كيف تسمي وتنظم مواردك بطريقة بديهية (مثل <code class="highlighter-rouge">Singleton Resource</code>, <code class="highlighter-rouge">Listable Singleton</code>).</li>
-  <li><strong>أنماط تصميم الطلبات والاستجابات:</strong> تقنيات للتعامل مع العمليات طويلة الأمد (Long-Running Operations)، وترقيم الصفحات (Pagination)، والطلبات الجزئية (Partial Responses) بكفاءة.</li>
-  <li><strong>أنماط التطور (Evolution Patterns):</strong> كيف تحدث واجهتك البرمجية وتضيف ميزات جديدة دون كسر تطبيقات العملاء الحاليين. هذا هو الكأس المقدس لتصميم الـ API.</li>
-  <li><strong>معالجة الأخطاء المتقدمة:</strong> تصميم رسائل خطأ مفيدة وقابلة للتنفيذ آلياً.</li>
-</ul>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: هذا الكتاب هو المكافئ لـ ‘كتاب الأنماط’ الكلاسيكي (Gang of Four) ولكن لعالم الـ API. إنه ليس للقراءة من الغلاف إلى الغلاف، بل هو مرجع تعود إليه في كل مرة تواجه فيها مشكلة تصميم جديدة.</p>
-</blockquote>
-
-<p class="story-content page-6 page-type-text anim-fade-in"><strong>أين تجده؟</strong>
-متوفر للشراء من Manning Publications و Amazon. غالباً ما يقدم الناشر Manning فصولاً مجانية أو خصومات.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="السر-الخامس-التحول-من-كاتب-كود-إلى-مطور-محترف">السر الخامس: التحول من “كاتب كود” إلى “مطور محترف”</h2>
-
-<h2 class="story-subheading anim-type-out" id="5-ممارسات-المحترف-في-بايثون-practices-of-the-python-pro">5. “ممارسات المحترف في بايثون” (Practices of the Python Pro)</h2>
-
-<p><strong>المؤلف:</strong> داين هيلارد (Dane Hillard)</p>
-
-<p><strong>لماذا هو سر؟</strong>
-كتابة كود يعمل أمر سهل. كتابة كود يمكن لزملائك (أو أنت المستقبلي) فهمه وصيانته وتوسيعه هو التحدي الحقيقي. هذا الكتاب لا يركز على ميزات اللغة بقدر ما يركز على <strong>العادات والممارسات</strong> التي تحول المبرمج الجيد إلى مطور محترف وموثوق.</p>
-
-<p><strong>ماذا ستتعلم لبناء APIs أفضل؟</strong></p>
-<ul>
-  <li><strong>التصميم من أجل الصيانة:</strong> تقنيات لجعل الكود الخاص بك، بما في ذلك منطق الـ API، أكثر مرونة للتغييرات المستقبلية.</li>
-  <li><strong>فصل الكود:</strong> استراتيجيات عملية لتفكيك الكود إلى مكونات مستقلة وقابلة لإعادة الاستخدام، مما يجعل واجهاتك البرمجية أنظف.</li>
-  <li><strong>قوة التجريد:</strong> متى ولماذا تنشئ طبقات تجريد في الكود الخاص بك لحماية واجهتك البرمجية من التغييرات في التفاصيل الداخلية.</li>
-  <li><strong>الكتابة من أجل الآخرين:</strong> يركز الكتاب على أن الكود يُقرأ أكثر مما يُكتب، وهي فلسفة أساسية لتصميم واجهات برمجية ناجحة يفهمها ويستخدمها الآخرون بسهولة.</li>
-</ul>
-
-<blockquote class="story-author-note anim-fade-in">
-  <p>رأيي الشخصي: إذا كان ‘Fluent Python’ يعلمك كيف تتحدث بايثون بطلاقة، فإن هذا الكتاب يعلمك كيف تكتب بها مقالات ورسائل واضحة ومقنعة. إنه يتعلق بالجانب الإنساني من البرمجة، وهو ما يتم تجاهله غالباً.</p>
-</blockquote>
-
-<p class="story-content page-7 page-type-text anim-fade-in"><strong>أين تجده؟</strong>
-متوفر للشراء من Manning Publications و Amazon. إنه استثمار في مهاراتك الشخصية والمهنية كمهندس برمجيات.</p>
-
-<hr />
-<h2 class="story-heading anim-slide-up" id="الخلاصة-المعرفة-هي-القوة">الخلاصة: المعرفة هي القوة</h2>
-
-<p class="story-content page-8 page-type-text anim-fade-in">السر الحقيقي الذي لا يخبرك به كبار المطورين هو أنه لا يوجد سر سحري. لا توجد أداة واحدة أو إطار عمل واحد سيحل جميع مشاكلك. القوة الحقيقية تكمن في <strong>المعرفة العميقة بالمبادئ الأساسية</strong>.</p>
-
-<p class="story-sticker anim-fade-in">هذه الكتب ليست مجرد مجموعة من النصائح والحيل. إنها بوابات لتغيير طريقة تفكيرك. إنها تعلمك كيف تنتقل من مجرد <strong>تنفيذ</strong> المهام إلى <strong>تصميم</strong> الحلول. وهذا هو الفارق الذي سيأخذك من مطور مبتدئ إلى مهندس برمجيات محترف، قادر على بناء واجهات برمجية وأنظمة لا تقهر.</p>
-
-<p class="story-content page-final page-type-text anim-fade-in">الآن، توقف عن البحث عن “أفضل إطار عمل لبايثون” وابدأ في الاستثمار في عقلك. هذه هي الطريقة الوحيدة لتجاوز حدود ما تعلمته في المعسكرات التدريبية وكشف الأسرار الحقيقية لإتقان بايثون.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 07, 2025 12:00 AM UTC by
-            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
-              >Ahmed Bouchefra</a
-            >
-          </div>
-          <a
-            href="https://efficientcoder.net/python-api-design-books/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2075,8 +1849,8 @@ sudo chmod -x /etc/update-motd.d/*
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8541</a></li>
-    <li><a>Unique Feeds: 392</a></li>
+    <li><a>Total Entries: 8574</a></li>
+    <li><a>Unique Feeds: 393</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
