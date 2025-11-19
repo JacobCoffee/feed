@@ -53,6 +53,151 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2025/nov/19/going-build-free-with-native-javascript-modules/" class="hover:underline"
+              >Going build-free with native JavaScript modules</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>For the last decade and more, we've been bundling CSS and JavaScript files. These build tools allowed us to utilize new browser capabilities in CSS and JS while still supporting older browsers. They also helped with client-side network performance, minimizing the content to be as small as possible and combining files into one large bundle to reduce network handshakes. We've gone through a lot of build tools iterations in the process; from Grunt (2012) to Gulp (2013) to Webpack (2014) to Parcel (2017) to esbuild (2020) and Vite (2020).</p>
+<p>And with modern browser technologies there is less need for these build tools.</p>
+<ul>
+<li>Modern CSS supports many of the features natively that the build tools were created for. <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_nesting/Using_CSS_nesting">CSS nesting</a> to organize code, <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_cascading_variables/Using_CSS_custom_properties">variables</a>, <a href="https://developer.mozilla.org/en-US/docs/Web/CSS/@supports">@supports</a> for feature detection.</li>
+<li>JavaScript ES6 / ES2015 was a big step forward, and the language has been progressing steadily ever since. It now has native module support with the <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/import">import</a> / <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/export">export</a> keywords</li>
+<li>Meanwhile, with <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Evolution_of_HTTP#http2_%E2%80%93_a_protocol_for_greater_performance">HTTP/2 performance improvements</a>, <em>parallel requests can be made over the same connection, removing the constraints of the HTTP/1.x protocol</em>.</li>
+</ul>
+<p>These build processes are complex, particularly for beginners to Django. The tools and associated best practices move quickly. There is a lot to learn and you need to understand how to utilize them with your Django project. You can build a workflow that stores the build results in your static folder, but there is no core Django support for a build pipeline, so this largely requires selecting from a number of third party packages and integrating them into your project.</p>
+<p>The benefit this complexity adds is no longer as clear cut, especially for beginners. There are still advantages to build tools, but you can can create professional results without having to use or learn any build processes.</p>
+<h3 id="s-build-free-javascript-tutorial">Build-free JavaScript tutorial</h3>
+<p>To demonstrate modern capabilities, let's expand <a href="https://docs.djangoproject.com/en/stable/intro/tutorial01/">Django’s polls tutorial</a> with some newer JavaScript. We’ll use modern JS modules and we won’t require a build system.</p>
+<p>To give us a reason to need JS let's add a new requirement to the polls; to allow our users to add their own suggestions, instead of only being able to vote on the existing options. We update our form to have a new option under the selection code:</p>
+<div class="highlight"><pre><span></span>or add your own <span class="p">&lt;</span><span class="nt">input</span> <span class="na">type</span><span class="o">=</span><span class="s">"text"</span> <span class="na">name</span><span class="o">=</span><span class="s">"choice_text"</span> <span class="na">maxlength</span><span class="o">=</span><span class="s">"200"</span> <span class="p">/&gt;</span>
+</pre></div>
+
+<p>Now our users can add their own options to polls if the existing ones don't fit. We can update the voting view to handle this new option. We add a new <code>choice_text</code> input, and if there is no vote selection we will potentially handle adding the new option, while still providing an error message if neither is supplied. We also provide an error if both are selected.</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">vote</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">question_id</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice'</span><span class="p">]</span> <span class="ow">and</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">render</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s1">'polls/detail.html'</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s1">'question'</span><span class="p">:</span> <span class="n">question</span><span class="p">,</span>
+            <span class="s1">'error_message'</span><span class="p">:</span> <span class="s2">"You can't vote and provide a new option."</span><span class="p">,</span>
+        <span class="p">})</span>
+
+    <span class="n">question</span> <span class="o">=</span> <span class="n">get_object_or_404</span><span class="p">(</span><span class="n">Question</span><span class="p">,</span> <span class="n">pk</span><span class="o">=</span><span class="n">question_id</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">selected_choice</span> <span class="o">=</span> <span class="n">question</span><span class="o">.</span><span class="n">choice_set</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pk</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice'</span><span class="p">])</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">KeyError</span><span class="p">,</span> <span class="n">Choice</span><span class="o">.</span><span class="n">DoesNotExist</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">]:</span>
+            <span class="n">selected_choice</span> <span class="o">=</span> <span class="n">Choice</span><span class="o">.</span><span class="n">objects</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+                <span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">,</span>
+                <span class="n">choice_text</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">],</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">render</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s1">'polls/detail.html'</span><span class="p">,</span> <span class="p">{</span>
+                <span class="s1">'question'</span><span class="p">:</span> <span class="n">question</span><span class="p">,</span>
+                <span class="s1">'error_message'</span><span class="p">:</span> <span class="s2">"You didn't select a choice or provide a new one."</span><span class="p">,</span>
+            <span class="p">})</span>
+    <span class="n">selected_choice</span><span class="o">.</span><span class="n">votes</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="n">selected_choice</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">HttpResponseRedirect</span><span class="p">(</span><span class="n">reverse</span><span class="p">(</span><span class="s1">'polls:results'</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">question</span><span class="o">.</span><span class="n">id</span><span class="p">,)))</span>
+</pre></div>
+
+<p>Now that our logic is a bit more complex it would be nicer if we had some JavaScript to do this. We can build a script that handles some of the form validation for us.</p>
+<div class="highlight"><pre><span></span><span class="kd">function</span><span class="w"> </span><span class="nx">noChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="nb">Array</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">choices</span><span class="p">).</span><span class="nx">some</span><span class="p">((</span><span class="nx">radio</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">radio</span><span class="p">.</span><span class="nx">checked</span><span class="p">)</span><span class="w"> </span><span class="o">||</span>
+<span class="w">    </span><span class="p">(</span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">]</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">value</span><span class="p">.</span><span class="nx">trim</span><span class="p">()</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">""</span><span class="p">)</span>
+<span class="w">  </span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kd">function</span><span class="w"> </span><span class="nx">allChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="o">!</span><span class="nb">Array</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">choices</span><span class="p">).</span><span class="nx">some</span><span class="p">((</span><span class="nx">radio</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">radio</span><span class="p">.</span><span class="nx">checked</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;&amp;</span>
+<span class="w">    </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">]</span><span class="w"> </span><span class="o">&amp;&amp;</span>
+<span class="w">    </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">value</span><span class="p">.</span><span class="nx">trim</span><span class="p">()</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">""</span>
+<span class="w">  </span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">initFormValidation</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s2">"polls"</span><span class="p">).</span><span class="nx">addEventListener</span><span class="p">(</span><span class="s2">"submit"</span><span class="p">,</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">choices</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">querySelectorAll</span><span class="p">(</span><span class="s1">'input[name="choice"]'</span><span class="p">);</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">choice_text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">querySelectorAll</span><span class="p">(</span><span class="s1">'input[name="choice_text"]'</span><span class="p">);</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">noChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nx">e</span><span class="p">.</span><span class="nx">preventDefault</span><span class="p">();</span>
+<span class="w">      </span><span class="nx">alert</span><span class="p">(</span><span class="s2">"You didn't select a choice or provide a new one."</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">allChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nx">e</span><span class="p">.</span><span class="nx">preventDefault</span><span class="p">();</span>
+<span class="w">      </span><span class="nx">alert</span><span class="p">(</span><span class="s2">"You can't select a choice and also provide a new option."</span><span class="p">);</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">});</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Note how we use <code>export default</code> in the above code. This means <code>form_validation.js</code> is a JavaScript module. When we create our <code>main.js</code> file, we can import it with the <code>import</code> statement:</p>
+<div class="highlight"><pre><span></span><span class="k">import</span><span class="w"> </span><span class="nx">initFormValidation</span><span class="w"> </span><span class="kr">from</span><span class="w"> </span><span class="s2">"./form_validation.js"</span><span class="p">;</span>
+
+<span class="nx">initFormValidation</span><span class="p">();</span>
+</pre></div>
+
+<p>Lastly, we add the script to the bottom of our <code>details.html</code> file, using Django’s usual <code>static</code> template tag. Note the <code>type="module"</code> this is needed to tell the browser we will be using import/export statements.</p>
+<div class="highlight"><pre><span></span><span class="p">&lt;</span><span class="nt">script</span> <span class="na">type</span><span class="o">=</span><span class="s">"module"</span> <span class="na">src</span><span class="o">=</span><span class="s">"{% static 'polls/js/main.js' %}"</span><span class="p">&gt;&lt;/</span><span class="nt">script</span><span class="p">&gt;</span>
+</pre></div>
+
+<p>That’s it! We got the modularity benefits of modern JavaScript without needing any build process. The browser handles the module loading for us. And thanks to parallel requests since HTTP/2, this can scale to many modules without a performance hit.</p>
+<h3 id="s-in-production">In production</h3>
+<p>To deploy, all we need is Django's support for collecting static files into one place and its support for adding hashes to filenames. In production it is a good idea to use <a href="https://docs.djangoproject.com/en/stable/ref/contrib/staticfiles/#django.contrib.staticfiles.storage.ManifestStaticFilesStorage">ManifestStaticFilesStorage</a> storage backend. It stores the file names it handles by appending the MD5 hash of the file’s content to the filename. This allows you to set far future cache expiries, which is good for performance, while still guaranteeing new versions of the file will make it to users’ browsers.</p>
+<p>This backend is also able to update the reference to <code>form_validation.js</code> in the import statement, with its new versioned file name.</p>
+<h3 id="s-future-work">Future work</h3>
+<p>ManifestStaticFilesStorage works, but a lot of its implementation details get in the way. It could be easier to use as a developer.</p>
+<ul>
+<li>The support for <code>import</code>/<code>export</code> with hashed files is not very robust.</li>
+<li>Comments in CSS with references to files can <a href="https://code.djangoproject.com/ticket/21080">lead to errors during collectstatic</a>.</li>
+<li>Circular dependencies in CSS/JS can not be processed.</li>
+<li>Errors during collectstatic when files are missing are not always clear.</li>
+<li>Differences between implementation of StaticFilesStorage and ManifestStaticFilesStorage can lead to errors in production that don't show up in development (like <a href="https://code.djangoproject.com/ticket/26329">#26329, about leading slashes</a>).</li>
+<li>Configuring common options means subclassing the storage when we could use the existing OPTIONS dict.</li>
+<li>Collecting static files could be faster if it used parallelization (pull request: <a href="https://github.com/django/django/pull/19935">#19935 Used a threadpool to parallelise collectstatic</a>)</li>
+</ul>
+<p>We discussed those possible improvements at the <a href="https://www.djangomed.eu/">Django on the Med 🏖️</a> sprints and I’m hopeful we can make progress.</p>
+<p>I built <a href="https://github.com/blighj/django-manifeststaticfiles-enhanced">django-manifeststaticfiles-enhanced</a> to attempt to fix all these. The core work is to switch to a lexer for CSS and JS, <a href="https://github.com/blighj/django-manifeststaticfiles-enhanced/blob/main/django_manifeststaticfiles_enhanced/jslex.py">based on Ned Batchelder’s JsLex</a> that was used in Django previously. It was expanded to cover modern JS and CSS by working with Claude Code to do the grunt work of covering the syntax.</p>
+<p>It also switches to using a topological sort to find dependencies, whereas before we used a more brute force approach of repeated processing until we saw no more changes, which lead to more work, particularly on storages that used the network. It also meant we couldn't handle circular dependencies.</p>
+<p>To validate it works, I ran a <a href="https://github.com/blighj/django-manifeststaticfiles-enhanced/issues/34">performance benchmark on 50+ projects</a>, it’s been tested issues and with similar (often improved) performance. On average, it’s about 30% faster.</p>
+<hr />
+<p>While those improvements would be welcome, do go ahead with trying build-free JavaScript and CSS in your Django projects today! Modern browsers make it possible to create great frontend experiences without the complexity.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 19, 2025 08:13 AM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2025/nov/19/going-build-free-with-native-javascript-modules/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/709" class="hover:underline"
               >Issue #709: deepcopy(), JIT, REPL Tricks, and More (Nov. 18, 2025)</a
             >
@@ -1383,46 +1528,6 @@ dependencies, and not just work around them.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/rust/2025/11/10/rust-vs-python-finding-the-right-balance-between-speed-and-simplicity/" class="hover:underline"
-              >Rust vs. Python: Finding the right balance between speed and simplicity</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This blog post was brought to you by Damaso Sanoja, draft.dev. Deciding whether to use Python or Rust isn’t just a syntax choice; it’s a career bet. According to the StackOverflow Developer Survey, Python dominates in accessibility, with 66.4% of people learning to code choosing it as their entry point. Python usage skyrocketed from 32% [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 10, 2025 12:02 PM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/rust/2025/11/10/rust-vs-python-finding-the-right-balance-between-speed-and-simplicity/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1434,8 +1539,8 @@ dependencies, and not just work around them.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8426</a></li>
-    <li><a>Unique Feeds: 391</a></li>
+    <li><a>Total Entries: 8525</a></li>
+    <li><a>Unique Feeds: 394</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
