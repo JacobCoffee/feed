@@ -364,59 +364,28 @@ grab a copy of the release candidate package from
 <div class="highlight"><pre><span></span>or add your own <span class="p">&lt;</span><span class="nt">input</span> <span class="na">type</span><span class="o">=</span><span class="s">"text"</span> <span class="na">name</span><span class="o">=</span><span class="s">"choice_text"</span> <span class="na">maxlength</span><span class="o">=</span><span class="s">"200"</span> <span class="p">/&gt;</span>
 </pre></div>
 
-<p>Now our users can add their own options to polls if the existing ones don't fit. We can update the voting view to handle this new option. We add a new <code>choice_text</code> input, and if there is no vote selection we will potentially handle adding the new option, while still providing an error message if neither is supplied. We also provide an error if both are selected.</p>
-<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">vote</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">question_id</span><span class="p">):</span>
-    <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice'</span><span class="p">]</span> <span class="ow">and</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">]:</span>
-        <span class="k">return</span> <span class="n">render</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s1">'polls/detail.html'</span><span class="p">,</span> <span class="p">{</span>
-            <span class="s1">'question'</span><span class="p">:</span> <span class="n">question</span><span class="p">,</span>
-            <span class="s1">'error_message'</span><span class="p">:</span> <span class="s2">"You can't vote and provide a new option."</span><span class="p">,</span>
-        <span class="p">})</span>
-
-    <span class="n">question</span> <span class="o">=</span> <span class="n">get_object_or_404</span><span class="p">(</span><span class="n">Question</span><span class="p">,</span> <span class="n">pk</span><span class="o">=</span><span class="n">question_id</span><span class="p">)</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="n">selected_choice</span> <span class="o">=</span> <span class="n">question</span><span class="o">.</span><span class="n">choice_set</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">pk</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice'</span><span class="p">])</span>
-    <span class="k">except</span> <span class="p">(</span><span class="ne">KeyError</span><span class="p">,</span> <span class="n">Choice</span><span class="o">.</span><span class="n">DoesNotExist</span><span class="p">):</span>
-        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">]:</span>
-            <span class="n">selected_choice</span> <span class="o">=</span> <span class="n">Choice</span><span class="o">.</span><span class="n">objects</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
-                <span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">,</span>
-                <span class="n">choice_text</span><span class="o">=</span><span class="n">request</span><span class="o">.</span><span class="n">POST</span><span class="p">[</span><span class="s1">'choice_text'</span><span class="p">],</span>
-            <span class="p">)</span>
-        <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">render</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="s1">'polls/detail.html'</span><span class="p">,</span> <span class="p">{</span>
-                <span class="s1">'question'</span><span class="p">:</span> <span class="n">question</span><span class="p">,</span>
-                <span class="s1">'error_message'</span><span class="p">:</span> <span class="s2">"You didn't select a choice or provide a new one."</span><span class="p">,</span>
-            <span class="p">})</span>
-    <span class="n">selected_choice</span><span class="o">.</span><span class="n">votes</span> <span class="o">+=</span> <span class="mi">1</span>
-    <span class="n">selected_choice</span><span class="o">.</span><span class="n">save</span><span class="p">()</span>
-    <span class="k">return</span> <span class="n">HttpResponseRedirect</span><span class="p">(</span><span class="n">reverse</span><span class="p">(</span><span class="s1">'polls:results'</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">question</span><span class="o">.</span><span class="n">id</span><span class="p">,)))</span>
-</pre></div>
-
-<p>Now that our logic is a bit more complex it would be nicer if we had some JavaScript to do this. We can build a script that handles some of the form validation for us.</p>
-<div class="highlight"><pre><span></span><span class="kd">function</span><span class="w"> </span><span class="nx">noChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="nb">Array</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">choices</span><span class="p">).</span><span class="nx">some</span><span class="p">((</span><span class="nx">radio</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">radio</span><span class="p">.</span><span class="nx">checked</span><span class="p">)</span><span class="w"> </span><span class="o">||</span>
-<span class="w">    </span><span class="p">(</span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">]</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">value</span><span class="p">.</span><span class="nx">trim</span><span class="p">()</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">""</span><span class="p">)</span>
-<span class="w">  </span><span class="p">);</span>
-<span class="p">}</span>
-
-<span class="kd">function</span><span class="w"> </span><span class="nx">allChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">(</span>
-<span class="w">    </span><span class="o">!</span><span class="nb">Array</span><span class="p">.</span><span class="kr">from</span><span class="p">(</span><span class="nx">choices</span><span class="p">).</span><span class="nx">some</span><span class="p">((</span><span class="nx">radio</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">radio</span><span class="p">.</span><span class="nx">checked</span><span class="p">)</span><span class="w"> </span><span class="o">&amp;&amp;</span>
-<span class="w">    </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">]</span><span class="w"> </span><span class="o">&amp;&amp;</span>
-<span class="w">    </span><span class="nx">choice_text</span><span class="p">[</span><span class="mf">0</span><span class="p">].</span><span class="nx">value</span><span class="p">.</span><span class="nx">trim</span><span class="p">()</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">""</span>
-<span class="w">  </span><span class="p">);</span>
-<span class="p">}</span>
-
+<p>Now our users can add their own options to polls if the existing ones don't fit. We can update our voting view to handle this new option, with more validation:</p>
+<ul>
+<li>If there is no vote selection we handle adding the new option</li>
+<li>If there is no vote selection nor a new <code>choice_text</code>, we show an error</li>
+<li>Also show an error if both are selected.</li>
+</ul>
+<p>With our logic getting more complex it would be nicer if we had some JavaScript to do this. We can build a script that handles some of the form validation for us.</p>
+<div class="highlight"><pre><span></span><span class="c1">// Note the "export default" to make this function available for other modules.</span>
 <span class="k">export</span><span class="w"> </span><span class="k">default</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">initFormValidation</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s2">"polls"</span><span class="p">).</span><span class="nx">addEventListener</span><span class="p">(</span><span class="s2">"submit"</span><span class="p">,</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">choices</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">querySelectorAll</span><span class="p">(</span><span class="s1">'input[name="choice"]'</span><span class="p">);</span>
-<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">choice_text</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">querySelectorAll</span><span class="p">(</span><span class="s1">'input[name="choice_text"]'</span><span class="p">);</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">choiceText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">this</span><span class="p">.</span><span class="nx">querySelector</span><span class="p">(</span><span class="s1">'input[name="choice_text"]'</span><span class="p">);</span>
 
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">noChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">hasChecked</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[...</span><span class="nx">choices</span><span class="p">].</span><span class="nx">some</span><span class="p">(</span><span class="nx">r</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="nx">r</span><span class="p">.</span><span class="nx">checked</span><span class="p">);</span>
+<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">hasText</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">choiceText</span><span class="o">?</span><span class="p">.</span><span class="nx">value</span><span class="p">.</span><span class="nx">trim</span><span class="p">()</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">""</span><span class="p">;</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">hasChecked</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">!</span><span class="nx">hasText</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">      </span><span class="nx">e</span><span class="p">.</span><span class="nx">preventDefault</span><span class="p">();</span>
 <span class="w">      </span><span class="nx">alert</span><span class="p">(</span><span class="s2">"You didn't select a choice or provide a new one."</span><span class="p">);</span>
 <span class="w">    </span><span class="p">}</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">allChoices</span><span class="p">(</span><span class="nx">choices</span><span class="p">,</span><span class="w"> </span><span class="nx">choice_text</span><span class="p">))</span><span class="w"> </span><span class="p">{</span>
+
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">hasChecked</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nx">hasText</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">      </span><span class="nx">e</span><span class="p">.</span><span class="nx">preventDefault</span><span class="p">();</span>
 <span class="w">      </span><span class="nx">alert</span><span class="p">(</span><span class="s2">"You can't select a choice and also provide a new option."</span><span class="p">);</span>
 <span class="w">    </span><span class="p">}</span>
@@ -1256,46 +1225,6 @@ they are needed instead of relying on implicit access to a mock.</li>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/" class="hover:underline"
-              >How to use UUIDv7 in Python, Django and PostgreSQL</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Learn how to use UUIDv7 today with stable releases of Python 3.14, Django 5.2 and PostgreSQL 18. A step by step guide showing how to generate UUIDv7 in Python, store them in Django models, use PostgreSQL native functions and build time ordered primary keys without writing <span class="caps">SQL</span>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 13, 2025 11:00 PM UTC by
-            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
-              >Paolo Melchiorre</a
-            >
-          </div>
-          <a
-            href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2025-release/" class="hover:underline"
               >Python in Visual Studio Code – November 2025 Release</a
             >
@@ -1577,6 +1506,80 @@ For example, <code>3 * (4 + 7)</code> is different than <code>3 * 4 + 7</code>:<
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/blogrolls-are-the-best-rolls?utm_campaign=rss" class="hover:underline"
+              >Blogrolls are the Best(rolls)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Happy 6-year blogiversary to me! 🎉 To celebrate
+I want to talk about <em>other peoples’ blogs</em>, more specifically
+the magic of “<a href="https://indieweb.org/blogroll">blogrolls</a>”.
+Blogrolls are “lists of other sites that you read, are a follower of, or recommend”.
+Any blog can host a blogroll, or sometimes websites can be <a href="https://blogroll.org/">one big blogroll</a>.
+<!-- more --></p>
+
+<p>I’ve hosted a <a href="https://sethmlarson.dev/blogroll">blogroll</a> on my own blog <a href="https://github.com/sethmlarson/sethmlarson.dev/commit/bb1878ed81db05d194d350e108176241f339362e">since 2023</a>
+and encourage other bloggers to do so. My own blogroll is <a href="https://github.com/sethmlarson/sethmlarson.dev/tree/main/archive">generated</a> from the list of RSS
+feeds I subscribe to and articles that I “favorite” within <a href="https://inoreader.com">my RSS reader</a>.
+If you want to be particularly fancy you can add an RSS feed (<a href="https://henry.codes/recent-reading/">example</a>) to your blogroll
+that provides readers a method to “subscribe” for future blogroll updates.</p>
+
+<p>Blogrolls are like catnip for me: I cannot resist opening and <code>Ctrl</code>-clicking
+every link until I can’t see my tabs anymore. The feeling is akin to the first deep breath
+of air before starting a hike: there’s a rush of new information, topics, and potential new blogs
+to follow.</p>
+
+<p>Blogrolls can bridge the “effort chasm” I frequently
+hear as an issue when I recommend folks try an RSS feed reader. We’re not used to
+empty feeds anymore; self-curating blogs until you receive multiple articles
+per day takes time and effort. Blogrolls can help here, especially ones that
+publish using the importable <a href="https://raw.githubusercontent.com/sethmlarson/sethmlarson.dev/refs/heads/main/archive/feeds.opml">OPML format</a>.</p>
+
+<p>You can instantly populate your feed reader app with hundreds of feeds
+from blogs that are likely relevant to you. Simply create an account on
+a feed reader, <a href="https://www.inoreader.com/blog/2014/05/opml-subscriptions.html">import the blogroll OPML document</a> from a blogger you enjoy,
+and watch the articles “roll” in. Blogrolls are almost like Bluesky
+“Starter Packs” in this way!</p>
+
+<p>Hopefully this has convinced you to either curate your own blogroll
+or to start looking for (or asking for!) blogrolls from your favorite
+writers on the Web. Share your favorite blogroll with me on email or social media.
+Title inspired by “<a href="https://www.youtube.com/watch?v=thOifuHs6eY">Hexagons are the Best-agons</a>”.</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 12, 2025 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/blogrolls-are-the-best-rolls?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1588,8 +1591,8 @@ For example, <code>3 * (4 + 7)</code> is different than <code>3 * 4 + 7</code>:<
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8500</a></li>
-    <li><a>Unique Feeds: 390</a></li>
+    <li><a>Total Entries: 8508</a></li>
+    <li><a>Unique Feeds: 394</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
