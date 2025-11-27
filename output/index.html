@@ -215,53 +215,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythontest.com/2025-black-friday/" class="hover:underline"
-              >PythonTest Black Friday Deals 2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Save up to 50% on courses and the pytest book.</p>
-<h2 id="the-complete-pytest-course-bundlehttpscoursespythontestcomthe-complete-pytest-course-bundle"><a href="https://courses.pythontest.com/the-complete-pytest-course-bundle">The Complete pytest Course bundle</a></h2>
-<h3 id="use-blackfriday-to-save-20-off-through-november">Use BLACKFRIDAY to save 20% off through November.</h3>
-<p>This code is intended to match lots of 10-20% off deals around</p>
-<h3 id="use-save50-to-save-50-off-through-november">Use SAVE50 to save 50% off through November</h3>
-<p>This code is intended to match the PragProg deal below</p>
-<h3 id="why-leave-both-in-place">Why leave both in place?</h3>
-<p>No reason, really. I just thought it&rsquo;d be fun to have a &ldquo;choose your own discount&rdquo; thing.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 25, 2025 12:00 AM UTC by
-            <a href="http://pythontest.com/posts/index.xml" class="link link-hover text-primary"
-              >Brian Okken</a
-            >
-          </div>
-          <a
-            href="https://pythontest.com/2025-black-friday/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.holoviz.org/posts/param_release_2.3/" class="hover:underline"
               >Rich parameters & reactive programming with Param: 2.3 release</a
             >
@@ -3250,6 +3203,180 @@ Kubernetes و Docker يحلان مشكلة “لكنه يعمل على جهاز�
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2025/11/22/llm-apis/" class="hover:underline"
+              >LLM APIs are a Synchronization Problem</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The more I work with large language models through provider-exposed APIs, the
+more I feel like we have built ourselves into quite an unfortunate API surface
+area.  It might not actually be the right abstraction for what&#8217;s happening
+under the hood.  The way I like to think about this problem now is that it&#8217;s
+actually a distributed state synchronization problem.</p>
+<p>At its core, a large language model takes text, tokenizes it into numbers, and
+feeds those tokens through a stack of matrix multiplications and attention
+layers on the GPU.  Using a large set of fixed weights, it produces activations
+and predicts the next token.  If it weren&#8217;t for temperature (randomization),
+you could think of it having the potential of being a much more deterministic
+system, at least in principle.</p>
+<p>As far as the core model is concerned, there&#8217;s no magical distinction between
+&#8220;user text&#8221; and &#8220;assistant text&#8221;—everything is just tokens.  The only
+difference comes from special tokens and formatting that encode roles (system,
+user, assistant, tool), injected into the stream via the prompt template.  You
+can look at the system prompt templates on Ollama for the different models to
+get an idea.</p>
+<h2>The Basic Agent State</h2>
+<p>Let&#8217;s ignore for a second which APIs already exist and just think about what
+usually happens in an agentic system.  If I were to have my LLM run locally on
+the same machine, there is still state to be maintained, but that state is very
+local to me.  You&#8217;d maintain the conversation history as tokens in RAM, and the
+model would keep a derived &#8220;working state&#8221; on the GPU — mainly the attention
+key/value cache built from those tokens.  The weights themselves stay fixed;
+what changes per step are the activations and the KV cache.</p>
+<p>One further clarification: when I talk about state I don&#8217;t just mean the
+visible token history because the model also carries an internal working state
+that isn&#8217;t captured by simply re-sending tokens.  In other words: you can
+replay the tokens and regain the text content, but you won&#8217;t restore the exact
+derived state the model had built.</p>
+<p>From a mental-model perspective, caching means &#8220;remember the computation you
+already did for a given prefix so you don&#8217;t have to redo it.&#8221;  Internally, that
+usually means storing the attention KV cache for those prefix tokens on the
+server and letting you reuse it, not literally handing you raw GPU state.</p>
+<p>There are probably some subtleties to this that I&#8217;m missing, but I think this
+is a pretty good model to think about it.</p>
+<h2>The Completion API</h2>
+<p>The moment you&#8217;re working with completion-style APIs such as OpenAI&#8217;s or
+Anthropic&#8217;s, abstractions are put in place that make things a little different
+from this very simple system.  The first difference is that you&#8217;re not actually
+sending raw tokens around.  The way the GPU looks at the conversation history
+and the way you look at it are on fundamentally different levels of
+abstraction.  While you could count and manipulate tokens on one side of the
+equation, extra tokens are being injected into the stream that you can&#8217;t see.
+Some of those tokens come from converting the JSON message representation into
+the underlying input tokens fed into the machine.  But you also have things
+like tool definitions, which are injected into the conversation in proprietary
+ways.  Then there&#8217;s out-of-band information such as cache points.</p>
+<p>And beyond that, there are tokens you will never see.  For instance, with
+reasoning models you often don&#8217;t see any real reasoning tokens, because some
+LLM providers try to hide as much as possible so that you can&#8217;t retrain your
+own models with their reasoning state.  On the other hand, they might give you
+some other informational text so that you have something to show to the user.
+Model providers also love to hide search results and how those results were
+injected into the token stream.  Instead, you only get an encrypted blob back
+that you need to send back to continue the conversation.  All of a sudden, you
+need to take some information on your side and funnel it back to the server so
+that state can be reconciled on either end.</p>
+<p>In completion-style APIs, each new turn requires resending the entire prompt
+history.  The size of each individual request grows linearly with the number of
+turns, but the cumulative amount of data sent over a long conversation grows
+quadratically because each linear-sized history is retransmitted at every step.
+This is one of the reasons long chat sessions feel increasingly expensive.  On
+the server, the model&#8217;s attention cost over that sequence also grows
+quadratically in sequence length, which is why caching starts to matter.</p>
+<h2>The Responses API</h2>
+<p>One of the ways OpenAI tried to address this problem was to introduce the
+Responses API, which maintains the conversational history on the server (at
+least in the version with the saved state flag).  But now you&#8217;re in a bizarre
+situation where you&#8217;re fully dealing with state synchronization: there&#8217;s hidden
+state on the server and state on your side, but the API gives you very limited
+synchronization capabilities.  To this point, it remains unclear to me how long
+you can actually continue that conversation.  It&#8217;s also unclear what happens if
+there is state divergence or corruption.  I&#8217;ve seen the Responses API get stuck
+in ways where I couldn&#8217;t recover it.  It&#8217;s also unclear what happens if there&#8217;s
+a network partition, or if one side got the state update but the other didn&#8217;t.
+The Responses API with saved state is quite a bit harder to use, at least as
+it&#8217;s currently exposed.</p>
+<p>Obviously, for OpenAI it&#8217;s great because it allows them to hide more
+behind-the-scenes state that would otherwise have to be funneled through with
+every conversation message.</p>
+<h2>State Sync API</h2>
+<p>Regardless of whether you&#8217;re using a completion-style API or the Responses API,
+the provider always has to inject additional context behind the scenes—prompt
+templates, role markers, system/tool definitions, sometimes even provider-side
+tool outputs—that never appears in your visible message list.  Different
+providers handle this hidden context in different ways, and there&#8217;s no common
+standard for how it&#8217;s represented or synchronized.  The underlying reality is
+much simpler than the message-based abstractions make it look: if you run an
+open-weights model yourself, you can drive it directly with token sequences and
+design APIs that are far cleaner than the JSON-message interfaces we&#8217;ve
+standardized around.  The complexity gets even worse when you go through
+intermediaries like OpenRouter or SDKs like the Vercel AI SDK, which try to
+mask provider-specific differences but can&#8217;t fully unify the hidden state each
+provider maintains.  In practice, the hardest part of unifying LLM APIs isn&#8217;t
+the user-visible messages—it&#8217;s that each provider manages its own partially
+hidden state in incompatible ways.</p>
+<p>It really comes down to how you pass this hidden state around in one form or
+another.  I understand that from a model provider&#8217;s perspective, it&#8217;s nice to
+be able to hide things from the user.  But synchronizing hidden state is
+tricky, and none of these APIs have been built with that mindset, as far as I
+can tell.  Maybe it&#8217;s time to start thinking about what a state synchronization
+API would look like, rather than a message-based API.</p>
+<p>The more I work with these agents, the more I feel like I don&#8217;t actually need a
+unified message API.  The core idea of it being message-based in its current
+form is itself an abstraction that might not survive the passage of time.</p>
+<h2>Learn From Local First?</h2>
+<p>There&#8217;s a whole ecosystem that has dealt with this kind of mess before: the
+local-first movement.  Those folks spent a decade figuring out how to
+synchronize distributed state across clients and servers that don&#8217;t trust each
+other, drop offline, fork, merge, and heal.  Peer-to-peer sync, and
+conflict-free replicated storage engines all exist because &#8220;shared state but
+with gaps and divergence&#8221; is a hard problem that nobody could solve with naive
+message passing.  Their architectures explicitly separate canonical state,
+derived state, and transport mechanics — exactly the kind of separation missing
+from most LLM APIs today.</p>
+<p>Some of those ideas map surprisingly well to models: KV caches resemble derived
+state that could be checkpointed and resumed; prompt history is effectively an
+append-only log that could be synced incrementally instead of resent wholesale;
+provider-side invisible context behaves like a replicated document with hidden
+fields.</p>
+<p>At the same time though, if the remote state gets wiped because the remote site
+doesn&#8217;t want to hold it for that long, we would want to be in a situation where
+we can replay it entirely from scratch — which for instance the Responses API
+today does not allow.</p>
+<h2>Future Unified APIs</h2>
+<p>There&#8217;s been plenty of talk about unifying message-based APIs, especially in
+the wake of MCP (Model Context Protocol).  But if we ever standardize anything,
+it should start from how these models actually behave, not from the surface
+conventions we&#8217;ve inherited.  A good standard would acknowledge hidden state,
+synchronization boundaries, replay semantics, and failure modes — because those
+are real issues.  There is always the risk that we rush to formalize the
+current abstractions and lock in their weaknesses and faults.  I don&#8217;t know
+what the right abstraction looks like, but I&#8217;m increasingly doubtful that the
+status-quo solutions are the right fit.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 22, 2025 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2025/11/22/llm-apis/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -3261,8 +3388,8 @@ Kubernetes و Docker يحلان مشكلة “لكنه يعمل على جهاز�
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8621</a></li>
-    <li><a>Unique Feeds: 392</a></li>
+    <li><a>Total Entries: 8533</a></li>
+    <li><a>Unique Feeds: 393</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
