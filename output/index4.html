@@ -53,179 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202511/why_your_mock_breaks_later.html" class="hover:underline"
-              >Why your mock breaks later</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In <a href="https://nedbatchelder.com/blog/201908/why_your_mock_doesnt_work.html">Why your mock doesn’t work</a> I explained this rule of
-mocking:</p><blockquote><div><p>Mock where the object is used, <strong>not</strong> where it&#8217;s
-defined.</p></div></blockquote><p>That blog post explained why that rule was important: often a mock doesn&#8217;t
-work at all if you do it wrong.  But in some cases, the mock will work even if
-you don&#8217;t follow this rule, and then it can break much later. Why?</p><p>Let&#8217;s say you have code like this:</p><blockquote class="code"><pre class="python"><div class="source"><span class="c1">#&#xa0;user.py</span>
-<br />
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">get_user_settings</span><span class="p">():</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">with</span>&#xa0;<span class="nb">open</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;~/settings.json&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">expanduser</span><span class="p">())</span>&#xa0;<span class="k">as</span>&#xa0;<span class="n">f</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
-<br />
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">add_two_settings</span><span class="p">():</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">settings</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">get_user_settings</span><span class="p">()</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">settings</span><span class="p">[</span><span class="s2">&quot;opt1&quot;</span><span class="p">]</span>&#xa0;<span class="o">+</span>&#xa0;<span class="n">settings</span><span class="p">[</span><span class="s2">&quot;opt2&quot;</span><span class="p">]</span>
-<br /></div>
-</pre></blockquote><p>You write a simple test:</p><blockquote class="code"><pre class="python"><div class="source"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">():</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;NOTE:&#xa0;need&#xa0;to&#xa0;create&#xa0;~/settings.json&#xa0;for&#xa0;this&#xa0;to&#xa0;work:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;&#xa0;&#xa0;{&quot;opt1&quot;:&#xa0;10,&#xa0;&quot;opt2&quot;:&#xa0;7}</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">add_two_settings</span><span class="p">()</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">17</span>
-<br /></div>
-</pre></blockquote><p>As the comment in the test points out, the test will only pass if you create
-the correct settings.json file in your home directory. This is bad: you don&#8217;t
-want to require finicky environments for your tests to pass.</p><p>The thing we want to avoid is opening a real file, so it&#8217;s a natural impulse
-to mock out <code>open()</code>:</p><blockquote class="code"><pre class="python"><div class="source"><span class="c1">#&#xa0;test_user.py</span>
-<br />
-<br /><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">io</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">StringIO</span>
-<br /><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">unittest.mock</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">patch</span>
-<br />
-<br /><span class="nd">@patch</span><span class="p">(</span><span class="s2">&quot;builtins.open&quot;</span><span class="p">)</span>
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">(</span><span class="n">mock_open</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">mock_open</span><span class="o">.</span><span class="n">return_value</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">StringIO</span><span class="p">(</span><span class="s1">'{&quot;opt1&quot;:&#xa0;10,&#xa0;&quot;opt2&quot;:&#xa0;7}'</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">add_two_settings</span><span class="p">()</span>&#xa0;<span class="o">==</span>&#xa0;<span class="mi">17</span>
-<br /></div>
-</pre></blockquote><p>Nice, the test works without needing to create a file in our home
-directory!</p><h1 id="h_much_later">Much later...<a class="headerlink" href="#h_much_later"></a></h1><p>One day your test suite <a href="https://github.com/coveragepy/coveragepy/issues/2083" rel="external noopener">fails with an error</a> like:</p><blockquote class="code"><pre class="pytb"><div class="source"><span class="x">...</span>
-<br />&#xa0;&#xa0;File&#xa0;<span class="nb">&quot;.../site-packages/coverage/python.py&quot;</span>,&#xa0;line&#xa0;<span class="m">55</span>,&#xa0;in&#xa0;<span class="n">get_python_source</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="n">source_bytes</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">read_python_source</span><span class="p">(</span><span class="n">try_filename</span><span class="p">)</span>
-<br />&#xa0;&#xa0;File&#xa0;<span class="nb">&quot;.../site-packages/coverage/python.py&quot;</span>,&#xa0;line&#xa0;<span class="m">39</span>,&#xa0;in&#xa0;<span class="n">read_python_source</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>&#xa0;<span class="n">source</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\r\n</span><span class="s2">&quot;</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\r</span><span class="s2">&quot;</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="pm">~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^</span>
-<br /><span class="gr">TypeError</span>:&#xa0;<span class="n">replace()&#xa0;argument&#xa0;1&#xa0;must&#xa0;be&#xa0;str,&#xa0;not&#xa0;bytes</span>
-<br /></div>
-</pre></blockquote><p>What happened!? Coverage.py code runs during your tests, invoked by the
-Python interpreter.  The mock in the test changed the builtin <code>open</code>, so
-any use of it anywhere during the test is affected. In some cases, coverage.py
-needs to read your source code to record the execution properly.  When that
-happens, coverage.py unknowingly uses the mocked <code>open</code>, and bad things
-happen.</p><p>When you use a mock, patch it where it&#8217;s used, not where it&#8217;s defined.  In
-this case, the patch would be:</p><blockquote class="code"><pre class="python"><div class="source"><span class="nd">@patch</span><span class="p">(</span><span class="s2">&quot;myproduct.user.open&quot;</span><span class="p">)</span>
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_add_two_settings</span><span class="p">(</span><span class="n">mock_open</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="o">...</span>&#xa0;<span class="n">etc</span>&#xa0;<span class="o">...</span>
-<br /></div>
-</pre></blockquote><p>With a mock like this, the coverage.py code would be unaffected.</p><p>Keep in mind: it&#8217;s not just coverage.py that could trip over this mock. There
-could be other libraries used by your code, or you might use <code>open</code>
-yourself in another part of your product.  Mocking the definition means
-<em>anything</em> using the object will be affected.  Your intent is to only
-mock in one place, so target that place.</p><h1 id="h_postscript">Postscript<a class="headerlink" href="#h_postscript"></a></h1><p>I decided to add some code to coverage.py to defend against this kind of
-over-mocking.  There is <a href="https://github.com/search?type=code&amp;q=patch+builtins.open+language%3APython+path%3A%22test%22" rel="external noopener">a lot of over-mocking out
-there</a>, and this problem only shows up in coverage.py with Python 3.14. It&#8217;s
-not happening to many people yet, but it will happen more and more as people
-start testing with 3.14. I didn&#8217;t want to have to answer this question many
-times, and I didn&#8217;t want to force people to fix their mocks.</p><p>From a certain perspective, I shouldn&#8217;t have to do this. They are in the
-wrong, not me.  But this will reduce the overall friction in the universe. And
-<a href="https://github.com/coveragepy/coveragepy/commit/961fc5b4a1c40bec6e0d1908b6fb43b84a5d8c6b#diff-7a060a25115604cc3bc99075e1366afb84075101dcb0aef22d80f8f67c0c4593R30" rel="external noopener">the fix</a> was really simple:</p><blockquote class="code"><pre class="python"><div class="source"><span class="nb">open</span>&#xa0;<span class="o">=</span>&#xa0;<span class="nb">open</span>
-<br /></div>
-</pre></blockquote><p>This is a top-level statement in my module, so it runs when the module is
-imported, long before any tests are run.  The assignment to <code>open</code> will
-create a global in my module, using the current value of <code>open</code>, the one
-found in the builtins. This saves the original <code>open</code> for use in my module
-later, isolated from how builtins might be changed later.</p><p>This is an ad-hoc fix: it only defends one builtin. Mocking other builtins
-could still break coverage.py.  But <code>open</code> is a common one, and this will
-keep things working smoothly for those cases. And there&#8217;s precedent: I&#8217;ve
-already been using a more involved technique to <a href="https://github.com/coveragepy/coveragepy/commit/3b8f4a0b86f8796f1e7925b9c6593a9d5198b437" rel="external noopener">defend
-against mocking of the <code>os</code> module</a> for ten years.</p><h1 id="h_even_better">Even better!<a class="headerlink" href="#h_even_better"></a></h1><p>No blog post about mocking is complete without encouraging a number of other
-best practices, some of which could get you out of the mocking mess:</p><ul>
-
-<li>Use <code>autospec=True</code> to make your mocks strictly behave like the
-original object: see <a href="https://nedbatchelder.com/blog/202202/why_your_mock_still_doesnt_work.html">Why your mock still doesn’t work</a>.</li>
-
-<li>Make assertions about how your mock was called to be sure everything is
-connected up properly.</li>
-
-<li>Use verified fakes instead of auto-generated mocks: <a href="https://pythonspeed.com/articles/verified-fakes/" rel="external noopener">Fast
-tests for slow services: why you should use verified fakes</a>.</li>
-
-<li>Separate your code so that computing functions like our
-<code>add_two_settings</code> don&#8217;t also do I/O. This makes the functions easier to
-test in the first place. Take a look at <a href="https://www.destroyallsoftware.com/screencasts/catalog/functional-core-imperative-shell" rel="external noopener">Function Core,
-Imperative Shell</a>.</li>
-
-<li>Dependency injection lets you explicitly pass test-specific objects where
-they are needed instead of relying on implicit access to a mock.</li>
-
-</ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 16, 2025 12:55 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202511/why_your_mock_breaks_later.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nuitka.net/posts/nuitka-release-28.html" class="hover:underline"
-              >Nuitka Release 2.8</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This is to inform you about the new stable release of Nuitka. It is the extremely compatible Python compiler,
-“download now”.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 15, 2025 01:52 PM UTC by
-            <a href="http://nuitka.net/categories/Python.xml" class="link link-hover text-primary"
-              >Kay Hayen</a
-            >
-          </div>
-          <a
-            href="https://nuitka.net/posts/nuitka-release-28.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/274/" class="hover:underline"
               >The Real Python Podcast – Episode #274: Preparing Data Science Projects for Production</a
             >
@@ -306,8 +133,8 @@ they are needed instead of relying on implicit access to a mock.</li>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2025-release/" class="hover:underline"
-              >Python in Visual Studio Code – November 2025 Release</a
+            <a href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/" class="hover:underline"
+              >How to use UUIDv7 in Python, Django and PostgreSQL</a
             >
           </h2>
           
@@ -316,21 +143,20 @@ they are needed instead of relying on implicit access to a mock.</li>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>The November 2025 release brings new Pylance features including improvements to Copilot Hover Summaries and a Code Action to convert wildcard imports to explicit imports. Keep on reading to learn more!</p>
-<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2025-release/">Python in Visual Studio Code &#8211; November 2025 Release</a> appeared first on <a href="https://devblogs.microsoft.com/python">Microsoft for Python Developers Blog</a>.</p>
+            <p>Learn how to use UUIDv7 today with stable releases of Python 3.14, Django 5.2 and PostgreSQL 18. A step by step guide showing how to generate UUIDv7 in Python, store them in Django models, use PostgreSQL native functions and build time ordered primary keys without writing <span class="caps">SQL</span>.</p>
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 13, 2025 06:41 PM UTC by
-            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
-              >Python Engineering at Microsoft</a
+            Posted on November 13, 2025 11:00 PM UTC by
+            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
+              >Paolo Melchiorre</a
             >
           </div>
           <a
-            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-november-2025-release/"
+            href="https://www.paulox.net/2025/11/14/how-to-use-uuidv7-in-python-django-and-postgresql/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1095,6 +921,46 @@ sudo chmod -x /etc/update-motd.d/*
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.paulox.net/2025/11/08/django-girls-pescara-2025/" class="hover:underline"
+              >Django Girls Pescara 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The second-ever Django Girls workshop in Pescara, organised by the Python Pescara community and hosted inside DevFest Pescara 2025 by <span class="caps">GDG</span>&nbsp;Pescara.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 07, 2025 11:00 PM UTC by
+            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
+              >Paolo Melchiorre</a
+            >
+          </div>
+          <a
+            href="https://www.paulox.net/2025/11/08/django-girls-pescara-2025/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/273/" class="hover:underline"
               >The Real Python Podcast – Episode #273: Advice for Writing Maintainable Python Code</a
             >
@@ -1773,6 +1639,46 @@ the Django Forum. Please see <a class="reference external" href="https://www.dja
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/python-markitdown/" class="hover:underline"
+              >Quiz: Python MarkItDown: Convert Documents Into LLM-Ready Markdown</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Practice MarkItDown basics. Convert PDFs, Word documents, Excel documents, and HTML documents to Markdown. Try the quiz.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 05, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/python-markitdown/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1784,8 +1690,8 @@ the Django Forum. Please see <a class="reference external" href="https://www.dja
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8575</a></li>
-    <li><a>Unique Feeds: 391</a></li>
+    <li><a>Total Entries: 8506</a></li>
+    <li><a>Unique Feeds: 390</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
