@@ -53,6 +53,117 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html" class="hover:underline"
+              >Mistune 3 wikilink inline parser</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://mistune.lepture.com/">Mistune 3</a> has changed its internal structure and extension mechanisms.</p>
+<p>The <a href="https://mistune.lepture.com/en/latest/advanced.html">mistune advanced documentation</a> provides several examples of how to create and register inline patterns. After a few iterations, I developed the following solution to render wiki links:</p>
+<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">re</span>  
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Match</span>  
+  
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">Markdown</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseRenderer</span><span class="p">,</span> <span class="n">InlineState</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune.inline_parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">InlineParser</span>  
+  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_wikilink</span><span class="p">(</span><span class="n">inline</span><span class="p">:</span> <span class="s2">&quot;InlineParser&quot;</span><span class="p">,</span> <span class="n">m</span><span class="p">:</span> <span class="n">Match</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">state</span><span class="p">:</span> <span class="s2">&quot;InlineState&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Parse wikilink syntax [[page title]] or [[page title|display text]]&quot;&quot;&quot;</span>  
+    <span class="n">page_title</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'page'</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="n">display_text</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">'display'</span><span class="p">)</span>  
+      
+    <span class="c1"># Use display text if provided, otherwise use page title  </span>
+    <span class="k">if</span> <span class="n">display_text</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">display_text</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>  
+    <span class="k">else</span><span class="p">:</span>  
+        <span class="n">text</span> <span class="o">=</span> <span class="n">page_title</span>  
+      
+    <span class="c1"># Create a wikilink token  </span>
+    <span class="n">state</span><span class="o">.</span><span class="n">append_token</span><span class="p">({</span>  
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;wikilink&quot;</span><span class="p">,</span>  
+        <span class="s2">&quot;children&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="s2">&quot;raw&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">}],</span>  
+        <span class="s2">&quot;attrs&quot;</span><span class="p">:</span> <span class="p">{</span>  
+            <span class="s2">&quot;page&quot;</span><span class="p">:</span> <span class="n">page_title</span><span class="p">,</span>  
+            <span class="s2">&quot;display&quot;</span><span class="p">:</span> <span class="n">text</span>  
+        <span class="p">}</span>  
+    <span class="p">})</span>  
+      
+    <span class="k">return</span> <span class="n">m</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">render_wikilink_html</span><span class="p">(</span><span class="n">renderer</span><span class="p">:</span> <span class="s2">&quot;BaseRenderer&quot;</span><span class="p">,</span> <span class="n">children</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">page</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">display</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Render wikilink as HTML anchor tag&quot;&quot;&quot;</span>  
+    <span class="n">url_page</span> <span class="o">=</span> <span class="n">page</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">' '</span><span class="p">,</span> <span class="s1">'_'</span><span class="p">)</span>  
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">'&lt;a href=&quot;/wiki/</span><span class="si">{</span><span class="n">url_page</span><span class="si">}</span><span class="s1">&quot; class=&quot;wikilink&quot;&gt;</span><span class="si">{</span><span class="n">children</span><span class="si">}</span><span class="s1">&lt;/a&gt;'</span>  
+  
+<span class="k">def</span><span class="w"> </span><span class="nf">wikilink_plugin</span><span class="p">(</span><span class="n">md</span><span class="p">:</span> <span class="s2">&quot;Markdown&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>  
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Plugin function to add wikilink support to mistune&quot;&quot;&quot;</span>  
+    <span class="c1"># Use named groups</span>
+    <span class="n">WIKILINK_PATTERN</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\[\[(?P&lt;page&gt;[^|\]]+)(?:\|(?P&lt;display&gt;[^\]]+))?\]\]'</span>  
+    <span class="n">md</span><span class="o">.</span><span class="n">inline</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">WIKILINK_PATTERN</span><span class="p">,</span> <span class="n">parse_wikilink</span><span class="p">,</span> <span class="n">before</span><span class="o">=</span><span class="s2">&quot;link&quot;</span><span class="p">)</span>  
+      
+    <span class="k">if</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span> <span class="ow">and</span> <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">NAME</span> <span class="o">==</span> <span class="s2">&quot;html&quot;</span><span class="p">:</span>  
+        <span class="n">md</span><span class="o">.</span><span class="n">renderer</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="s2">&quot;wikilink&quot;</span><span class="p">,</span> <span class="n">render_wikilink_html</span><span class="p">)</span>
+  
+<span class="c1"># Usage example  </span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>  
+    <span class="kn">from</span><span class="w"> </span><span class="nn">mistune</span><span class="w"> </span><span class="kn">import</span> <span class="n">create_markdown</span>  
+      
+    <span class="c1"># Create markdown parser with the wikilink plugin  </span>
+    <span class="n">md</span> <span class="o">=</span> <span class="n">create_markdown</span><span class="p">(</span><span class="n">plugins</span><span class="o">=</span><span class="p">[</span><span class="n">wikilink_plugin</span><span class="p">])</span>  
+      
+    <span class="c1"># Test examples  </span>
+    <span class="n">text1</span> <span class="o">=</span> <span class="s2">&quot;Check out [[Main Page]] for more info.&quot;</span>  
+    <span class="n">text2</span> <span class="o">=</span> <span class="s2">&quot;Visit [[Installation Guide|the installation guide]] to get started.&quot;</span>  
+    <span class="n">text3</span> <span class="o">=</span> <span class="s2">&quot;Multiple links: [[Page One]] and [[Page Two|Custom Text]].&quot;</span>  
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Example 1:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text1</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Check out &lt;a href=&quot;/wiki/Main_Page&quot; class=&quot;wikilink&quot;&gt;Main Page&lt;/a&gt; for more info.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 2:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text2</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Visit &lt;a href=&quot;/wiki/Installation_Guide&quot; class=&quot;wikilink&quot;&gt;the installation guide&lt;/a&gt; to get started.&lt;/p&gt;  </span>
+      
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">Example 3:&quot;</span><span class="p">)</span>  
+    <span class="nb">print</span><span class="p">(</span><span class="n">md</span><span class="p">(</span><span class="n">text3</span><span class="p">))</span>  
+    <span class="c1"># Output: &lt;p&gt;Multiple links: &lt;a href=&quot;/wiki/Page_One&quot; class=&quot;wikilink&quot;&gt;Page One&lt;/a&gt; and &lt;a href=&quot;/wiki/Page_Two&quot; class=&quot;wikilink&quot;&gt;Custom Text&lt;/a&gt;.&lt;/p&gt;</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 20, 2025 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="http://peter-hoffmann.com/2025/mistune-3-wikilink-inline-parser.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.dataschool.io/master-machine-learning-book-preview/" class="hover:underline"
               >Book preview: Master Machine Learning with scikit-learn 📖</a
             >
@@ -968,6 +1079,66 @@ If I&rsquo;ve gotten something wrong, feel free to <a href="https://pythontest.c
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonspeed.com/articles/testing-compiler-optimizations/" class="hover:underline"
+              >Testing the compiler optimizations your code relies on</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In a <a href="https://davidlattimore.github.io/posts/2025/09/02/rustforge-wild-performance-tricks.html">recent article by David
+Lattimore</a>,
+he demonstrates a number of Rust performance tricks, including one that involve writing code that
+looks like a loop, but which in practice is optimized down to a fixed
+number of instructions. Having what looks like an <em>O</em>(<em>n</em>) loop turned
+into a constant operation is great for speed!</p>
+
+<p>But there’s a problem with this sort of trick: how do you know the
+compiler will <em>keep</em> doing it? What happens when the compiler’s next
+release comes out? How can you catch performance regressions?</p>
+
+<p>One solution is benchmarking: you measure your code’s speed, and if it
+gets a lot slower, something has gone wrong. This is useful and
+important if you care about speed. But it’s also less localized, so it
+won’t necessarily immediately pinpoint where the regression happened.</p>
+
+<p>In this article I’m going to cover another approach: a test that will
+only pass if the compiler really did optimize the loop away.</p>
+
+
+   <a href="https://pythonspeed.com/articles/testing-compiler-optimizations/">Read more...</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 09, 2025 12:00 AM UTC by
+            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
+              >Python⇒Speed</a
+            >
+          </div>
+          <a
+            href="https://pythonspeed.com/articles/testing-compiler-optimizations/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonmorsels.com/repl-features/" class="hover:underline"
               >Python REPL Shortcuts & Features</a
             >
@@ -1757,121 +1928,6 @@ My <a href="https://github.com/treyhunner/dramatic">dramatic</a> package uses (<
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/9/4/996/" class="hover:underline"
-              >996</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <blockquote>
-<p>&#8220;Amazing salary, hackerhouse in SF, crazy equity.
-<a href="https://en.wikipedia.org/wiki/996_working_hour_system">996</a>. Our mission is
-OSS.&#8221; — <a href="https://x.com/gregpr07/status/1963605449791639745">Gregor Zunic</a></p>
-<p>&#8220;The current vibe is no drinking, no drugs, 9-9-6, […].&#8221; — <a href="https://www.ndtv.com/world-news/daksh-gupta-23-year-old-indian-origin-ceo-backs-72-hour-workweek-no-remote-work-no-drugs-9200900">Daksh
-Gupta</a></p>
-<p>“The truth is, China’s really doing ‘007’ now—midnight to midnight, seven
-days a week […] if you want to build a $10 billion company, you have to work
-seven days a week.” — <a href="https://www.wired.com/story/silicon-valley-china-996-work-schedule/">Harry Stebbings</a></p>
-</blockquote>
-<p>I love work.  I love working late nights, hacking on things.  This week I
-didn&#8217;t go to sleep before midnight once.  And yet…</p>
-<p>I also love my wife and kids. I love long walks, contemplating life over good
-coffee, and deep, meaningful conversations.  None of this would be possible if
-my life was defined by 12 hour days, six days a week.  More importantly, a
-successful company is not a sprint, it&#8217;s a marathon.</p>
-<p>And this is when this is your own company!  When you devote 72 hours a week to
-someone else&#8217;s startup, you need to really think about that arrangement a few
-times.  I find it highly irresponsible for a founder to promote that model.  As
-a founder, you are not an employee, and your risks and leverage are
-fundamentally different.</p>
-<p>I will always advocate <a href="/2024/12/26/reflecting-on-life/">for putting the time
-in</a> because it is what brought me happiness.
-Intensity, and giving a shit about what I&#8217;m doing, will always matter to me.
-But you don&#8217;t measure that by the energy you put in, or the hours you&#8217;re
-sitting in the office, but the output you produce.  Burning out on twelve-hour
-days, six days a week, has no prize at the end.  It&#8217;s unsustainable, it
-shouldn&#8217;t be the standard and it sure as hell should not be seen as a positive
-sign of a company.</p>
-<p>I&#8217;ve pulled many all-nighters, and I&#8217;ve enjoyed them.  I still do.  But they&#8217;re
-enjoyable in the right context, for the right reasons, and when that is a
-completely personal choice, not the basis of company culture.</p>
-<p>And that all-nighter?  It comes with a fucked up and unproductive morning the
-day after.</p>
-<p>When someone promotes a 996 work culture, we should push back.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/9/4/996/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2025/09/04/use-obsidian-as-source-for-hugo/" class="hover:underline"
-              >Utilisation d'Obsidian comme source pour Hugo</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Au début juillet, dans mon précédent post <a href="https://wirtel.be/post/2025/07/10/migration-hugo-obsidian-cv/">Utilisation d&rsquo;Obsidian pour Hugo</a> , j’expliquais que je regardais comment utiliser <a href="https://obsidian.md">Obsidian</a> comme source pour mon blog. Jusqu’ici, j’écrivais mes posts dans VS Code ou NeoVim, mais comme <a href="https://gohugo.io">Hugo</a> repose sur du Markdown, l’idée d’utiliser directement Obsidian s’est imposée assez naturellement : tout centraliser dans un seul outil, mes notes et mes articles.</p>
-<p>L’avantage est que j’ai toutes mes données dans un seul et unique endroit, donc je n’ai plus besoin de rechercher mes infos pour écrire mon article et l’écriture devient plus fluide, car tout est à portée de main.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2025 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2025/09/04/use-obsidian-as-source-for-hugo/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1883,7 +1939,7 @@ day after.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8701</a></li>
+    <li><a>Total Entries: 8722</a></li>
     <li><a>Unique Feeds: 395</a></li>
     
 
