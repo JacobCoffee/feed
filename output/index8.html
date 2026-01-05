@@ -53,243 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/11/3/absurd-workflows/" class="hover:underline"
-              >Absurd Workflows: Durable Execution With Just Postgres</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It&#8217;s probably no surprise to you that we&#8217;re building
-<a href="https://www.anthropic.com/engineering/building-effective-agents">agents</a>
-somewhere.  Everybody does it.  Building a good agent, however, brings back
-some of the historic challenges involving durable execution.</p>
-<p>Entirely unsurprisingly, a lot of people are now building durable execution
-systems.  Many of these, however, are incredibly complex and require you to
-sign up for another third-party service.  I generally try to avoid bringing in
-extra complexity if I can avoid it, so I wanted to see how far I can go with
-just Postgres.  To this end, I wrote
-<a href="https://github.com/earendil-works/absurd">Absurd</a> <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup>, a tiny SQL-only
-library with a very thin SDK to enable durable workflows on top of just
-Postgres — no extension needed.</p>
-<h2>Durable Execution 101</h2>
-<p>Durable execution (or durable workflows) is a way to run long-lived, reliable
-functions that can survive crashes, restarts, and network failures without losing
-state or duplicating work.  Durable execution can be thought of as the combination
-of a queue system and a state store that remembers the most recently seen execution state.</p>
-<p>Because Postgres <a href="https://web.archive.org/web/20190530143429/https://www.2ndquadrant.com/en/blog/what-is-select-skip-locked-for-in-postgresql-9-5/">is excellent at
-queues</a>
-thanks to <code>SELECT ... FOR UPDATE SKIP LOCKED</code>, you can use it for the queue (e.g.,
-with <a href="https://github.com/pgmq/pgmq">pgmq</a>).  And because it&#8217;s a database, you
-can also use it to store the state.</p>
-<p>The state is important.  With durable execution, instead of running your logic in
-memory, the goal is to decompose a task into smaller pieces (step functions) and
-record every step and decision.  When the process stops (whether it fails,
-intentionally suspends, or a machine dies) the engine can replay those events to
-restore the exact state and continue where it left off, as if nothing happened.</p>
-<h2>Absurd At A High Level</h2>
-<p>Absurd at the core is a single <code>.sql</code> file
-(<a href="https://github.com/earendil-works/absurd/blob/main/sql/absurd.sql"><code>absurd.sql</code></a>)
-which needs to be applied to a database of your choice.  That SQL file&#8217;s goal is
-to move the complexity of SDKs into the database.  SDKs then make the
-system convenient by abstracting the low-level operations in a way that
-leverages the ergonomics of the language you are working with.</p>
-<p>The system is very simple: A <em>task</em> dispatches onto a given <em>queue</em> from where
-a <em>worker</em> picks it up to work on.  Tasks are subdivided into <em>steps</em>, which are
-executed in sequence by the worker.  Tasks can be suspended or fail, and when
-that happens, they execute again (a <em>run</em>).  The result of a step is stored in
-the database (a <em>checkpoint</em>).  To avoid repeating work, checkpoints are
-automatically loaded from the state storage in Postgres again.</p>
-<p>Additionally, tasks can <em>sleep</em> or <em>suspend for events</em> and wait until they are
-emitted.  Events are cached, which means they are race-free.</p>
-<h2>With Agents</h2>
-<p>What is the relationship of agents with workflows?  Normally, workflows are DAGs
-defined by a human ahead of time.  AI agents, on the other hand, define their own
-adventure as they go.  That means they are basically a workflow with
-mostly a single step that iterates over changing state until it determines that
-it has completed.  Absurd enables this by automatically counting up steps if they
-are repeated:</p>
-<div class="highlight"><pre><span></span><span class="nx">absurd</span><span class="p">.</span><span class="nx">registerTask</span><span class="p">({</span><span class="nx">name</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;my-agent&quot;</span><span class="p">},</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">(</span><span class="nx">params</span><span class="p">,</span><span class="w"> </span><span class="nx">ctx</span><span class="p">)</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="kd">let</span><span class="w"> </span><span class="nx">messages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[{</span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="kt">params.prompt</span><span class="p">}];</span>
-<span class="w">  </span><span class="kd">let</span><span class="w"> </span><span class="nx">step</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0</span><span class="p">;</span>
-<span class="w">  </span><span class="k">while</span><span class="w"> </span><span class="p">(</span><span class="nx">step</span><span class="o">++</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mf">20</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">newMessages</span><span class="p">,</span><span class="w"> </span><span class="nx">finishReason</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">step</span><span class="p">(</span><span class="s2">&quot;iteration&quot;</span><span class="p">,</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="p">()</span><span class="w"> </span><span class="p">=&gt;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="k">return</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">singleStep</span><span class="p">(</span><span class="nx">messages</span><span class="p">);</span>
-<span class="w">    </span><span class="p">});</span>
-<span class="w">    </span><span class="nx">messages</span><span class="p">.</span><span class="nx">push</span><span class="p">(...</span><span class="nx">newMessages</span><span class="p">);</span>
-<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">finishReason</span><span class="w"> </span><span class="o">!==</span><span class="w"> </span><span class="s2">&quot;tool-calls&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="k">break</span><span class="p">;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">}</span>
-<span class="p">});</span>
-</pre></div>
-<p>This defines a single task named <code>my-agent</code>, and it has just a single step.  The
-return value is the changed state, but the current state is passed in as an
-argument.  Every time the step function is executed, the data is looked up first
-from the checkpoint store.  The first checkpoint will be <code>iteration</code>, the second
-<code>iteration#2</code>, <code>iteration#3</code>, etc.  Each state only stores the new messages it
-generated, not the entire message history.</p>
-<p>If a step fails, the task fails and will be retried.  And because of checkpoint
-storage, if you crash in step 5, the first 4 steps will be loaded automatically
-from the store.  Steps are never retried, only tasks.</p>
-<p>How do you kick it off? Simply enqueue it:</p>
-<div class="highlight"><pre><span></span><span class="k">await</span><span class="w"> </span><span class="nx">absurd</span><span class="p">.</span><span class="nx">spawn</span><span class="p">(</span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="nx">prompt</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;What's the weather like in Boston?&quot;</span>
-<span class="p">},</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="nx">maxAttempts</span><span class="o">:</span><span class="w"> </span><span class="kt">3</span><span class="p">,</span>
-<span class="p">});</span>
-</pre></div>
-<p>And if you are curious, this is an example implementation of the <code>singleStep</code>
-function used above:</p>
-<details>Single step function
-<div class="highlight"><pre><span></span><span class="k">async</span><span class="w"> </span><span class="kd">function</span><span class="w"> </span><span class="nx">singleStep</span><span class="p">(</span><span class="nx">messages</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">generateText</span><span class="p">({</span>
-<span class="w">    </span><span class="nx">model</span><span class="o">:</span><span class="w"> </span><span class="kt">anthropic</span><span class="p">(</span><span class="s2">&quot;claude-haiku-4-5&quot;</span><span class="p">),</span>
-<span class="w">    </span><span class="nx">system</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;You are a helpful agent&quot;</span><span class="p">,</span>
-<span class="w">    </span><span class="nx">messages</span><span class="p">,</span>
-<span class="w">    </span><span class="nx">tools</span><span class="o">:</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="nx">getWeather</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* tool definition here */</span><span class="w"> </span><span class="p">}</span>
-<span class="w">    </span><span class="p">},</span>
-<span class="w">  </span><span class="p">});</span>
-
-<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">newMessages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="k">await</span><span class="w"> </span><span class="nx">result</span><span class="p">.</span><span class="nx">response</span><span class="p">).</span><span class="nx">messages</span><span class="p">;</span>
-<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">finishReason</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">result</span><span class="p">.</span><span class="nx">finishReason</span><span class="p">;</span>
-
-<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">finishReason</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s2">&quot;tool-calls&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="kd">const</span><span class="w"> </span><span class="nx">toolResults</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[];</span>
-<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">toolCall</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">result</span><span class="p">.</span><span class="nx">toolCalls</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">      </span><span class="cm">/* handle tool calls here */</span>
-<span class="w">      </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">toolCall</span><span class="p">.</span><span class="nx">toolName</span><span class="w"> </span><span class="o">===</span><span class="w"> </span><span class="s2">&quot;getWeather&quot;</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">        </span><span class="kd">const</span><span class="w"> </span><span class="nx">toolOutput</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">getWeather</span><span class="p">(</span><span class="nx">toolCall</span><span class="p">.</span><span class="nx">input</span><span class="p">);</span>
-<span class="w">        </span><span class="nx">toolResults</span><span class="p">.</span><span class="nx">push</span><span class="p">({</span>
-<span class="w">          </span><span class="nx">toolName</span><span class="o">:</span><span class="w"> </span><span class="kt">toolCall.toolName</span><span class="p">,</span>
-<span class="w">          </span><span class="nx">toolCallId</span><span class="o">:</span><span class="w"> </span><span class="kt">toolCall.toolCallId</span><span class="p">,</span>
-<span class="w">          </span><span class="kr">type</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;tool-result&quot;</span><span class="p">,</span>
-<span class="w">          </span><span class="nx">output</span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="kr">type</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="p">,</span><span class="w"> </span><span class="nx">value</span><span class="o">:</span><span class="w"> </span><span class="kt">toolOutput</span><span class="p">},</span>
-<span class="w">        </span><span class="p">});</span>
-<span class="w">      </span><span class="p">}</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">    </span><span class="nx">newMessages</span><span class="p">.</span><span class="nx">push</span><span class="p">({</span>
-<span class="w">      </span><span class="nx">role</span><span class="o">:</span><span class="w"> </span><span class="s2">&quot;tool&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nx">content</span><span class="o">:</span><span class="w"> </span><span class="kt">toolResults</span>
-<span class="w">    </span><span class="p">});</span>
-<span class="w">  </span><span class="p">}</span>
-
-<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">newMessages</span><span class="p">,</span><span class="w"> </span><span class="nx">finishReason</span><span class="w"> </span><span class="p">};</span>
-<span class="p">}</span>
-</pre></div>
-</details>
-<h2>Events and Sleeps</h2>
-<p>And like Temporal and other solutions, you can yield if you want.  If you want
-to come back to a problem in 7 days, you can do so:</p>
-<div class="highlight"><pre><span></span><span class="k">await</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">sleep</span><span class="p">(</span><span class="mf">60</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">60</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">24</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">7</span><span class="p">);</span><span class="w"> </span><span class="c1">// sleep for 7 days</span>
-</pre></div>
-<p>Or if you want to wait for an event:</p>
-<div class="highlight"><pre><span></span><span class="kd">const</span><span class="w"> </span><span class="nx">eventName</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sb">`email-confirmation-</span><span class="si">${</span><span class="nx">userId</span><span class="si">}</span><span class="sb">`</span><span class="p">;</span>
-<span class="k">try</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">payload</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">await</span><span class="w"> </span><span class="nx">ctx</span><span class="p">.</span><span class="nx">waitForEvent</span><span class="p">(</span><span class="nx">eventName</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="nx">timeout</span><span class="o">:</span><span class="w"> </span><span class="kt">60</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">5</span><span class="p">});</span>
-<span class="w">  </span><span class="c1">// handle event payload</span>
-<span class="p">}</span><span class="w"> </span><span class="k">catch</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="nx">e</span><span class="w"> </span><span class="ow">instanceof</span><span class="w"> </span><span class="nx">TimeoutError</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="c1">// handle timeout</span>
-<span class="w">  </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="k">throw</span><span class="w"> </span><span class="nx">e</span><span class="p">;</span>
-<span class="w">  </span><span class="p">}</span>
-<span class="p">}</span>
-</pre></div>
-<p>Which someone else can emit:</p>
-<div class="highlight"><pre><span></span><span class="kd">const</span><span class="w"> </span><span class="nx">eventName</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="sb">`email-confirmation-</span><span class="si">${</span><span class="nx">userId</span><span class="si">}</span><span class="sb">`</span><span class="p">;</span>
-<span class="k">await</span><span class="w"> </span><span class="nx">absurd</span><span class="p">.</span><span class="nx">emitEvent</span><span class="p">(</span><span class="nx">eventName</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nx">confirmedAt</span><span class="o">:</span><span class="w"> </span><span class="kt">new</span><span class="w"> </span><span class="nb">Date</span><span class="p">().</span><span class="nx">toISOString</span><span class="p">()</span><span class="w"> </span><span class="p">});</span>
-</pre></div>
-<h2>That&#8217;s it!</h2>
-<p>Really, that&#8217;s it.  There is really not much to it.  It&#8217;s just a queue and a
-state store — that&#8217;s all you need.  There is <a href="https://useworkflow.dev/">no compiler
-plugin</a> and no <a href="https://www.inngest.com/">separate
-service</a> or <a href="https://temporal.io/">whole runtime
-integration</a>.  Just Postgres.  That&#8217;s not to throw shade
-on these other solutions; they are great.  But not every problem necessarily
-needs to scale to that level of complexity, and you can get quite far with much
-less.  Particularly if you want to build software that other people should be
-able to self-host, that might be quite appealing.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p>It&#8217;s named Absurd because durable workflows are absurdly simple, but have
-been overcomplicated in recent years.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 03, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/11/3/absurd-workflows/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://stefaniemolin.com/articles/open-source/becoming-a-core-developer" class="hover:underline"
-              >Becoming a Core Developer</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Throughout your open source journey, you have no doubt been interacting with the core development team of the projects to which you have been contributing. Have you ever wondered how people become core developers of a project? In this post, I share my journey to becoming a core developer of numpydoc.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 02, 2025 04:50 PM UTC by
-            <a href="https://stefaniemolin.com/feeds/Python-atom.xml" class="link link-hover text-primary"
-              >Stefanie Molin</a
-            >
-          </div>
-          <a
-            href="https://stefaniemolin.com/articles/open-source/becoming-a-core-developer"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://zerotomastery.io/blog/python-monthly-newsletter-october-2025/?utm_source=python-rss-feed" class="hover:underline"
               >[October 2025] Python Monthly Newsletter 🐍</a
             >
@@ -1536,6 +1299,86 @@ Nikolaou …</a></p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://labs.quansight.org/blog/blas-lapack-packaging" class="hover:underline"
+              >BLAS/LAPACK packaging</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            An overview of differences between BLAS / LAPACK implementations and their packaging.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 23, 2025 12:00 AM UTC by
+            <a href="https://labs.quansight.org/rss.xml" class="link link-hover text-primary"
+              >Quansight Labs Blog</a
+            >
+          </div>
+          <a
+            href="https://labs.quansight.org/blog/blas-lapack-packaging"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/10/announcing-python-software-foundation.html" class="hover:underline"
+              >Announcing Python Software Foundation Fellow Members for Q3 2025! 🎉</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The PSF is pleased to announce its third </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">batch</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> of PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">2025</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! Let us welcome the new PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Q3</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! The following people continue to do amazing things for the Python community:</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Abhijeet Mote</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://www.linkedin.com/in/abhijeet-mote/" target="_blank">LinkedIn</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Abigail Afi Gbadago</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://www.linkedin.com/in/abigail-afi-gbadago/" target="_blank">LinkedIn</a>, <a href="https://abigailgbadago.vercel.app/about" target="_blank">Website</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">&nbsp;</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Becky Smith</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://www.linkedin.com/in/rebkwok/" target="_blank">LinkedIn</a>, <a href="https://bsky.app/profile/rebkwok.bsky.social" target="_blank">Bluesky</a>, <a href="https://mastodon.scot/@rebkwok" target="_blank">Mastodon</a>, <a href="https://github.com/rebkwok" target="_blank">GitHub</a>&nbsp;</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Christopher Bailey</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Dawn Wages<br /></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Leah Wasser</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="http://leahwasser.com/" target="_blank">Website</a>, <a href="https://bsky.app/profile/leahawasser.bsky.social" target="_blank">Bluesky</a>, <a href="https://fosstodon.org/@leahawasser" target="_blank">Mastodon</a>, <a href="https://www.linkedin.com/in/leahawasser/" target="_blank">LinkedIn</a>, <a href="http://github.com/lwasser" target="_blank">GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Maaya Ishida</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://hotchpotchj37.wordpress.com/" target="_blank">Website</a>, <a href="https://github.com/mahya8585" target="_blank">GitHub</a>, <a href="https://www.linkedin.com/in/maaya-ishida-5486b7109/" target="_blank">LinkedIn</a>, <a href="https://x.com/maaya8585" target="_blank">X</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Mason Egger</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://mason.dev/" target="_blank">Website</a>, <a href="https://twitter.com/masonegger" target="_blank">Twitter</a>, <a href="https://www.linkedin.com/in/mason-egger" target="_blank">LinkedIn</a>, <a href="https://github.com/MasonEgger" target="_blank">GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Miguel Grinberg</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://miguelgrinberg.com/" target="_blank">Website</a>, <a href="https://github.com/miguelgrinberg" target="_blank">GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">William Vincent</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://wsvincent.com/" target="_blank">Website</a>, <a href="https://www.linkedin.com/in/william-s-vincent/" target="_blank">LinkedIn</a>, <a href="https://github.com/wsvincent" target="_blank">GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">&nbsp;</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Thank you for your continued contributions. We have added you to our <a href="https://www.python.org/psf/fellows-roster/" target="_blank">Fellows Roster</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: justify;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The above members help support the Python ecosystem by being phenomenal leaders, sustaining the growth of the Python scientific community, maintaining virtual Python communities, maintaining Python libraries, creating educational material, organizing Python events and conferences, starting Python communities in local regions, and overall being great mentors in our community. Each of them continues to help make Python more accessible around the world. To learn more about the new Fellow members, check out their links above.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Let's continue recognizing Pythonistas all over the world for their impact on our community. The criteria for Fellow members is available on our <a href="https://www.python.org/psf/fellows" target="_blank">PSF Fellow Membership page</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. If you would like to nominate someone to be a PSF Fellow, please send a description of their Python accomplishments and their email address to psf-fellow at python.org. </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Quarter 4</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> nominations will be in review soon. We are accepting nominations for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Quarter 4 of 2025 through November 20th, 2025</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Are you a PSF Fellow and want to help the Work Group review nominations? Contact us at psf-fellow at python.org.</span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2025 03:35 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/10/announcing-python-software-foundation.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1547,8 +1390,8 @@ Nikolaou …</a></p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8556</a></li>
-    <li><a>Unique Feeds: 390</a></li>
+    <li><a>Total Entries: 8709</a></li>
+    <li><a>Unique Feeds: 394</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
