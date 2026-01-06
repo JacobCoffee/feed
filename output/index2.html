@@ -53,6 +53,366 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/sms-bcc?utm_campaign=rss" class="hover:underline"
+              >Blind Carbon Copy (BCC) for SMS</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Have you ever wanted the power of email <a href="https://en.wikipedia.org/wiki/Blind_carbon_copy">Blind Carbon Copy</a> (BCC), but
+for SMS? I've wanted this functionality myself for parties and organizing,
+specifically without needing to use a
+third-party service. This script automates the difficult parts
+of drafting and sending a text message to many recipients with <a href="https://sethmlarson.dev/sms-urls">SMS URLs</a> and QR codes.</p>
+
+<p>Draft your message, choose your recipients,
+and then scan-and-send all the QR codes until you're done.
+Save your command for later to follow-up in different groups.</p>
+
+<!-- more -->
+
+<h2>Source code</h2>
+
+<p>Copy-and-paste the following source code into a file
+named <code>sms-bcc</code>, make the file executable (<code>chmod a+x sms-bcc</code>)
+and you're ready to start using the script. Requires Python
+and the <a href="https://pypi.org/project/qrcode"><code>qrcode</code> package</a> (<code>pip install qrcode</code>) to run.
+This script is licensed MIT.</p>
+
+<blockquote>
+<details>
+Source code for <code>sms-bcc</code> script
+<div class="codehilite">
+<pre><span></span><code><span class="ch">#!/usr/bin/env python</span>
+<span class="c1"># /// script</span>
+<span class="c1"># requires-python = &quot;&gt;=3.12&quot;</span>
+<span class="c1"># dependencies = [</span>
+<span class="c1">#   &quot;qrcode&quot;</span>
+<span class="c1"># ]</span>
+<span class="c1"># ///</span>
+<span class="c1"># License: MIT</span>
+<span class="c1"># Copyright 2025, Seth Larson</span>
+
+<span class="kn">import</span> <span class="nn">argparse</span>
+<span class="kn">import</span> <span class="nn">pathlib</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">urllib.parse</span>
+
+<span class="kn">from</span> <span class="nn">qrcode.console_scripts</span> <span class="kn">import</span> <span class="n">main</span> <span class="k">as</span> <span class="n">qrcode_main</span>
+
+<span class="n">__version__</span> <span class="o">=</span> <span class="s2">&quot;2025.12.26&quot;</span>
+
+
+<span class="k">def</span> <span class="nf">sms_url</span><span class="p">(</span><span class="n">recipients</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">mobile_os</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Generate an SMS URL from a list of recipients and a message.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">recipients</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="ow">and</span> <span class="n">mobile_os</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Mobile OS required for multi-recipient messages&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">recipients</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;Recipients required&quot;</span><span class="p">)</span>
+    <span class="n">message_encoded</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">parse</span><span class="o">.</span><span class="n">quote</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">mobile_os</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">mobile_os</span> <span class="o">==</span> <span class="s2">&quot;android&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;sms:</span><span class="si">{</span><span class="s1">','</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">recipients</span><span class="p">)</span><span class="si">}</span><span class="s2">?body=</span><span class="si">{</span><span class="n">message_encoded</span><span class="si">}</span><span class="s2">&quot;</span>
+    <span class="k">else</span><span class="p">:</span>  <span class="c1"># mobile_os == &quot;ios&quot;</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;sms://open?addresses=</span><span class="si">{</span><span class="s1">','</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">recipients</span><span class="p">)</span><span class="si">}</span><span class="s2">&amp;body=</span><span class="si">{</span><span class="n">message_encoded</span><span class="si">}</span><span class="s2">&quot;</span>
+
+
+<span class="k">def</span> <span class="nf">parse_contacts</span><span class="p">(</span><span class="n">contacts_data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Parses a vCard file. Assumes that each contact</span>
+<span class="sd">    has a full name and telephone number.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">vcard_fn_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^FN:(.+)$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span><span class="p">)</span>
+    <span class="n">vcard_tel_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(?:item[0-9]\.)?TEL[^:]*:([ \.\(\)+0-9\-]+)$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span><span class="p">)</span>
+    <span class="n">names_to_tel</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">vcard</span> <span class="ow">in</span> <span class="n">contacts_data</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;BEGIN:VCARD&quot;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span>
+            <span class="p">(</span><span class="n">match_fn</span> <span class="o">:=</span> <span class="n">vcard_fn_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">vcard</span><span class="p">))</span>
+            <span class="ow">and</span> <span class="p">(</span><span class="n">match_tel</span> <span class="o">:=</span> <span class="n">vcard_tel_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">vcard</span><span class="p">))</span>
+        <span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="n">tel</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;[^0-9]&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">match_tel</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">names_to_tel</span><span class="p">[</span><span class="n">match_fn</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)]</span> <span class="o">=</span> <span class="n">tel</span>
+
+    <span class="k">return</span> <span class="n">names_to_tel</span>
+
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span>
+        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Blind Carbon Copy (BCC) for SMS&quot;</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--contacts&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Path to contacts file in the vCard format&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--recipients&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+        <span class="n">nargs</span><span class="o">=</span><span class="s2">&quot;+&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;List of recipients pulled from contacts&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--always-recipients&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+        <span class="n">nargs</span><span class="o">=</span><span class="s2">&quot;+&quot;</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;List of recipients to include in every recipient group&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--message&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Message to send&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s2">&quot;--mobile-os&quot;</span><span class="p">,</span>
+        <span class="nb">type</span><span class="o">=</span><span class="nb">str</span><span class="p">,</span>
+        <span class="n">choices</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;ios&quot;</span><span class="p">,</span> <span class="s2">&quot;android&quot;</span><span class="p">],</span>
+        <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">default</span><span class="o">=</span><span class="s2">&quot;ios&quot;</span><span class="p">,</span>
+        <span class="n">help</span><span class="o">=</span><span class="s2">&quot;Mobile OS, only required for multi-recipient messages&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+
+    <span class="n">contacts_data</span> <span class="o">=</span> <span class="n">pathlib</span><span class="o">.</span><span class="n">Path</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">contacts</span><span class="p">)</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+    <span class="n">names_to_tel</span> <span class="o">=</span> <span class="n">parse_contacts</span><span class="p">(</span><span class="n">contacts_data</span><span class="p">)</span>
+
+    <span class="n">message_data</span> <span class="o">=</span> <span class="n">pathlib</span><span class="o">.</span><span class="n">Path</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span>
+    <span class="n">list_of_recipients</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">[</span><span class="n">r</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">recipients</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">)]</span> <span class="k">for</span> <span class="n">recipients</span> <span class="ow">in</span> <span class="n">args</span><span class="o">.</span><span class="n">recipients</span>
+    <span class="p">]</span>
+    <span class="n">always_recipients</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">always_recipients</span> <span class="ow">or</span> <span class="p">())</span>
+    <span class="k">if</span> <span class="p">(</span><span class="n">mobile_os</span> <span class="o">:=</span> <span class="n">args</span><span class="o">.</span><span class="n">mobile_os</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;android&quot;</span><span class="p">,</span> <span class="s2">&quot;ios&quot;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;--mobile-os must be one of 'android' or 'ios'&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">clear_terminal</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="nb">chr</span><span class="p">(</span><span class="mi">27</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;[2J&quot;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">recipients</span> <span class="ow">in</span> <span class="n">list_of_recipients</span><span class="p">:</span>
+        <span class="n">recipients</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">always_recipients</span><span class="p">)</span>
+
+        <span class="c1"># Figure out which telephone numbers to include</span>
+        <span class="c1"># and exclude. Can be numbers or names.</span>
+        <span class="n">recipient_tels</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">recipient</span> <span class="ow">in</span> <span class="n">recipients</span><span class="p">:</span>
+            <span class="c1"># Last character is a number, probably a telephone number.</span>
+            <span class="k">if</span> <span class="n">recipient</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">isdigit</span><span class="p">():</span>
+                <span class="n">recipient_tels</span><span class="p">[</span><span class="n">recipient</span><span class="p">]</span> <span class="o">=</span> <span class="n">recipient</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tel</span> <span class="ow">in</span> <span class="n">names_to_tel</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">recipient</span> <span class="ow">in</span> <span class="n">name</span><span class="p">:</span>
+                    <span class="n">recipient_tels</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">tel</span>
+
+        <span class="c1"># Remove names filtered via '-Name'.</span>
+        <span class="k">for</span> <span class="n">recipient</span> <span class="ow">in</span> <span class="n">recipients</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">recipient</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">):</span>
+                <span class="n">recipient_tels</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">name</span><span class="p">:</span> <span class="n">tel</span>
+                    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">tel</span> <span class="ow">in</span> <span class="n">recipient_tels</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">recipient</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">name</span>
+                <span class="p">}</span>
+
+        <span class="n">clear_terminal</span><span class="p">()</span>
+        <span class="n">qrcode_data</span> <span class="o">=</span> <span class="n">sms_url</span><span class="p">(</span>
+            <span class="nb">sorted</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">recipient_tels</span><span class="o">.</span><span class="n">values</span><span class="p">())),</span> <span class="n">message_data</span><span class="p">,</span> <span class="n">mobile_os</span>
+        <span class="p">)</span>
+        <span class="n">qrcode_main</span><span class="p">([</span><span class="s2">&quot;--error-correction=L&quot;</span><span class="p">,</span> <span class="n">qrcode_data</span><span class="p">])</span>
+        <span class="nb">input</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n\n</span><span class="s2">Sending to: </span><span class="si">{</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">recipient_tels</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span><span class="si">}</span><span class="se">\n</span><span class="s2">Scan, send, and press enter to continue.&quot;</span>
+        <span class="p">)</span>
+
+    <span class="n">clear_terminal</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Done sending </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">list_of_recipients</span><span class="p">)</span><span class="si">}</span><span class="s2"> messages&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">0</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre>
+</div>
+
+
+</details>
+</blockquote>
+
+<h2>How to use</h2>
+
+<p>Export your contacts from your phone to a vCard file (<code>.vcf</code>). For
+iPhones this is done within the contacts app: long-press-and-hold “All Contacts”
+and select “Export”. This will create a <code>.vcf</code> file that you can transfer
+to your computer.</p>
+
+<p>Now run the <code>sms-bcc</code> script with <code>--contacts</code> for the <code>.vcf</code> file,
+draft a message in a file and pass with the <code>--message</code> option,
+and choose your recipients by their name with the <code>--recipients</code> option.</p>
+
+<pre><code>./sms-bcc \
+  --contacts contacts.vcf \
+  --recipients Alex,Bob Charlie \
+  --message ./message.txt
+</code></pre>
+
+<p>This will draft the message to two groups: "You, Alex, and Bob"
+and "You and Charlie". Note how spaces delimit groups of
+recipients and commas (<code>,</code>) delimit recipient names within a group.</p>
+
+<p>After running this script, a series of QR codes using the <code>sms://</code> URL scheme
+will be generated one after another. Scan the QR code to load the message and
+recipient into your phone, then you can optionally send the message or skip,
+then press <code>Enter</code> to generate the next QR code.</p>
+
+<p>The <code>--recipients</code> option uses a simple string-contains operation,
+so I recommend having full names in your contacts to avoid excessive
+duplicates. You can pass a name with a leading hyphen/minus (<code>-</code>)
+character to exclude a name from the list of recipients.
+The below invocation will match people named "Alex" without matching "Alexander":</p>
+
+<pre><code>./sms-bcc --recipients Alex,-Alexander
+</code></pre>
+
+<p>If you have a spouse or partner that you want to include
+in every recipient group, use the <code>--always-recipients</code> option:</p>
+
+<pre><code>./sms-bcc \
+  --contacts contacts.vcf \
+  --recipients Bob Charlie,Dave \
+  --always-recipients Alex \
+  --message ./message.txt
+</code></pre>
+
+<p>This will draft the message for "You, Alex, and Bob"
+and "You, Alex, Charlie, and Dave".</p>
+
+<p><center>
+🎄 <em>Merry Christmas and happy organizing!</em> 🎄
+</center></p>
+
+<h2>Changelog</h2>
+
+<ul>
+<li><code>2025.12.26</code>: Better handling for many different telephone number formats
+such as <code>(555) 555-555</code>. Added inline script metadata to header.</li>
+<li><code>2025.12.25</code>: Initial release.</li>
+</ul>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 25, 2025 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/sms-bcc?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/llamaindex-examples/" class="hover:underline"
+              >LlamaIndex in Python: A RAG Guide With Examples</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn how to set up LlamaIndex, choose an LLM, load your data, build and persist an index, and run queries to get grounded, reliable answers with examples.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 24, 2025 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/llamaindex-examples/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/llamaindex-examples/" class="hover:underline"
+              >Quiz: LlamaIndex in Python: A RAG Guide With Examples</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Take this Python LlamaIndex quiz to test your understanding of index persistence, reloading, and performance gains in RAG applications.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 24, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/llamaindex-examples/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/714" class="hover:underline"
               >Issue #714: Narwhals, Selenium, Testing Conundrum, and More (Dec. 23, 2025)</a
             >
@@ -1847,350 +2207,6 @@ the book output in arbitrary …</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://k-d-w.org/blog/2025/12/scikit-survival-0.26.0-released/" class="hover:underline"
-              >scikit-survival 0.26.0 released</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I am pleased to announce that <a href="https://scikit-survival.readthedocs.io/" target="_blank">scikit-survival</a> 0.26.0 has been released.</p>
-<p>This is a maintainance release that adds support for Python 3.14 and
-includes updates to make scikit-survival compatible with new versions
-of pandas and osqp.
-It adds support for the <a href="https://pandas.pydata.org/docs/user_guide/migration-3-strings.html#string-migration-guide" target="_blank">pandas string dtype</a>,
-and <a href="https://pandas.pydata.org/docs/user_guide/copy_on_write.html#copy-on-write" target="_blank">copy-on-write</a>, which is going to become the default with pandas 3.
-In addition, <a href="https://scikit-survival.readthedocs.io/en/v0.26.0/api/generated/sksurv.preprocessing.OneHotEncoder.html#sksurv.preprocessing.OneHotEncoder" target="_blank" title="sksurv.preprocessing.OneHotEncoder"><code>sksurv.preprocessing.OneHotEncoder</code></a>
-now supports converting columns with the object dtype.</p>
-<p>With this release, the minimum supported version are:</p>
-<table style="width: auto;">
-<thead>
-<tr><th>Package</th><th>Minimum Version</th></tr>
-</thead>
-<tbody>
-<tr><td>Python</td><td style="text-align: right;">3.11</td></tr>
-<tr><td>pandas</td><td style="text-align: right;">2.0.0</td></tr>
-<tr><td>osqp</td><td style="text-align: right;">1.0.2</td></tr>
-</tbody>
-</table>
-<h2 id="install">Install</h2>
-<p>scikit-survival is available for Linux, macOS, and Windows
-and can be installed either</p>
-<p>via pip:</p>
-<pre><code class="language-bash">pip install scikit-survival
-</code></pre>
-<p>or via conda</p>
-<pre><code class="language-bash"> conda install -c conda-forge scikit-survival
-</code></pre>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 08:26 PM UTC by
-            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
-              >Sebastian Pölsterl</a
-            >
-          </div>
-          <a
-            href="https://k-d-w.org/blog/2025/12/scikit-survival-0.26.0-released/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/python-skills/" class="hover:underline"
-              >How to Build the Python Skills That Get You Hired</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Build a focused learning plan that helps you identify essential Python skills, assess your strengths, and practice effectively to progress.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/python-skills/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/" class="hover:underline"
-              >What Actually Is Claude Code’s Plan Mode?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I&#8217;ve mentioned this a few times now, but when I started using Claude it was
-because <a href="https://x.com/steipete/">Peter</a> got me hooked on it.  From the very
-beginning I became a religious user of what is colloquially called YOLO mode,
-which basically gives the agent all the permissions so I can just watch it do
-its stuff.</p>
-<p>One consequence of YOLO mode though is that it didn&#8217;t work well together with
-the plan mode that Claude Code had.  In the beginning it didn&#8217;t inherit all the
-tool permissions, so in plan mode it actually asked for approval all the time.
-I found this annoying and as a result I never really used plan mode.</p>
-<p>Since I haven&#8217;t been using it, I ended up with other approaches.  I&#8217;ve talked
-about this before, but it&#8217;s a version of iterating together with the agent on
-creating a form of handoff in the form of a markdown file.  My approach has
-been getting the agent to ask me clarifying questions, taking these questions
-into an editor, answering them, and then doing a bunch of iterations until I&#8217;m
-decently happy with the end result.</p>
-<p>That has been my approach and I thought that this was pretty popular these days.
-For instance Mario&#8217;s <a href="https://shittycodingagent.ai/">pi</a> which I also use, does
-not have a plan mode and Amp is <a href="https://x.com/beyang/status/2001150592480313425">removing
-theirs</a>.</p>
-<p>However today I had two interesting conversations with people who really like
-plan mode.  As a non-user of plan mode, I wanted to understand how it works.  So
-I specifically looked at the Claude Code implementation to understand what it
-does, how it prompts the agent, and how it steers the client.  I wanted to use
-the tool loop just to get a better understanding of what I&#8217;m missing out on.</p>
-<p>This post is basically just what I found out about how it works, and maybe it&#8217;s
-useful to someone who also does not use plan mode and wants to know what it
-actually does.</p>
-<h2>Plan Mode in Claude Code</h2>
-<p>First we need to agree on what a plan is in Claude Code.  A plan in Claude Code
-is effectively a markdown file that is written into Claude&#8217;s plans folder by
-Claude in plan mode.  The generated plan doesn&#8217;t have any extra structure beyond
-text.  So at least up to that point, there really is not much of a difference
-between you asking it to write a markdown file or it creating its own internal
-markdown file.</p>
-<p>There are however some other major differences.  One is that there are recurring
-prompts to remind the agent that it&#8217;s in read-only mode.  The tools for writing
-files through the agent&#8217;s built-in tools are actually still there.  It has a
-little state machine going on to enter and exit plan mode that it can use.
-Interestingly, it seems like the edit file tool is actually used to manipulate
-the plan file.  So the agent is seemingly editing its own plan file!</p>
-<p>Because plan mode is also a tool (or at least the entering and exiting plan mode
-is), the agent can enter it itself.  This has the same effect as if you were to
-press shift+tab. <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
-<p>To encourage the agent to write the plan file, there is a custom prompt injected
-when you enter it.  There is no other enforcement from what I can tell.  Other
-agents might do this differently.</p>
-<p>When exiting plan mode it will read the plan file that it wrote to disk and then
-start working off that.  So the path towards spec in the prompt always goes via
-the file system.</p>
-<h2>Can You Plan Mode Without Plan Mode?</h2>
-<p>This obviously raises the question: if the differences are not that significant
-and it is just &#8220;the prompt&#8221; and some workflow around it, how much would you
-have to write into the prompt yourself to get very similar behavior to what the
-plan mode in Claude Code does?</p>
-<p>From a user experience point of view, you basically get two things.</p>
-<ol>
-<li>You get a markdown file, but you never get to see it because it&#8217;s hidden away
-in a folder.  I would argue that putting it into a specific file has some
-benefits because you can edit it.</li>
-<li>However there is something which you can&#8217;t really replicate and that is that
-plan mode at the end comes with a prompt to the user.  That user interface
-you cannot bring up trivially because there is no way to bring it up without
-going through the exit plan mode flow, which requires the file to be in a
-specific location.</li>
-</ol>
-<p>But if we ignore those parts and say that we just want similar behavior to what
-plan mode does from prompting alone, how much prompt do we have to write?  What
-specifically is the delta of entering plan mode versus just writing stuff into
-the context manually?</p>
-<h2>The Prompt Differences</h2>
-<p>When entering plan mode a bunch of stuff is thrown into the context in addition
-to the system prompt.  I don&#8217;t want to give the entire prompt here verbatim
-because it&#8217;s a little bit boring, but I want to break it down by roughly what it
-sends.</p>
-<p>The first thing it sends is general information that is now in plan mode which
-is read-only:</p>
-<blockquote>
-<p>Plan mode is active. The user indicated that they do not want you to execute
-yet &#8212; you MUST NOT make any edits (with the exception of the plan file
-mentioned below), run any non-readonly tools (including changing configs or
-making commits), or otherwise make any changes to the system.  This supercedes
-any other instructions you have received.</p>
-</blockquote>
-<p>Then there&#8217;s a little bit of stuff about how it should read and edit the plan
-mode file, but this is mostly just to ensure that it doesn&#8217;t create new plan
-files.  Then it sets up workflow suggestions of how plans should be structured:</p>
-<blockquote>
-<h3>Phase 1: Initial Understanding</h3>
-<p>Goal: Gain a comprehensive understanding of the user&#8217;s request by reading
-through code and asking them questions.</p>
-<ol>
-<li>
-<p>Focus on understanding the user&#8217;s request and the code associated with
-their request</p>
-</li>
-<li>
-<p>(Instructions here about parallelism for tasks)</p>
-</li>
-</ol>
-<h3>Phase 2: Design</h3>
-<p>Goal: Design an implementation approach.</p>
-<p>(Some tool instructions)</p>
-<p>In the agent prompt:</p>
-<ul>
-<li>Provide comprehensive background context from Phase 1 exploration including
-filenames and code path traces</li>
-<li>Describe requirements and constraints</li>
-<li>Request a detailed implementation plan</li>
-</ul>
-<h3>Phase 3: Review</h3>
-<p>Goal: Review the plan(s) from Phase 2 and ensure alignment with the user&#8217;s intentions.</p>
-<ol>
-<li>Read the critical files identified by agents to deepen your understanding</li>
-<li>Ensure that the plans align with the user&#8217;s original request</li>
-<li>Use TOOL_NAME to clarify any remaining questions with the user</li>
-</ol>
-<h3>Phase 4: Final Plan</h3>
-<p>Goal: Write your final plan to the plan file (the only file you can edit).</p>
-<ul>
-<li>Include only your recommended approach, not all alternatives</li>
-<li>Ensure that the plan file is concise enough to scan quickly, but detailed
-enough to execute effectively</li>
-<li>Include the paths of critical files to be modified</li>
-</ul>
-</blockquote>
-<p>I actually thought that there would be more to the prompt than this.  In
-particular, I was initially under the assumption that the tools actually turn
-into read-only.  But it is just prompt reinforcement that changes the behavior
-of the tools and also which tools are available.  It is in fact just a rather
-short predefined prompt that enters plan mode.  The tool to enter or exit plan
-mode is always available, and the same is true for edit and read files.  The
-exiting of the plan mode tool has a description that instructs the agent to
-understand when it&#8217;s done planning:</p>
-<blockquote>
-<p>Use this tool when you are in plan mode and have finished writing your plan to
-the plan file and are ready for user approval.</p>
-<h3>How This Tool Works</h3>
-<ul>
-<li>You should have already written your plan to the plan file specified in the
-plan mode system message</li>
-<li>This tool does NOT take the plan content as a parameter - it will read the
-plan from the file you wrote</li>
-<li>This tool simply signals that you&#8217;re done planning and ready for the user to
-review and approve</li>
-<li>The user will see the contents of your plan file when they review it</li>
-</ul>
-<h3>When to Use This Tool IMPORTANT: Only use this tool when the task requires</h3>
-<p>planning the implementation steps of a task that requires writing code. For
-research tasks where you&#8217;re gathering information, searching files, reading
-files or in general trying to understand the codebase - do NOT use this tool.</p>
-<h3>Handling Ambiguity in Plans Before using this tool, ensure your plan is</h3>
-<p>clear and unambiguous. If there are multiple valid approaches or unclear
-requirements</p>
-</blockquote>
-<p>So the system prompt is the same.  It is just a little bit of extra verbiage
-with some UX around it.  Given the length of the prompt, you can probably have
-a slash-command that just copy/pastes a version of this prompt into the context
-but you will not get the UX around it.</p>
-<p>The thing I took from this prompt is recommendations about how to use the
-subtasks and some examples.  I&#8217;m actually not sure if that has a meaningful
-impact on how it&#8217;s done because at least from the limited testing that I did, I
-don&#8217;t observe much of a difference for how plan mode invokes tools versus how
-regular execution invokes tools but it&#8217;s quite possible, that this comes down to
-my prompting styles.</p>
-<h2>Why Does It Matter?</h2>
-<p>So you might ask why I even write about plan mode.  The main motivation is that
-I am always quite interested in where the user experience in an agentic tool has
-to be enforced by the harness versus when that user experience comes naturally
-from the model.</p>
-<p>Plan mode as it exists in Claude has this sort of weirdness in my mind where it
-doesn&#8217;t come quite natural to me.  It might come natural to others!  But why can
-I not just ask the model to plan with me?  Why do I have to switch the user
-interface into a different mode?  Plan mode is just one of many examples where I
-think that because we are already so used to writing or talking to machines,
-bringing in more complexity in the user interface takes away some of the magic.
-I always want to look into whether just working with the model can accomplish
-something similar enough that I don&#8217;t actually need to have another user
-interaction or a user interface that replicates something that natural language
-could potentially do.</p>
-<p>This is particularly true because my workflow involves wanting to double check
-what these plans are, to edit them, and to manipulate them.  I feel like I&#8217;m
-more in control of that experience if I have a file on disk somewhere that I
-can see, that I can read, that I can review, that I can edit before actually
-acting on it.  The Claude integrated user experience is just a little bit too
-far away from me to feel natural.  I understand that other people might have
-different opinions on this, but for me that experience really was triggered by
-the thought that if people have such a great experience with plan mode, I want
-to understand what I&#8217;m missing out on.</p>
-<p>And now I know: I&#8217;m mostly a custom prompt to give it structure, and some system
-reminders and a handful of examples.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p>This incidentally is also why it&#8217;s possible for the plan mode
-confirmation screen to come up with an error message, that <a href="https://x.com/mitsuhiko/status/1997983563891818736">there is no
-plan</a> unprompted.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -2202,8 +2218,8 @@ plan</a> unprompted.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8580</a></li>
-    <li><a>Unique Feeds: 390</a></li>
+    <li><a>Total Entries: 8688</a></li>
+    <li><a>Unique Feeds: 389</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
