@@ -53,243 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/autocomplete-using-postgresql-instead-of-elasticsearch" class="hover:underline"
-              >Autocomplete using PostgreSQL instead of Elasticsearch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Here on my blog I have a site search. Before you search, there's autocomplete. The autocomplete is solved by using <a href="https://github.com/downshift-js/downshift">downshift</a> in React and on the backend, there's an API <code>/api/v1/typeahead?q=bla</code>. Up until today, that backend was powered by Elasticsearch. Now it's powered by PostgreSQL. Here's how I implemented it.</p>
-<h4 id="indexing"><a class="toclink" href="#indexing">Indexing</a></h4>
-<p>A cron job loops over all titles in all blog posts and finds portions of the words in the titles as singles, doubles, and triples. For each one, the popularity of the blog post is accumulated to the extracted keywords and combos.</p>
-<p>These are then inserted into a Django ORM model that looks like this:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">class</span> <span class="hljs-title class_">SearchTerm</span>(models.Model):
-    term = models.CharField(max_length=<span class="hljs-number">100</span>, db_index=<span class="hljs-literal">True</span>)
-    popularity = models.FloatField(default=<span class="hljs-number">0.0</span>)
-    add_date = models.DateTimeField(auto_now=<span class="hljs-literal">True</span>)
-    index_version = models.IntegerField(default=<span class="hljs-number">0</span>)
-
-    <span class="hljs-keyword">class</span> <span class="hljs-title class_">Meta</span>:
-        unique_together = (<span class="hljs-string">&quot;term&quot;</span>, <span class="hljs-string">&quot;index_version&quot;</span>)
-        indexes = [
-            GinIndex(
-                name=<span class="hljs-string">&quot;plog_searchterm_term_gin_idx&quot;</span>,
-                fields=[<span class="hljs-string">&quot;term&quot;</span>],
-                opclasses=[<span class="hljs-string">&quot;gin_trgm_ops&quot;</span>],
-            ),
-        ]
-</code></pre>
-
-<p>The <code>index_version</code> is used like this, in the indexing code:</p>
-<pre><code class="hljs">
-current_index_version = (
-    SearchTerm.objects.aggregate(Max(<span class="hljs-string">&quot;index_version&quot;</span>))[<span class="hljs-string">&quot;index_version__max&quot;</span>]
-    <span class="hljs-keyword">or</span> <span class="hljs-number">0</span>
-)
-index_version = current_index_version + <span class="hljs-number">1</span>
-
-...
-
-SearchTerm.objects.bulk_create(bulk)
-
-SearchTerm.objects.<span class="hljs-built_in">filter</span>(index_version__lt=index_version).delete()
-</code></pre>
-
-<p>That means that I don't have to delete previous entries until new ones have been created. So if something goes wrong during the indexing, it doesn't break the API.<br />
-Essentially, there are about 13k entries in that model. For a very brief moment there are 2x13k entries and then back to 13k entries when the whole task is done.</p>
-<h4 id="search"><a class="toclink" href="#search">Search</a></h4>
-<p>The search is done with the <code>LIKE</code> operator.</p>
-<pre><code class="hljs">
-peterbecom=# select term from plog_searchterm where term like &#x27;za%&#x27;;
-            term
------------------------------
- zahid
- zappa
- zappa biography
- zappa biography barry
- zappa biography barry miles
- zappa blog
-(6 rows)
-</code></pre>
-
-<p>In Python, it's as simple as:</p>
-<pre><code class="hljs">
-base_qs = SearchTerm.objects.<span class="hljs-built_in">all</span>()
-qs = base_qa.<span class="hljs-built_in">filter</span>(term__startswith=term.lower())
-</code></pre>
-
-<p>But suppose someone searches for <code>bio</code>  we want it to match things like <code>frank zappa biography</code> so what it actually does is:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">from</span> django.db.models <span class="hljs-keyword">import</span> Q 
-
-qs = base_qs.<span class="hljs-built_in">filter</span>(
-    Q(term__startswith=term.lower()) | Q(term__contains=<span class="hljs-string">f&quot; <span class="hljs-subst">{term.lower()}</span>&quot;</span>)
-)
-</code></pre>
-
-<h4 id="typo-tolerance"><a class="toclink" href="#typo-tolerance">Typo tolerance</a></h4>
-<p>This is done with the <code>%</code> operator.</p>
-<pre><code class="hljs">
-peterbecom=# select term from plog_searchterm where term % &#x27;frenk&#x27;;
-  term
---------
- free
- frank
- freeze
- french
-(4 rows)
-</code></pre>
-
-<p>In the Django ORM it looks like this:</p>
-<pre><code class="hljs">
-base_qs = SearchTerm.objects.<span class="hljs-built_in">all</span>()
-qs = base_qs.<span class="hljs-built_in">filter</span>(term__trigram_similar=term.lower())
-</code></pre>
-
-<p>And if that doesn't work, it gets even more desperate. It does this using the <code>similarity()</code> function. Looks like this in SQL:</p>
-<pre><code class="hljs">
-peterbecom=# select term from plog_searchterm where similarity(term, &#x27;zuppa&#x27;) &gt; 0.14;
-       term
--------------------
- frank zappa
- zappa
- zappa biography
- radio frank zappa
- frank zappa blog
- zappa blog
- zurich
-(7 rows)
-</code></pre>
-
-<h4 id="note-on-typo-tolerance"><a class="toclink" href="#note-on-typo-tolerance">Note on typo tolerance</a></h4>
-<p>Most of the time, the most basic query works and yields results. I.e. the <code>.filter(term__startswith=term.lower())</code> query.<br />
-It's only if it yields fewer results than the pagination size. That's why the fault tolerance query is only-if-needed. This means, it might send 2 SQL select queries from Python to PostgreSQL. In Elasticsearch, you usually don't do this. You send multiple queries and boost the differently.</p>
-<p>It <em>can</em> be done with PostgreSQL too using an <code>UNION</code> operator so that you send <em>one</em> but <em>more complex</em> query.</p>
-<h4 id="speed"><a class="toclink" href="#speed">Speed</a></h4>
-<p>It's hard to measure the true performance of these things because they're so fast that it's more about the network speed.</p>
-<p>On my fast MacBook Pro M4, I ran about 50 realistic queries and measured the time it took each with this new PostgreSQL-based solution versus the previous Elasticsearch solution. They both take about 4ms per query. I suspect, that 90% of that 4ms is serialization &amp; transmission, and not much time inside the database itself.</p>
-<p>The number of rows it searches is only, at the time of writing, 13,000+ so it's hard to get a feel for how much faster Elasticsearch would be than PostgreSQL. But with a GIN index in PostgreSQL, it would have to scale much much larger to feel too slow.</p>
-<h4 id="about-elasticsearch"><a class="toclink" href="#about-elasticsearch">About Elasticsearch</a></h4>
-<p>Elasticsearch is better than PostgreSQL at full-text search, including n-grams. Elasticsearch is highly optimized for these kinds of things and has powerful ways that you can make a query be a <em>product</em> of how well it matched with each entry's popularity. With PostgreSQL that gets difficult.</p>
-<p>But PostgreSQL is simple. It's solid and it doesn't take up nearly <a href="/plog/elasticsearch-memory-usage">as much memory as Elasticsearch</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 18, 2025 09:46 AM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/autocomplete-using-postgresql-instead-of-elasticsearch"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/531/talk-python-in-production" class="hover:underline"
-              >#531: Talk Python in Production</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Have you ever thought about getting your small product into production, but are worried about the cost of the big cloud providers? Or maybe you think your current cloud service is over-architected and costing you too much? Well, in this episode, we interview Michael Kennedy, author of "Talk Python in Production," a new book that guides you through deploying web apps at scale with right-sized engineering.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 18, 2025 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/531/talk-python-in-production"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://eli.thegreenplace.net/2025/plugins-case-study-mdbook-preprocessors/" class="hover:underline"
-              >Plugins case study: mdBook preprocessors</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><a class="reference external" href="https://rust-lang.github.io/mdBook/index.html">mdBook</a> is a tool for easily
-creating books out of Markdown files. It's very popular in the Rust ecosystem,
-where it's used (among other things) to publish <a class="reference external" href="https://doc.rust-lang.org/book/">the official Rust book</a>.</p>
-<p>mdBook has a simple yet effective plugin mechanism that can be used to modify
-the book output in arbitrary …</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 18, 2025 02:11 AM UTC by
-            <a href="http://eli.thegreenplace.net/feeds/python.atom.xml" class="link link-hover text-primary"
-              >Eli Bendersky</a
-            >
-          </div>
-          <a
-            href="https://eli.thegreenplace.net/2025/plugins-case-study-mdbook-preprocessors/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://k-d-w.org/blog/2025/12/scikit-survival-0.26.0-released/" class="hover:underline"
               >scikit-survival 0.26.0 released</a
             >
@@ -1162,46 +925,6 @@ This is useful to optimize some queries for which the data does not need to be e
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/tutorials/getting-started-flet/" class="hover:underline"
-              >Getting Started With Flet for GUI Development — Your First Steps With the Flet Library for Desktop and Web Python GUIs</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Getting started with a new GUI framework can feel daunting. This guide walks you through the essentials of Flet, from installation and a first app to widgets, layouts, and event handling.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/tutorials/getting-started-flet/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://zato.io/en/blog/dataverse-in-python.html" class="hover:underline"
               >Microsoft Dataverse with Python and Zato Services</a
             >
@@ -1941,6 +1664,188 @@ The group welcomed three new members this year: Ariane Djeupang, Natalia Bidart,
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/inner-functions-what-are-they-good-for/" class="hover:underline"
+              >Quiz: Python Inner Functions: What Are They Good For?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Test inner functions, closures, nonlocal, and decorators in Python. Build confidence and learn to keep state across calls. Try the quiz now.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 10, 2025 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/inner-functions-what-are-they-good-for/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/" class="hover:underline"
+              >Revisiting "Let's Build a Compiler"</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>There's an old compiler-building tutorial that has become part of the field's
+lore: the <a class="reference external" href="https://compilers.iecc.com/crenshaw/">Let's Build a Compiler</a>
+series by Jack Crenshaw (published between 1988 and 1995).</p>
+<p>I <a class="reference external" href="https://eli.thegreenplace.net/2003/07/29/great-compilers-tutorial">ran into it in 2003</a>
+and was very impressed, but it's now 2025 and this tutorial is still being mentioned quite
+often …</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 10, 2025 04:40 AM UTC by
+            <a href="http://eli.thegreenplace.net/feeds/python.atom.xml" class="link link-hover text-primary"
+              >Eli Bendersky</a
+            >
+          </div>
+          <a
+            href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.europython-society.org/general-assembly-2025/" class="hover:underline"
+              >General Assembly 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We&#x2019;re excited to invite you to this year&#x2019;s General Assembly meeting! We&#x2019;ll gather on <strong>Wednesday, 17 December 2025 20:00 CET</strong>, held online via Zoom. EPS membership is required to participate and additional joining instructions will be shared closer to the date.</p><p>You can</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 09, 2025 02:39 PM UTC by
+            <a href="http://www.europython-society.org/rss" class="link link-hover text-primary"
+              >EuroPython Society</a
+            >
+          </div>
+          <a
+            href="https://www.europython-society.org/general-assembly-2025/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2025/dec/09/online-community-working-group-github-repo-and-pro/" class="hover:underline"
+              >Online Community Working Group GitHub repo and project</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The Online Community Working Group has introduced a new GitHub repository designed to manage and track ideas, suggestions, and improvements across Django's various online community platforms.</p>
+<h4 id="s-introducing-the-online-community-working-group-repository">Introducing the Online Community Working Group Repository</h4>
+<p>Primarily inspired by the rollout of the <a href="https://github.com/django/new-features">New Features</a> repository, the Online Community Working Group has launched <a href="https://github.com/django/online-community-working-group">their own version</a> that works in conjunction with the <a href="https://github.com/orgs/django/projects/26">Online Community Working Group Ideas GitHub project</a> to provide a mechanism to gather feedback, suggestions, and ideas from across the online community and track their progression.</p>
+<p>The primary aim is to help better align Django's presence across multiple online platforms by providing:</p>
+<ol>
+<li><strong>Centralisation</strong>: A community-platform-agnostic place to collect feedback, suggestions, and ideas from members of any of Django's online communities.</li>
+<li><strong>Visibility</strong>: With a variety of platforms in use across the community, some of which require an account before their content can even be read, discussions can happen in what effectively amount to private silos. This centralised repository allows all suggestions and ideas to be viewed by everybody, regardless of their community platform of choice.</li>
+<li><strong>Consistency</strong>: A suggestion for one platform can often be a good idea for another. Issues and ideas raised centrally can be assessed against all platforms to better align Django's online community experience.</li>
+</ol>
+<h4 id="s-how-to-use-the-online-community-working-group-repo">How to use the Online Community Working Group Repo</h4>
+<p>If you have an idea or a suggestion for any of Django's online community platforms (such as the <a href="https://forum.djangoproject.com/">Forum</a>, <a href="https://chat.djangoproject.com/">Discord</a>, or elsewhere), the process starts by <a href="https://github.com/django/online-community-working-group/issues">creating an issue</a> in the new repository.</p>
+<p>You'll be asked to summarise the idea, and answer a couple of short questions regarding which platform it applies to and the rationale behind your idea.</p>
+<p>The suggestion will be visible on the public board, and people will be able to react to the idea with emoji responses as a quick measure of support, or provide longer-form answers as comments on the issue.</p>
+<p>The Online Community Working Group will review, triage, and respond to all suggestions, before deciding whether or how they can be implemented across the community.</p>
+<h4 id="s-existing-online-communities">Existing Online Communities</h4>
+<p>Note that we're not asking that you stop using any mechanisms in place within the particular community you're a part of currently—the Discord <a href="https://discord.com/channels/856567261900832808/1092722048561840170">#suggestions</a> channel is not going away, for example. However, we may ask that a suggestion or idea flagged within a particular platform be raised via this new GitHub repo instead, in order increase its visibility, apply it to multiple communities, or simply better track its resolution.</p>
+<h4 id="s-conclusion">Conclusion</h4>
+<p>The Online Community Working Group was relatively recently set up, with the aim of improving the experience for members of all Django's communities online. This new repository takes a first step in that direction. Check out the repository at <a href="https://github.com/django/online-community-working-group">django/online-community-working-group</a> on GitHub to learn more and start helping shape Django's truly excellent community presence online.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 09, 2025 02:00 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2025/dec/09/online-community-working-group-github-repo-and-pro/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -1952,8 +1857,8 @@ The group welcomed three new members this year: Ariane Djeupang, Natalia Bidart,
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7861</a></li>
-    <li><a>Unique Feeds: 393</a></li>
+    <li><a>Total Entries: 7739</a></li>
+    <li><a>Unique Feeds: 390</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
