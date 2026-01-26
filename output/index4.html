@@ -53,6 +53,208 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/cutting-spritesheets-like-cookies-with-python-and-pillow?utm_campaign=rss" class="hover:underline"
+              >Cutting spritesheets like cookies with Python & Pillow 🍪</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><em>Happy new year!</em> 🎉 For an upcoming project on the blog requiring <a href="https://www.spriters-resource.com/">many video-game sprites</a>
+I've created a small tool (“sugarcookie”) using the always-lovely Python image-processing
+library <a href="https://python-pillow.github.io/">Pillow</a>.
+This tool takes a spritesheet and a list of mask colors,
+a minimum size, and then cuts the spritesheet into
+its component sprites.</p>
+
+<p>I'm sure this could be implemented more efficiently, or with a friendly
+command line interface, but for more own purposes (~10 spritesheets) this
+worked just fine. Feel free to use, share, and improve.
+The script is <a href="https://gist.github.com/sethmlarson/92dabc8420b0d2e2e6e8c688269fe5fd">available as a GitHub gist</a>, but also included below.</p>
+
+<!-- more -->
+
+<p><details>
+Source code for <code>sugarcookie</code></p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="ch">#!/usr/bin/env python</span>
+<span class="c1"># /// script</span>
+<span class="c1"># requires-python = &quot;&gt;=3.13&quot;</span>
+<span class="c1"># dependencies = [</span>
+<span class="c1">#   &quot;Pillow&quot;,</span>
+<span class="c1">#   &quot;tqdm&quot;</span>
+<span class="c1"># ]</span>
+<span class="c1"># ///</span>
+<span class="c1"># License: MIT</span>
+<span class="c1"># Copyright 2025, Seth Larson</span>
+
+<span class="kn">import</span> <span class="nn">os.path</span>
+<span class="kn">import</span> <span class="nn">math</span>
+<span class="kn">from</span> <span class="nn">PIL</span> <span class="kn">import</span> <span class="n">Image</span>
+<span class="kn">import</span> <span class="nn">tqdm</span>
+
+<span class="c1"># Parameters</span>
+<span class="n">spritesheet</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>  <span class="c1"># Path to spritesheet.</span>
+<span class="n">masks</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># Set of 3-tuples for RGB.</span>
+<span class="n">min_dim</span> <span class="o">=</span> <span class="mi">10</span>  <span class="c1"># Min and max dimensions in pixels.</span>
+<span class="n">max_dim</span> <span class="o">=</span> <span class="mi">260</span>
+
+<span class="n">img</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">spritesheet</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">img</span><span class="o">.</span><span class="n">mode</span> <span class="o">==</span> <span class="s2">&quot;RGB&quot;</span><span class="p">:</span>  <span class="c1"># Ensure an alpha channel.</span>
+    <span class="n">alpha</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="s2">&quot;L&quot;</span><span class="p">,</span> <span class="n">img</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="mi">255</span><span class="p">)</span>
+    <span class="n">img</span><span class="o">.</span><span class="n">putalpha</span><span class="p">(</span><span class="n">alpha</span><span class="p">)</span>
+
+<span class="n">output_prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">splitext</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">spritesheet</span><span class="p">))[</span><span class="mi">0</span><span class="p">]</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">img</span><span class="o">.</span><span class="n">getdata</span><span class="p">()</span>
+<span class="n">visited</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+<span class="n">shapes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+<span class="n">reroll_shapes</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+
+<span class="k">def</span> <span class="nf">getpixel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="n">data</span><span class="p">[</span><span class="n">x</span> <span class="o">+</span> <span class="p">(</span><span class="n">img</span><span class="o">.</span><span class="n">width</span> <span class="o">*</span> <span class="n">y</span><span class="p">)]</span>
+
+
+<span class="k">def</span> <span class="nf">make_2n</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">**</span> <span class="nb">int</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">ceil</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log2</span><span class="p">(</span><span class="n">value</span><span class="p">)))</span>
+
+
+<span class="k">with</span> <span class="n">tqdm</span><span class="o">.</span><span class="n">tqdm</span><span class="p">(</span>
+    <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Cutting cookies&quot;</span><span class="p">,</span>
+    <span class="n">total</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">img</span><span class="o">.</span><span class="n">width</span> <span class="o">*</span> <span class="n">img</span><span class="o">.</span><span class="n">height</span><span class="p">),</span>
+    <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;pixels&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="k">as</span> <span class="n">t</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">img</span><span class="o">.</span><span class="n">width</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">y</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">img</span><span class="o">.</span><span class="n">height</span><span class="p">):</span>
+            <span class="n">xy</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">xy</span> <span class="ow">in</span> <span class="n">visited</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">inshape</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+            <span class="n">candidates</span> <span class="o">=</span> <span class="p">{(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)}</span>
+
+            <span class="k">def</span> <span class="nf">add_candidates</span><span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">):</span>
+                <span class="k">global</span> <span class="n">candidates</span>
+                <span class="n">candidates</span> <span class="o">|=</span> <span class="p">{(</span><span class="n">cx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span> <span class="p">(</span><span class="n">cx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">cy</span><span class="p">),</span> <span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">-</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)}</span>
+
+            <span class="k">while</span> <span class="n">candidates</span><span class="p">:</span>
+                <span class="n">cx</span><span class="p">,</span> <span class="n">cy</span> <span class="o">=</span> <span class="n">candidates</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">)</span> <span class="ow">in</span> <span class="n">visited</span>
+                    <span class="ow">or</span> <span class="n">cx</span> <span class="o">&lt;</span> <span class="mi">0</span>
+                    <span class="ow">or</span> <span class="n">cx</span> <span class="o">&gt;=</span> <span class="n">img</span><span class="o">.</span><span class="n">width</span>
+                    <span class="ow">or</span> <span class="n">cy</span> <span class="o">&lt;</span> <span class="mi">0</span>
+                    <span class="ow">or</span> <span class="n">cy</span> <span class="o">&gt;=</span> <span class="n">img</span><span class="o">.</span><span class="n">height</span>
+                    <span class="ow">or</span> <span class="nb">abs</span><span class="p">(</span><span class="n">cx</span> <span class="o">-</span> <span class="n">x</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_dim</span>
+                    <span class="ow">or</span> <span class="nb">abs</span><span class="p">(</span><span class="n">cy</span> <span class="o">-</span> <span class="n">y</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">max_dim</span>
+                <span class="p">):</span>
+                    <span class="k">continue</span>
+                <span class="n">visited</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">))</span>
+                <span class="n">rgba</span> <span class="o">=</span> <span class="n">r</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">=</span> <span class="n">getpixel</span><span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">a</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">g</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span> <span class="ow">in</span> <span class="n">masks</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">inshape</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">))</span>
+                    <span class="n">add_candidates</span><span class="p">(</span><span class="n">cx</span><span class="p">,</span> <span class="n">cy</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">inshape</span><span class="p">:</span>
+                <span class="n">shapes</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="nb">tuple</span><span class="p">(</span><span class="n">inshape</span><span class="p">))</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">img</span><span class="o">.</span><span class="n">height</span><span class="p">)</span>
+
+<span class="n">max_width</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">max_height</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">shapes_and_offsets</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="k">for</span> <span class="n">shape</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">shapes</span><span class="p">):</span>
+    <span class="n">min_x</span> <span class="o">=</span> <span class="n">img</span><span class="o">.</span><span class="n">width</span> <span class="o">+</span> <span class="mi">2</span>
+    <span class="n">min_y</span> <span class="o">=</span> <span class="n">img</span><span class="o">.</span><span class="n">height</span> <span class="o">+</span> <span class="mi">2</span>
+    <span class="n">max_x</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+    <span class="n">max_y</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+    <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">shape</span><span class="p">:</span>
+        <span class="n">max_x</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">max_x</span><span class="p">)</span>
+        <span class="n">max_y</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">max_y</span><span class="p">)</span>
+        <span class="n">min_x</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">min_x</span><span class="p">)</span>
+        <span class="n">min_y</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="n">y</span><span class="p">,</span> <span class="n">min_y</span><span class="p">)</span>
+    <span class="n">width</span> <span class="o">=</span> <span class="n">max_x</span> <span class="o">-</span> <span class="n">min_x</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">height</span> <span class="o">=</span> <span class="n">max_y</span> <span class="o">-</span> <span class="n">min_y</span> <span class="o">+</span> <span class="mi">1</span>
+
+    <span class="c1"># Too small! We have to reroll this</span>
+    <span class="c1"># potentially into another shape.</span>
+    <span class="k">if</span> <span class="n">width</span> <span class="o">&lt;</span> <span class="n">min_dim</span> <span class="ow">or</span> <span class="n">height</span> <span class="o">&lt;</span> <span class="n">min_dim</span><span class="p">:</span>
+        <span class="n">reroll_shapes</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">shape</span><span class="p">)</span>
+        <span class="k">continue</span>
+
+    <span class="n">max_width</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">max_width</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span>
+    <span class="n">max_height</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">max_height</span><span class="p">,</span> <span class="n">height</span><span class="p">)</span>
+    <span class="n">shapes_and_offsets</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">shape</span><span class="p">,</span> <span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">),</span> <span class="p">(</span><span class="n">min_x</span><span class="p">,</span> <span class="n">min_y</span><span class="p">)))</span>
+
+<span class="c1"># Make them powers of two!</span>
+<span class="n">max_width</span> <span class="o">=</span> <span class="n">make_2n</span><span class="p">(</span><span class="n">max_width</span><span class="p">)</span>
+<span class="n">max_height</span> <span class="o">=</span> <span class="n">make_2n</span><span class="p">(</span><span class="n">max_height</span><span class="p">)</span>
+
+<span class="n">sprite_number</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">with</span> <span class="n">tqdm</span><span class="o">.</span><span class="n">tqdm</span><span class="p">(</span>
+    <span class="n">desc</span><span class="o">=</span><span class="s2">&quot;Baking cookies&quot;</span><span class="p">,</span>
+    <span class="n">total</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">shapes_and_offsets</span><span class="p">),</span>
+    <span class="n">unit</span><span class="o">=</span><span class="s2">&quot;sprites&quot;</span>
+<span class="p">)</span> <span class="k">as</span> <span class="n">t</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">shape</span><span class="p">,</span> <span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">height</span><span class="p">),</span> <span class="p">(</span><span class="n">offset_x</span><span class="p">,</span> <span class="n">offset_y</span><span class="p">)</span> <span class="ow">in</span> <span class="n">shapes_and_offsets</span><span class="p">:</span>
+        <span class="n">new_img</span> <span class="o">=</span> <span class="n">Image</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;RGBA&quot;</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="p">(</span><span class="n">max_width</span><span class="p">,</span> <span class="n">max_height</span><span class="p">))</span>
+        <span class="n">margin_x</span> <span class="o">=</span> <span class="p">(</span><span class="n">max_width</span> <span class="o">-</span> <span class="n">width</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">margin_y</span> <span class="o">=</span> <span class="p">(</span><span class="n">max_height</span> <span class="o">-</span> <span class="n">height</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="k">for</span> <span class="n">rx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_width</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">ry</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_height</span><span class="p">):</span>
+                <span class="n">x</span> <span class="o">=</span> <span class="n">rx</span> <span class="o">+</span> <span class="n">offset_x</span>
+                <span class="n">y</span> <span class="o">=</span> <span class="n">ry</span> <span class="o">+</span> <span class="n">offset_y</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">shape</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">new_img</span><span class="o">.</span><span class="n">putpixel</span><span class="p">((</span><span class="n">rx</span> <span class="o">+</span> <span class="n">margin_x</span><span class="p">,</span> <span class="n">ry</span> <span class="o">+</span> <span class="n">margin_y</span><span class="p">),</span> <span class="n">getpixel</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">))</span>
+        <span class="n">new_img</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;images/</span><span class="si">{</span><span class="n">output_prefix</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">sprite_number</span><span class="si">}</span><span class="s2">.png&quot;</span><span class="p">)</span>
+        <span class="n">sprite_number</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</code></pre>
+</div>
+
+<p></details></p>
+
+<p>When using the tool you may find yourself needing to add additional masking
+across elements, such as the original spritesheet curator's name, in order
+for the cutting process to work perfectly. This script also doesn't work
+great for sprites which aren't contiguous across their bounding box.
+There's an exercise left to the reader to implement <code>reroll_shapes</code>, a feature
+I didn't end up needing for my own project. Let me know if you implement this
+and send me a patch!</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 01, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/cutting-spritesheets-like-cookies-with-python-and-pillow?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.djangoproject.com/weblog/2025/dec/31/dsf-member-of-the-month-clifford-gama/" class="hover:underline"
               >DSF member of the month - Clifford Gama</a
             >
@@ -2278,70 +2480,6 @@ one of the discussions I had with it</a>.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2025/dec/18/introducing-the-2026-dsf-board/" class="hover:underline"
-              >Introducing the 2026 DSF Board</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h4 id="s-thank-you-to-our-outgoing-directors">Thank You to Our Outgoing Directors</h4>
-<p>We extend our gratitude to Thibaud Colas and Sarah Abderemane, who are completing their terms on the board. Their contributions shaped the foundation in meaningful ways, and the following highlights only scratch the surface of their work.</p>
-<p>Thibaud served as President in 2025 and Secretary in 2024. He was instrumental in governance improvements, the Django CNA initiative, election administration, and creating our <a href="https://www.djangoproject.com/foundation/reports/2024/">first annual report</a>. He also led our birthday campaign and helped with the creation of several new working groups this year. His thoughtful leadership helped the board navigate complex decisions.</p>
-<p>Sarah served as Vice President in 2025 and contributed significantly to our outreach efforts, working group coordination, and membership management. She also served as a point of contact for the Django CNA initiative alongside Thibaud.</p>
-<p>Both Thibaud and Sarah did too many things to list here. They were amazing ambassadors for the DSF, representing the board at many conferences and events. They will be deeply missed, and we are happy to have their continued membership and guidance in our many working groups.</p>
-<p>On behalf of the board, thank you both for your commitment to Django and the DSF. The community is better for your service.</p>
-<h4 id="s-thank-you-to-our-2025-officers">Thank You to Our 2025 Officers</h4>
-<p>Thank you to Tom Carrick and Jacob Kaplan-Moss for their service as officers in 2025.</p>
-<p>Tom served as Secretary, keeping our meetings organized and our records in order. Jacob served as Treasurer, providing careful stewardship of the foundation's finances. Their dedication helped guide the DSF through another successful year.</p>
-<h4 id="s-welcome-to-our-newly-elected-directors">Welcome to Our Newly Elected Directors</h4>
-<p>We welcome Priya Pahwa and Ryan Cheley to the board, and congratulate Jacob Kaplan-Moss on his re-election.</p>
-<h4 id="s-2026-dsf-board-officers"><a href="https://www.djangoproject.com/foundation/#board-history">2026 DSF Board Officers</a></h4>
-<p>The board unanimously elected our officers for 2026:</p>
-<ul>
-<li><strong>President:</strong> Jeff Triplett</li>
-<li><strong>Vice President:</strong> Abigail Gbadago</li>
-<li><strong>Treasurer:</strong> Ryan Cheley</li>
-<li><strong>Secretary:</strong> Priya Pahwa</li>
-<li>Jacob Kaplan-Moss</li>
-<li>Paolo Melchiorre</li>
-<li>Tom Carrick   </li>
-</ul>
-<p>I'm honored to serve as President for 2026. The DSF has important work ahead, and I'm looking forward to building on the foundation that previous boards have established.</p>
-<p>Our monthly board meeting minutes may be found at <a href="https://github.com/django/dsf-minutes">dsf-minutes</a>, and <a href="https://github.com/django/dsf-minutes/blob/main/2025/2025-12-11.md">December's minutes are available</a>.</p>
-<p>If you have a great idea for the upcoming year or feel something needs our attention, please reach out to us via our <a href="https://www.djangoproject.com/contact/foundation/">Contact the DSF</a> page. We're always open to hearing from you.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 18, 2025 06:50 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2025/dec/18/introducing-the-2026-dsf-board/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -2353,8 +2491,8 @@ one of the discussions I had with it</a>.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7748</a></li>
-    <li><a>Unique Feeds: 387</a></li>
+    <li><a>Total Entries: 7768</a></li>
+    <li><a>Unique Feeds: 388</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
