@@ -53,6 +53,393 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/1/14/minijinja-go-port/" class="hover:underline"
+              >Porting MiniJinja to Go With an Agent</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Turns out you can just port things now.  I already attempted this experiment in
+the summer, but it turned out to be a bit too much for what I had time for.
+However, things have advanced since.  Yesterday I ported
+<a href="https://github.com/mitsuhiko/minijinja">MiniJinja</a> (a Rust Jinja2 template
+engine) to native Go, and I used an agent to do pretty much all of the work.  In
+fact, I barely did anything beyond giving some high-level guidance on how I
+thought it could be accomplished.</p>
+<p>In total I probably spent around 45 minutes actively with it.  It worked for
+around 3 hours while I was watching, then another 7 hours alone.  This post is a
+recollection of what happened and what I learned from it.</p>
+<p>All prompting was done by voice using <a href="https://buildwithpi.ai/">pi</a>, starting
+with Opus 4.5 and switching to GPT-5.2 Codex for the long tail of test fixing.</p>
+<ul>
+<li><a href="https://github.com/mitsuhiko/minijinja/pull/854">PR #854</a></li>
+<li><a href="https://shittycodingagent.ai/session/?29f75b708237ceead8b1c8cb55ea2305">Pi session transcript</a></li>
+<li><a href="https://www.youtube.com/watch?v=rqzY8Adxxns">Narrated video of the porting session</a></li>
+</ul>
+<h2>What is MiniJinja</h2>
+<p>MiniJinja is a re-implementation of Jinja2 for Rust. I originally wrote it
+because I wanted to do a infrastructure automation project in Rust and Jinja was
+popular for that.  The original project didn&#8217;t go anywhere, but MiniJinja itself
+continued being useful for both me and other users.</p>
+<p>The way MiniJinja is tested is with snapshot tests: inputs and expected outputs,
+using <a href="https://insta.rs/">insta</a> to verify they match.  These snapshot tests were
+what I wanted to use to validate the Go port.</p>
+<h2>Test-Driven Porting</h2>
+<p>My initial prompt asked the agent to figure out how to validate the port.
+Through that conversation, the agent and I aligned on a path: reuse the existing
+Rust snapshot tests and port incrementally (lexer -&gt; parser -&gt; runtime).</p>
+<p>This meant the agent built Go-side tooling to:</p>
+<ul>
+<li>Parse Rust&#8217;s test input files (which embed settings as JSON headers).</li>
+<li>Parse the reference insta <code>.snap</code> snapshots and compare output.</li>
+<li>Maintain a skip-list to temporarily opt out of failing tests.</li>
+</ul>
+<p>This resulted in a pretty good harness with a tight feedback loop.  The agent had
+a clear goal (make everything pass) and a progression (lexer -&gt; parser -&gt;
+runtime).  The tight feedback loop mattered particularly at the end where it was
+about getting details right.  Every missing behavior had one or more failing
+snapshots.</p>
+<h2>Branching in Pi</h2>
+<p>I used Pi&#8217;s branching feature to structure the session into phases.  I rewound
+back to earlier parts of the session and used the branch switch feature to
+inform the agent automatically what it had already done.  This is similar to
+compaction, but Pi shows me what it puts into the context.  When Pi switches
+branches it does two things:</p>
+<ol>
+<li>It stays in the same session so I can navigate around, but it makes a new
+branch off an earlier message.</li>
+<li>When switching, it adds a summary of what it did as a priming message into
+where it branched off.  I found this quite helpful to avoid the agent doing
+vision quests from scratch to figure out how far it had already gotten.</li>
+</ol>
+<p>Without switching branches, I would probably just make new sessions and have
+more plan files lying around or use something like Amp&#8217;s handoff feature which
+also allows the agent to consult earlier conversations if it needs more
+information.</p>
+<h2>First Signs of Divergence</h2>
+<p>What was interesting is that the agent went from literal porting to behavioral
+porting quite quickly.  I didn&#8217;t steer it away from this as long as the behavior
+aligned.  I let it do this for a few reasons.  First, the code base isn&#8217;t that
+large, so I felt I could make adjustments at the end if needed.  Letting the
+agent continue with what was already working felt like the right strategy.
+Second, it was aligning to idiomatic Go much better this way.</p>
+<p>For instance, on the runtime it implemented a tree-walking interpreter (not a
+bytecode interpreter like Rust) and it decided to use Go&#8217;s reflection for the
+value type.  I didn&#8217;t tell it to do either of these things, but they made more
+sense than replicating my Rust interpreter design, which was partly motivated by
+not having a garbage collector or runtime type information.</p>
+<h2>Where I Had to Push Back</h2>
+<p>On the other hand, the agent made some changes while making tests pass that I
+disagreed with.  It completely gave up on all the &#8220;must fail&#8221; tests because the
+error messages were impossible to replicate perfectly given the runtime
+differences.  So I had to steer it towards fuzzy matching instead.</p>
+<p>It also wanted to regress behavior I wanted to retain (e.g., exact HTML escaping
+semantics, or that <code>range</code> must return an iterator).  I think if I hadn&#8217;t steered
+it there, it might not have made it to completion without going down problematic
+paths, or I would have lost confidence in the result.</p>
+<h2>Grinding to Full Coverage</h2>
+<p>Once the major semantic mismatches were fixed, the remaining work was filling
+in all missing pieces: missing filters and test functions, loop extras, macros,
+call blocks, etc.  Since I wanted to go to bed, I switched to Codex 5.2 and
+queued up a few &#8220;continue making all tests pass if they are not passing yet&#8221;
+prompts, then let it work through compaction.  I felt confident enough that the
+agent could make the rest of the tests pass without guidance once it had the
+basics covered.</p>
+<p>This phase ran without supervision overnight.</p>
+<h2>Final Cleanup</h2>
+<p>After functional convergence, I asked the agent to document internal functions
+and reorganize (like moving filters to a separate file).  I also asked it to
+document all functions and filters like in the Rust code base.  This was also
+when I set up CI, release processes, and talked through what was created to come
+up with some finalizing touches before merging.</p>
+<h2>Parting Thoughts</h2>
+<p>There are a few things I find interesting here.</p>
+<p>First: these types of ports are possible now.  I know porting was already
+possible for many months, but it required much more attention.  This changes some
+dynamics.  I feel less like technology choices are constrained by ecosystem lock-in.
+Sure, porting NumPy to Go would be a more involved undertaking, and getting it
+competitive even more so (years of optimizations in there).  But still, it feels
+like many more libraries can be used now.</p>
+<p>Second: for me, the value is shifting from the code to the tests and
+documentation.  A good test suite might actually be worth more than the code.
+That said, this isn&#8217;t an argument for keeping tests secret &#8212; generating tests
+with good coverage is also getting easier.  However, for keeping code bases in
+different languages in sync, you need to agree on shared tests, otherwise
+divergence is inevitable.</p>
+<p>Lastly, there&#8217;s the social dynamic.  Once, having people port your code to other
+languages was something to take pride in.  It was a sign of accomplishment &#8212; a
+project was &#8220;cool enough&#8221; that someone put time into making it available
+elsewhere.  With agents, it doesn&#8217;t invoke the same feelings.  Will McGugan
+<a href="https://bsky.app/profile/willmcgugan.bsky.social/post/3mccn3l4qdk26">also called out this
+change</a>.</p>
+<h2>Session Stats</h2>
+<p>Lastly, some boring stats for the main session:</p>
+<ul>
+<li>Agent run duration: <del>10 hours (</del>3 hours supervised)</li>
+<li>Active human time: ~45 minutes</li>
+<li>Total messages: 2,698</li>
+<li>My prompts: 34</li>
+<li>Tool calls: 1,386</li>
+<li>Raw API token cost: $60</li>
+<li>Total tokens: 2.2 million</li>
+<li>Models: <code>claude-opus-4-5</code> and <code>gpt-5.2-codex</code> for the unattended overnight run</li>
+</ul>
+<p>This did not count the adding of doc strings and smaller fixups.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 14, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/1/14/minijinja-go-port/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://gael-varoquaux.info/programming/stepping-up-as-probabls-cso-to-supercharge-scikit-learn-and-its-ecosystem.html" class="hover:underline"
+              >Stepping up as probabl’s CSO to supercharge scikit-learn and its ecosystem</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <div class="admonition note">
+<p class="first admonition-title">Note</p>
+<div class="figure align-right">
+<img alt="" src="../programming/attachments/probabl_team_2025.png" style="width: 400px;" />
+<p class="caption">Probabl’s get together, in falls 2025</p>
+</div>
+<p class="last">I’m thrilled to announce that I’m stepping up as <a class="reference external" href="https://probabl.ai/?utm_source=employee_blog&amp;utm_medium=social_employee&amp;utm_campaign=202601_probabl_awareness_post">Probabl</a>’s CSO (Chief Science Officer) to supercharge
+scikit-learn and its ecosystem, pursuing my dreams of tools that help go
+from data to impact.</p>
+</div>
+<div class="section" id="scikit-learn-a-central-tool">
+<h2>Scikit-learn, a central tool</h2>
+<p>Scikit-learn is central …</p></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 11:00 PM UTC by
+            <a href="http://gael-varoquaux.info/feeds/programming.atom.xml" class="link link-hover text-primary"
+              >Ga&#235;l Varoquaux</a
+            >
+          </div>
+          <a
+            href="https://gael-varoquaux.info/programming/stepping-up-as-probabls-cso-to-supercharge-scikit-learn-and-its-ecosystem.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycoders.com/issues/717" class="hover:underline"
+              >Issue #717: Unit Testing Performance, Cursor, Recursive match, and More (Jan. 13, 2026)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p> <span>#717 – JANUARY 13, 2026</span><br /> <span><a href="https://pycoders.com/issues/717/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15840/feed" target="_blank">Unit Testing Your Code&rsquo;s Performance</a></h3> <p style="margin-bottom: 0;"> Testing your code is important, but not just for correctness also for performance. One approach is to check performance degradation as data sizes go up, also known as Big-O scaling.<br /> <span><a href="https://pycoders.com/link/15840/feed" target="_blank">ITAMA TURNER-TRAURING</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15832/feed" target="_blank">Tips for Using the AI Coding Editor Cursor</a></h3> <p style="margin-bottom: 0;"> Learn Cursor fast: AI-powered coding with agents, project-aware chat, inline edits, and VS Code workflow &ndash; ship smarter, sooner.<br /> <span><a href="https://pycoders.com/link/15832/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">course</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15811/feed" target="_blank">AI Code Review With Comments You&rsquo;ll Actually Implement</a></h3> <a href="https://pycoders.com/link/15811/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/3a1b5af9b49ad7e71c6d87a0658b1b04" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Unblocked is the AI code review that surfaces real issues and meaningful feedback instead of flooding your PRs with stylistic nitpicks and low-value comments. “Unblocked made me reconsider my AI fatigue. ” - Senior developer, Clio. <a href="https://pycoders.com/link/15811/feed" target="_blank">Try now for Free →</a><br /> <span><a href="https://pycoders.com/link/15811/feed" target="_blank">UNBLOCKED</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15822/feed" target="_blank">Recursive Structural Pattern Matching</a></h3> <p style="margin-bottom: 0;"> Learn how to use structural pattern matching (the match statement) to work recursively through tree-like structures.<br /> <span><a href="https://pycoders.com/link/15822/feed" target="_blank">RODRIGO GIRÃO SERRÃO</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15836/feed" target="_blank">PEP 822: Dedented Multiline String (d-String) (Draft)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15836/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15818/feed" target="_blank">PEP 820: PySlot: Unified Slot System for the C API (Draft)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15818/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15828/feed" target="_blank">PEP 819: JSON Package Metadata (Draft)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15828/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15823/feed" target="_blank">Django Bugfix Release: 5.2.10, 6.0.1</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15823/feed" target="_blank">DJANGO SOFTWARE FOUNDATION</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15837/feed" target="_blank">Coding Python With Confidence: Live Course Participants</a></h3> <p style="margin-bottom: 0;"> Are you looking for that solid foundation to begin your Python journey? Would the accountability of scheduled group classes help you get through the basics and start building something? This week, two members of the Python for Beginners live course discuss their experiences.<br /> <span><a href="https://pycoders.com/link/15837/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15835/feed" target="_blank">Regex: Searching for the Tiger</a></h3> <p style="margin-bottom: 0;"> Python’s <code>re</code> module is a robust toolset for writing regular expressions, but its behavior often deviates from other engines. Understanding the nuances of the interpreter and the Unicode standard is essential for writing predictable patterns.<br /> <span><a href="https://pycoders.com/link/15835/feed" target="_blank">SUBSTACK.COM</a> • Shared by <a href="https://pycoders.com/link/15820/feed" target="_blank">Vivis Dev</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15842/feed" target="_blank">The Ultimate Guide to Docker Build Cache</a></h3> <a href="https://pycoders.com/link/15842/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/7b7a4e39439acfb820c6adbac2a88528" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Docker builds feel slow because cache invalidation is working against you. Depot explains how BuildKit&rsquo;s layer caching works, when to use bind mounts vs cache mounts, and how to optimize your Dockerfile so Gradle dependencies <a href="https://pycoders.com/link/15842/feed" target="_blank">don&rsquo;t rebuild on every code change →</a><br /> <span><a href="https://pycoders.com/link/15842/feed" target="_blank">DEPOT</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15834/feed" target="_blank">How We Made Python&rsquo;s Packaging Library 3x Faster</a></h3> <p style="margin-bottom: 0;"> Underneath pip, and many other packaging tools, is the <code>packaging</code> library which deals with version numbers and other associated markers. Recent work on the library has shown significant speed-up and this post talks about how it was done.<br /> <span><a href="https://pycoders.com/link/15834/feed" target="_blank">HENRY SCHREINER</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15838/feed" target="_blank">Django Quiz 2025</a></h3> <p style="margin-bottom: 0;"> Last month, Adam held another quiz at the December edition of Django London. This is an annual tradition at the meetup, now you can take it yourself or just skim the answers.<br /> <span><a href="https://pycoders.com/link/15838/feed" target="_blank">ADAM JOHNSON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15843/feed" target="_blank">Live Python Courses: Already 50% Sold for 2026</a></h3> <p style="margin-bottom: 0;"> Real Python&rsquo;s instructor-led cohorts are filling up. <a href="https://pycoders.com/link/15844/feed" target="_blank">Python for Beginners</a> builds your foundation right the first time. <a href="https://pycoders.com/link/15845/feed" target="_blank">Intermediate Python Deep Dive</a> covers decorators, OOP, and production patterns with real-time expert feedback. Grab a seat before they&rsquo;re gone at <a href="https://pycoders.com/link/15843/feed" target="_blank">realpython.com/live →</a><br /> <span><a href="https://pycoders.com/link/15843/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15825/feed" target="_blank">A Different Way to Think About Python API Clients</a></h3> <p style="margin-bottom: 0;"> Paul is frustrated with how clients interact with APIs in Python, so he&rsquo;s proposing a new approach inspired by the many decorator-based API server libraries.<br /> <span><a href="https://pycoders.com/link/15825/feed" target="_blank">PAULWRITES.SOFTWARE</a> • Shared by Paul Hallett</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15815/feed" target="_blank">Learn From 2025&rsquo;s Most Popular Python Tutorials and Courses</a></h3> <p style="margin-bottom: 0;"> Pick from the best Python tutorials and courses of 2025. Revisit core skills, 3.14 updates, AI coding tools, and project walkthroughs. Kickstart your 2026!<br /> <span><a href="https://pycoders.com/link/15815/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15819/feed" target="_blank">Debugging With F-Strings</a></h3> <p style="margin-bottom: 0;"> If you&rsquo;re debugging Python code with print calls, consider using f-strings with self-documenting expressions to make your debugging a little bit easier.<br /> <span><a href="https://pycoders.com/link/15819/feed" target="_blank">TREY HUNNER</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15830/feed" target="_blank">How to Switch to <code>ty</code> From Mypy</a></h3> <p style="margin-bottom: 0;"> The folks at Astral have created a type checker known as &ldquo;ty&rdquo;. This post describes how to move from Mypy to ty, including in your GitHub Actions.<br /> <span><a href="https://pycoders.com/link/15830/feed" target="_blank">MIKE DRISCOLL</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15816/feed" target="_blank">Recent Optimizations in Python&rsquo;s Reference Counting</a></h3> <p style="margin-bottom: 0;"> This article highlights some of the many optimizations to reference counting that have occurred in recent CPython releases.<br /> <span><a href="https://pycoders.com/link/15816/feed" target="_blank">ARTEM GOLUBIN</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15841/feed" target="_blank">yastrider: Defensive String Cleansing and Tidying</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15841/feed" target="_blank">GITHUB.COM/BARRANK</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15817/feed" target="_blank">gazetteer: Offline Reverse Geocoding Library</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15817/feed" target="_blank">GITHUB.COM/SOORAJTS2001</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15821/feed" target="_blank">bengal: High-Performance Static Site Generator</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15821/feed" target="_blank">GITHUB.COM/LBLIII</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15826/feed" target="_blank">PyPDFForm: Fire: The Python Library for PDF Forms</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15826/feed" target="_blank">GITHUB.COM/CHINAPANDAMAN</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15833/feed" target="_blank">pyauto-desktop: A Desktop Automation Toool</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/15833/feed" target="_blank">GITHUB.COM/OMAR-F-RASHED</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15824/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> January 14, 2026<br /> <span><a href="https://pycoders.com/link/15824/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15829/feed" target="_blank">PyData Bristol Meetup</a></h3> <p style="margin-bottom: 0;"> January 15, 2026<br /> <span><a href="https://pycoders.com/link/15829/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15839/feed" target="_blank">PyLadies Dublin</a></h3> <p style="margin-bottom: 0;"> January 15, 2026<br /> <span><a href="https://pycoders.com/link/15839/feed" target="_blank">PYLADIES.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15813/feed" target="_blank">Chattanooga Python User Group</a></h3> <p style="margin-bottom: 0;"> January 16 to January 17, 2026<br /> <span><a href="https://pycoders.com/link/15813/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15814/feed" target="_blank">DjangoCologne</a></h3> <p style="margin-bottom: 0;"> January 20, 2026<br /> <span><a href="https://pycoders.com/link/15814/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/15827/feed" target="_blank">Inland Empire Python Users Group Monthly Meeting</a></h3> <p style="margin-bottom: 0;"> January 21, 2026<br /> <span><a href="https://pycoders.com/link/15827/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #717.<br /><a href="https://pycoders.com/issues/717/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/717/open/feed" width="1" /> 
+        <hr />
+        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 07:30 PM UTC by
+            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
+              >PyCoder’s Weekly</a
+            >
+          </div>
+          <a
+            href="https://pycoders.com/issues/717"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/intro-object-oriented-programming/" class="hover:underline"
+              >Intro to Object-Oriented Programming (OOP) in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn Python OOP fundamentals fast: master classes, objects, and constructors with hands-on lessons in this beginner-friendly video course.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/intro-object-oriented-programming/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/12/anthropic-invests-in-python.html" class="hover:underline"
+              >Anthropic invests $1.5 million in the Python Software Foundation and open source security</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><span face="Arial, sans-serif" style="font-size: 11pt;">We are thrilled to announce that Anthropic has entered into a two-year partnership with the Python Software Foundation (PSF) to contribute a landmark total of $1.5 million to support the foundation’s work, with an emphasis on Python ecosystem security. This investment will enable the PSF to make crucial security advances to CPython and the Python Package Index (PyPI) benefiting all users, and it will also sustain the foundation’s core work supporting the Python language, ecosystem, and global community.</span></p><div><b><span face="Arial, sans-serif"><span style="font-size: 14.6667px;">Innovating open source security</span></span><span face="Arial, sans-serif" style="font-size: 11pt;">
+</span></b></div><div><span face="Arial, sans-serif" style="font-size: 11pt;"><br /></span></div><div><span face="Arial, sans-serif"><span style="font-size: 14.6667px;">Anthropic’s funds will enable the PSF to make progress on our security roadmap, including work designed to protect millions of PyPI users from attempted supply-chain attacks. Planned projects include creating new tools for automated proactive review of all packages uploaded to PyPI, improving on the current process of reactive-only review. We intend to create a new dataset of known malware that will allow us to design these novel tools, relying on capability analysis. One of the advantages of this project is that we expect the outputs we develop to be transferable to all open source package repositories. As a result, this work has the potential to ultimately improve security across multiple open source ecosystems, starting with the Python ecosystem.</span></span></div><div><span face="Arial, sans-serif"><span style="font-size: 14.6667px;"><br /></span></span></div><div><span face="Arial, sans-serif"><div><span style="font-size: 14.6667px;">This work will build on <a href="https://sethmlarson.dev/">PSF Security Developer in Residence Seth Larson</a>’s security roadmap with contributions from <a href="https://www.miketheman.net/">PyPI Safety and Security Engineer Mike Fiedler</a>, both roles generously funded by <a href="https://alpha-omega.dev/">Alpha-Omega</a>.&nbsp;</span></div><div><span style="font-size: 14.6667px;"><br /></span></div><div><span style="font-size: 14.6667px;"><b>Sustaining the Python language, ecosystem, and community
+</b></span></div><div><span style="font-size: 14.6667px;"><br /></span></div><div><span style="font-size: 14.6667px;">Anthropic’s support will also go towards the PSF’s core work, including the Developer in Residence program driving contributions to CPython, community support through grants and other programs, running core infrastructure such as PyPI, and more. 
+
+We couldn’t be more grateful for Anthropic’s remarkable support, and we hope you will join us in thanking them for their investment in the PSF and the Python community. 
+</span></div><div><span style="font-size: 14.6667px;"><br /></span></div><div><span id="docs-internal-guid-7f0633af-7fff-2e4f-8cda-36a65683448c"><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">About Anthropic</span></p><div><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;"><br /></span></div><div><span style="font-size: 14.6667px; vertical-align: baseline;">Anthropic is the AI research and development company behind Claude — the frontier model used by millions of people worldwide.</span><span style="font-size: 11pt; vertical-align: baseline;">
+</span></div><div><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;"><br /></span></div><div><span style="font-size: 14.6667px; vertical-align: baseline;"><b>About the PSF</b></span><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">
+</span></div><div><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;"><br /></span></div><div><span style="font-size: 14.6667px; vertical-align: baseline;">The Python Software Foundation is a non-profit whose mission is to promote, protect, and advance the Python programming language, and to support and facilitate the growth of a diverse and international community of Python programmers. The PSF supports the Python community using corporate sponsorships, grants, and donations. Are you interested in sponsoring or donating to the PSF so we can continue supporting Python and its community? Check out our <a href="https://www.python.org/sponsors/application/">sponsorship program</a>, <a href="http://donate.python.org">donate directly here</a>, or <a href="mailto:sponsors@python.org">contact our team</a>! </span><span style="font-size: 11pt; vertical-align: baseline;">
+</span></div><div><span style="font-size: 11pt; font-weight: 700; vertical-align: baseline;"><br /></span></div></span></div><div style="font-size: 14.6667px;"><br /></div></span></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 01:00 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/12/anthropic-invests-in-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/534/diskcache-your-secret-python-perf-weapon" class="hover:underline"
+              >#534: diskcache: Your secret Python perf weapon</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Your cloud SSD is sitting there, bored, and it would like a job. Today we’re putting it to work with DiskCache, a simple, practical cache built on SQLite that can speed things up without spinning up Redis or extra services. Once you start to see what it can do, a universe of possibilities opens up. We're joined by Vincent Warmerdam to dive into DiskCache.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 05:32 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/534/diskcache-your-secret-python-perf-weapon"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/python-deque/" class="hover:underline"
               >Python's deque: Implement Efficient Queues and Stacks</a
             >
@@ -402,6 +789,47 @@ the default. You can switch between providers with <tt class="literal"><span cla
           </div>
           <a
             href="https://blog.europython.eu/humans-of-ep-jakub/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/" class="hover:underline"
+              >How to Switch to ty from Mypy</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python has supported type hinting for quite a few versions now, starting way back in 3.5. However, Python itself does not enforce type checking. Instead, you need to use an external tool or IDE. The first and arguably most popular is mypy. Microsoft also has a Python type checker that you can use in VS Code [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/">How to Switch to ty from Mypy</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 09, 2026 03:16 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1698,404 +2126,6 @@ different titles:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/convert-python-bytes-to-strings/" class="hover:underline"
-              >Quiz: How to Convert Bytes to Strings in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Decode bytes into readable strings in Python. Test your skills working with data from files, APIs, and databases.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/convert-python-bytes-to-strings/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/464/malicious-package-no-build-for-you" class="hover:underline"
-              >#464 Malicious Package? No Build For You!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include ty: An extremely fast Python type checker and LSP, Python Supply Chain Security Made Easy, typing_extensions, and MI6 chief: We'll be as fluent in Python as we are in Russian.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/464/malicious-package-no-build-for-you"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/533/web-frameworks-in-prod-by-their-creators" class="hover:underline"
-              >#533: Web Frameworks in Prod by Their Creators</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Today on Talk Python, the creators behind FastAPI, Flask, Django, Quart, and Litestar get practical about running apps based on their framework in production. Deployment patterns, async gotchas, servers, scaling, and the stuff you only learn at 2 a.m. when the pager goes off. For Django, we have Carlton Gibson and Jeff Triplet. For Flask, we have David Lord and Phil Jones, and on team Litestar we have Janek Nouvertné and Cody Fincher, and finally Sebastián Ramírez from FastAPI is here. Let’s jump in.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/533/web-frameworks-in-prod-by-their-creators"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.glyph.im/2026/01/how-to-argue-with-me-about-ai.html" class="hover:underline"
-              >How To Argue With Me About AI, If You Must</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you insist we have a conversation, please come prepared.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 05:22 AM UTC by
-            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
-              >Glyph Lefkowitz</a
-            >
-          </div>
-          <a
-            href="https://blog.glyph.im/2026/01/how-to-argue-with-me-about-ai.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/python-scheduler.html" class="hover:underline"
-              >Python scheduler for API integrations</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/python-scheduler.html">Python scheduler for API integrations</a>
-</h1>
-<div class="article-meta">
-  2026-01-05, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>Are you looking for a practical way to automate API tasks with reliable scheduling?
-This <a href="https://zato.io/en/tutorials/python-scheduler.html">tutorial</a>
-demonstrates how to implement
-task scheduling using Zato within Docker.</p>
-<p>The <a href="https://zato.io/en/tutorials/python-scheduler.html">guide</a> focuses on real-world implementation rather than theory, showing you how to build scheduling solutions that work consistently in production environments.</p>
-<p>What you'll learn in the tutorial:</p>
-<ul>
-<li>How to set up a Python scheduler with Docker</li>
-<li>Creating services that run on precise intervals (as short as 5 seconds)</li>
-<li>Techniques for API automation, SQL database integration, and Bash script execution</li>
-<li>DevOps practices for maintaining scheduled jobs across environments</li>
-</ul>
-<p><br /></p>
-<p><a href="https://zato.io/en/tutorials/python-scheduler.html"><img alt="Python Scheduler" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/python-scheduler/python-scheduler.jpg" style="width: 60%;" />
-</a></p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/4.1/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python
-<br />
-➤ <a href="https://zato.io/articles/network-packet-broker.html">What is a Network Packet Broker? How to automate networks in Python?</a></p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 03:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/python-scheduler.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/debugging-with-f-strings/" class="hover:underline"
-              >Debugging with f-strings</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you're debugging Python code with <code>print</code> calls, consider using f-strings with <strong>self-documenting expressions</strong> to make your debugging a little bit easier.</p>
-
-
-<div>
-  
-    <a href="https://www.pythonmorsels.com/debugging-with-f-strings/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2102554412-9a2d9dab04006a2f5ebc0c50fddf87f07be875f6fae265c55d7434d1c3048eef-d_1920x1080%3F%26region%3Dus&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#a-broken-python-program" target="_blank">A broken Python program</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#troubleshooting-with-print" target="_blank">Troubleshooting with <code>print</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#using-self-documenting-expressions" target="_blank">Using self-documenting expressions</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#self-documenting-expressions-work-with-any-expression" target="_blank">Self-documenting expressions work with <em>any</em> expression</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#using-format-specifiers-with-self-documenting-expressions" target="_blank">Using format specifiers with self-documenting expressions</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#making-more-readable-self-documenting-expressions" target="_blank">Making more readable self-documenting expressions</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/debugging-with-f-strings/#summary" target="_blank">Summary</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>A broken Python program</h2>
-    
-      
-        <p>Here we have a program that makes a random math prompt and then validates whether the answer give by the user is correct:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="kn">import</span> <span class="nn">random</span>
-
-<span class="n">x</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randrange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
-<span class="n">y</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">randrange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
-
-<span class="n">answer</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s2">"What's </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2"> multiplied by </span><span class="si">{</span><span class="n">y</span><span class="si">}</span><span class="s2">? "</span><span class="p">)</span>
-<span class="n">expected</span> <span class="o">=</span> <span class="n">x</span> <span class="o">*</span> <span class="n">y</span>
-
-<span class="k">if</span> <span class="n">answer</span> <span class="o">==</span> <span class="n">expected</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">"Correct!"</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">"That's incorrect"</span><span class="p">)</span>
-</code></pre></div>
-
-
-      
-        <p>This program doesn't work right now:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code>$ python3 check_mult.py
-What<span class="s1">'s 9 multiplied by 8? 72</span>
-<span class="s1">That'</span>s incorrect
-</code></pre></div>
-
-
-      
-        <p>Our program <em>always</em> tells us that our answer is incorrect.</p>
-
-      
-    
-  
-    <h2>Troubleshooting with <code>print</code></h2>
-    
-      <p>Now, we could try to …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/debugging-with-f-strings/" target="_blank">Read the full article: https://www.pythonmorsels.com/debugging-with-f-strings/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 04, 2026 05:51 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/debugging-with-f-strings/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://rushter.com/blog/python-refcount/" class="hover:underline"
-              >Recent optimizations in Python's Reference Counting</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It's been a while since I've written about CPython internals and its optimizations.
-My last article on garbage collection was written 8 years ago.</p>
-<p>A lot of small optimizations were added since then. In this article, I will highlight a new optimization for
-reference counting that uses a static lifetime analysis.</p>
-<h3>Background on reference counting in CPython</h3>
-<p>Reference counting is the primary memory management technique used in CPython.</p>
-<p>In short, every Python object (the actual value behind a variable) has a reference counter field that tracks how many references point to it.
-When an object's reference count drops to zero, the memory occupied by that object is immediately deallocated.</p>
-<p>For hot loops, this can lead to significant overhead due to the frequent incrementing and decrementing of reference counts.[......]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 04, 2026 05:14 PM UTC by
-            <a href="https://rushter.com/blog/feed/pyplanet.xml" class="link link-hover text-primary"
-              >Artem Golubin</a
-            >
-          </div>
-          <a
-            href="https://rushter.com/blog/python-refcount/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -2107,7 +2137,7 @@ When an object's reference count drops to zero, the memory occupied by that obje
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7629</a></li>
+    <li><a>Total Entries: 7706</a></li>
     <li><a>Unique Feeds: 387</a></li>
     
 
