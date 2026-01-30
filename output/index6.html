@@ -53,355 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/" class="hover:underline"
-              >What Actually Is Claude Code’s Plan Mode?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I&#8217;ve mentioned this a few times now, but when I started using Claude it was
-because <a href="https://x.com/steipete/">Peter</a> got me hooked on it.  From the very
-beginning I became a religious user of what is colloquially called YOLO mode,
-which basically gives the agent all the permissions so I can just watch it do
-its stuff.</p>
-<p>One consequence of YOLO mode though is that it didn&#8217;t work well together with
-the plan mode that Claude Code had.  In the beginning it didn&#8217;t inherit all the
-tool permissions, so in plan mode it actually asked for approval all the time.
-I found this annoying and as a result I never really used plan mode.</p>
-<p>Since I haven&#8217;t been using it, I ended up with other approaches.  I&#8217;ve talked
-about this before, but it&#8217;s a version of iterating together with the agent on
-creating a form of handoff in the form of a markdown file.  My approach has
-been getting the agent to ask me clarifying questions, taking these questions
-into an editor, answering them, and then doing a bunch of iterations until I&#8217;m
-decently happy with the end result.</p>
-<p>That has been my approach and I thought that this was pretty popular these days.
-For instance Mario&#8217;s <a href="https://shittycodingagent.ai/">pi</a> which I also use, does
-not have a plan mode and Amp is <a href="https://x.com/beyang/status/2001150592480313425">removing
-theirs</a>.</p>
-<p>However today I had two interesting conversations with people who really like
-plan mode.  As a non-user of plan mode, I wanted to understand how it works.  So
-I specifically looked at the Claude Code implementation to understand what it
-does, how it prompts the agent, and how it steers the client.  I wanted to use
-the tool loop just to get a better understanding of what I&#8217;m missing out on.</p>
-<p>This post is basically just what I found out about how it works, and maybe it&#8217;s
-useful to someone who also does not use plan mode and wants to know what it
-actually does.</p>
-<h2>Plan Mode in Claude Code</h2>
-<p>First we need to agree on what a plan is in Claude Code.  A plan in Claude Code
-is effectively a markdown file that is written into Claude&#8217;s plans folder by
-Claude in plan mode.  The generated plan doesn&#8217;t have any extra structure beyond
-text.  So at least up to that point, there really is not much of a difference
-between you asking it to write a markdown file or it creating its own internal
-markdown file.</p>
-<p>There are however some other major differences.  One is that there are recurring
-prompts to remind the agent that it&#8217;s in read-only mode.  The tools for writing
-files through the agent&#8217;s built-in tools are actually still there.  It has a
-little state machine going on to enter and exit plan mode that it can use.
-Interestingly, it seems like the edit file tool is actually used to manipulate
-the plan file.  So the agent is seemingly editing its own plan file!</p>
-<p>Because plan mode is also a tool (or at least the entering and exiting plan mode
-is), the agent can enter it itself.  This has the same effect as if you were to
-press shift+tab. <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
-<p>To encourage the agent to write the plan file, there is a custom prompt injected
-when you enter it.  There is no other enforcement from what I can tell.  Other
-agents might do this differently.</p>
-<p>When exiting plan mode it will read the plan file that it wrote to disk and then
-start working off that.  So the path towards spec in the prompt always goes via
-the file system.</p>
-<h2>Can You Plan Mode Without Plan Mode?</h2>
-<p>This obviously raises the question: if the differences are not that significant
-and it is just &#8220;the prompt&#8221; and some workflow around it, how much would you
-have to write into the prompt yourself to get very similar behavior to what the
-plan mode in Claude Code does?</p>
-<p>From a user experience point of view, you basically get two things.</p>
-<ol>
-<li>You get a markdown file, but you never get to see it because it&#8217;s hidden away
-in a folder.  I would argue that putting it into a specific file has some
-benefits because you can edit it.</li>
-<li>However there is something which you can&#8217;t really replicate and that is that
-plan mode at the end comes with a prompt to the user.  That user interface
-you cannot bring up trivially because there is no way to bring it up without
-going through the exit plan mode flow, which requires the file to be in a
-specific location.</li>
-</ol>
-<p>But if we ignore those parts and say that we just want similar behavior to what
-plan mode does from prompting alone, how much prompt do we have to write?  What
-specifically is the delta of entering plan mode versus just writing stuff into
-the context manually?</p>
-<h2>The Prompt Differences</h2>
-<p>When entering plan mode a bunch of stuff is thrown into the context in addition
-to the system prompt.  I don&#8217;t want to give the entire prompt here verbatim
-because it&#8217;s a little bit boring, but I want to break it down by roughly what it
-sends.</p>
-<p>The first thing it sends is general information that is now in plan mode which
-is read-only:</p>
-<blockquote>
-<p>Plan mode is active. The user indicated that they do not want you to execute
-yet &#8212; you MUST NOT make any edits (with the exception of the plan file
-mentioned below), run any non-readonly tools (including changing configs or
-making commits), or otherwise make any changes to the system.  This supercedes
-any other instructions you have received.</p>
-</blockquote>
-<p>Then there&#8217;s a little bit of stuff about how it should read and edit the plan
-mode file, but this is mostly just to ensure that it doesn&#8217;t create new plan
-files.  Then it sets up workflow suggestions of how plans should be structured:</p>
-<blockquote>
-<h3>Phase 1: Initial Understanding</h3>
-<p>Goal: Gain a comprehensive understanding of the user&#8217;s request by reading
-through code and asking them questions.</p>
-<ol>
-<li>
-<p>Focus on understanding the user&#8217;s request and the code associated with
-their request</p>
-</li>
-<li>
-<p>(Instructions here about parallelism for tasks)</p>
-</li>
-</ol>
-<h3>Phase 2: Design</h3>
-<p>Goal: Design an implementation approach.</p>
-<p>(Some tool instructions)</p>
-<p>In the agent prompt:</p>
-<ul>
-<li>Provide comprehensive background context from Phase 1 exploration including
-filenames and code path traces</li>
-<li>Describe requirements and constraints</li>
-<li>Request a detailed implementation plan</li>
-</ul>
-<h3>Phase 3: Review</h3>
-<p>Goal: Review the plan(s) from Phase 2 and ensure alignment with the user&#8217;s intentions.</p>
-<ol>
-<li>Read the critical files identified by agents to deepen your understanding</li>
-<li>Ensure that the plans align with the user&#8217;s original request</li>
-<li>Use TOOL_NAME to clarify any remaining questions with the user</li>
-</ol>
-<h3>Phase 4: Final Plan</h3>
-<p>Goal: Write your final plan to the plan file (the only file you can edit).</p>
-<ul>
-<li>Include only your recommended approach, not all alternatives</li>
-<li>Ensure that the plan file is concise enough to scan quickly, but detailed
-enough to execute effectively</li>
-<li>Include the paths of critical files to be modified</li>
-</ul>
-</blockquote>
-<p>I actually thought that there would be more to the prompt than this.  In
-particular, I was initially under the assumption that the tools actually turn
-into read-only.  But it is just prompt reinforcement that changes the behavior
-of the tools and also which tools are available.  It is in fact just a rather
-short predefined prompt that enters plan mode.  The tool to enter or exit plan
-mode is always available, and the same is true for edit and read files.  The
-exiting of the plan mode tool has a description that instructs the agent to
-understand when it&#8217;s done planning:</p>
-<blockquote>
-<p>Use this tool when you are in plan mode and have finished writing your plan to
-the plan file and are ready for user approval.</p>
-<h3>How This Tool Works</h3>
-<ul>
-<li>You should have already written your plan to the plan file specified in the
-plan mode system message</li>
-<li>This tool does NOT take the plan content as a parameter - it will read the
-plan from the file you wrote</li>
-<li>This tool simply signals that you&#8217;re done planning and ready for the user to
-review and approve</li>
-<li>The user will see the contents of your plan file when they review it</li>
-</ul>
-<h3>When to Use This Tool IMPORTANT: Only use this tool when the task requires</h3>
-<p>planning the implementation steps of a task that requires writing code. For
-research tasks where you&#8217;re gathering information, searching files, reading
-files or in general trying to understand the codebase - do NOT use this tool.</p>
-<h3>Handling Ambiguity in Plans Before using this tool, ensure your plan is</h3>
-<p>clear and unambiguous. If there are multiple valid approaches or unclear
-requirements</p>
-</blockquote>
-<p>So the system prompt is the same.  It is just a little bit of extra verbiage
-with some UX around it.  Given the length of the prompt, you can probably have
-a slash-command that just copy/pastes a version of this prompt into the context
-but you will not get the UX around it.</p>
-<p>The thing I took from this prompt is recommendations about how to use the
-subtasks and some examples.  I&#8217;m actually not sure if that has a meaningful
-impact on how it&#8217;s done because at least from the limited testing that I did, I
-don&#8217;t observe much of a difference for how plan mode invokes tools versus how
-regular execution invokes tools but it&#8217;s quite possible, that this comes down to
-my prompting styles.</p>
-<h2>Why Does It Matter?</h2>
-<p>So you might ask why I even write about plan mode.  The main motivation is that
-I am always quite interested in where the user experience in an agentic tool has
-to be enforced by the harness versus when that user experience comes naturally
-from the model.</p>
-<p>Plan mode as it exists in Claude has this sort of weirdness in my mind where it
-doesn&#8217;t come quite natural to me.  It might come natural to others!  But why can
-I not just ask the model to plan with me?  Why do I have to switch the user
-interface into a different mode?  Plan mode is just one of many examples where I
-think that because we are already so used to writing or talking to machines,
-bringing in more complexity in the user interface takes away some of the magic.
-I always want to look into whether just working with the model can accomplish
-something similar enough that I don&#8217;t actually need to have another user
-interaction or a user interface that replicates something that natural language
-could potentially do.</p>
-<p>This is particularly true because my workflow involves wanting to double check
-what these plans are, to edit them, and to manipulate them.  I feel like I&#8217;m
-more in control of that experience if I have a file on disk somewhere that I
-can see, that I can read, that I can review, that I can edit before actually
-acting on it.  The Claude integrated user experience is just a little bit too
-far away from me to feel natural.  I understand that other people might have
-different opinions on this, but for me that experience really was triggered by
-the thought that if people have such a great experience with plan mode, I want
-to understand what I&#8217;m missing out on.</p>
-<p>And now I know: I&#8217;m mostly a custom prompt to give it structure, and some system
-reminders and a handful of examples.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p>This incidentally is also why it&#8217;s possible for the plan mode
-confirmation screen to come up with an error message, that <a href="https://x.com/mitsuhiko/status/1997983563891818736">there is no
-plan</a> unprompted.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/embrace-whitespace/" class="hover:underline"
-              >Embrace whitespace</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Well placed spaces and line breaks can greatly improve the readability of your Python code.</p>
-
-
-<div>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#whitespace-around-operators" target="_blank">Whitespace around operators</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#auto-formatters-both-heroes-and-villains" target="_blank">Auto-formatters: both heroes and villains</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#using-line-breaks-for-implicit-line-continuation" target="_blank">Using line breaks for implicit line continuation</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#separating-sections-with-blank-lines" target="_blank">Separating sections with blank lines</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#the-whitespace-is-for-us-not-for-python" target="_blank">The whitespace is for us, not for Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#consider-ruff-black-and-other-auto-formatters" target="_blank">Consider ruff, black, and other auto-formatters</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/embrace-whitespace/#whitespace-is-all-about-visual-grouping" target="_blank">Whitespace is all about visual grouping</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Whitespace around operators</h2>
-    
-      
-        <p>Compare this:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">a</span><span class="o">**</span><span class="mi">2</span><span class="o">+</span><span class="n">b</span><span class="o">**</span><span class="mi">2</span><span class="o">+</span><span class="n">c</span><span class="o">**</span><span class="mi">2</span>
-</code></pre></div>
-
-
-      
-        <p>To this:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">a</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">b</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">c</span><span class="o">**</span><span class="mi">2</span>
-</code></pre></div>
-
-
-      
-        <p>I find that second one more readable because the operations we're performing are more obvious (as is the order of operations).</p>
-
-      
-        <p>Too much whitespace <em>can</em> hurt readability though:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="n">a</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">b</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">c</span> <span class="o">**</span> <span class="mi">2</span>
-</code></pre></div>
-
-
-      
-        <p>This seems like a step backward because we've lost those three groups we had before.</p>
-
-      
-        <p>With both typography and visual design, <strong>more whitespace isn't always better</strong>.</p>
-
-      
-    
-  
-    <h2>Auto-formatters: both heroes and villains</h2>
-    
-      <p>If you use an auto-formatter …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/embrace-whitespace/" target="_blank">Read the full article: https://www.pythonmorsels.com/embrace-whitespace/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 12:00 AM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/embrace-whitespace/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/courses/asynchronous-iterators-iterables/" class="hover:underline"
               >Exploring Asynchronous Iterators and Iterables</a
             >
@@ -762,46 +413,6 @@ This is useful to optimize some queries for which the data does not need to be e
           </div>
           <a
             href="https://pythonbytes.fm/episodes/show/462/linkedin-cringe"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/tutorials/getting-started-flet/" class="hover:underline"
-              >Getting Started With Flet for GUI Development — Your First Steps With the Flet Library for Desktop and Web Python GUIs</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Getting started with a new GUI framework can feel daunting. This guide walks you through the essentials of Flet, from installation and a first app to widgets, layouts, and event handling.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/tutorials/getting-started-flet/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1999,6 +1610,191 @@ another.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/12/pycharm-2025-3-unified-ide-jupyter-notebooks-in-remote-development-uv-as-default-and-more/" class="hover:underline"
+              >PyCharm 2025.3 – Unified IDE, Jupyter notebooks in remote development, uv as default, and more</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            We’re excited to announce that PyCharm 2025.3 is here! This release continues our mission to make PyCharm the most powerful Python IDE for web, data, and AI/ML development. It marks the migration of Community users to the unified PyCharm and brings full support for Jupyter notebooks in remote development, uv as the default environment manager, [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 04:57 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/12/pycharm-2025-3-unified-ide-jupyter-notebooks-in-remote-development-uv-as-default-and-more/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/platform/2025/12/meet-the-islands-theme-the-new-default-look-for-jetbrains-ides/" class="hover:underline"
+              >Meet the Islands Theme – The New Default Look for JetBrains IDEs</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            The&#160;Islands&#160;theme&#160;is now the default look across JetBrains IDEs starting with version 2025.3.This update is more than a visual refresh. It’s our commitment to creating a soft, balanced environment designed to support focus and comfort throughout your workflow. We began introducing the new theme&#160;earlier this year, gathering feedback, conducting research, and testing it hands-on with developers [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 09:53 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/platform/2025/12/meet-the-islands-theme-the-new-default-look-for-jetbrains-ides/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/ai-python-course/" class="hover:underline"
+              >لماذا يجب أن تغير طريقة كتابة الكود في 2025 (مع كورس بايثون مجاني)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>الأجواء في عالم التقنية تبدو مختلفة حالياً، أليس كذلك؟</p>
+
+<p>قبل بضع سنوات، كان الحصول على وظيفة في مجال البيانات أو البرمجة يبدو طريقاً مباشراً وآمناً. تتعلم الأساسيات (Syntax)، تبني معرض أعمال (Portfolio)، وتضمن وظيفتك.  لكن ونحن نتجه نحو عام 2025، شبكة الأمان هذه بدأت تتلاشى .</p>
+
+<p>السبب معروف للجميع. الذكاء الاصطناعي لم يعد مجرد “تريند”؛  إنه موجود بالفعل داخل محررات الأكواد التي نستخدمها يومياً .</p>
+
+<p><strong>ولأنني أعلم أن الكلام النظري وحده لا يكفي لمواجهة هذا التغيير، أحضرت لك اليوم كورس بايثون كامل (مجاناً) لمساعدتك على البدء، ستجد رابطه في نهاية هذه الرسالة.</strong></p>
+
+<p>إذا كان عملك اليومي يعتمد فقط على تحويل تعليمات واضحة إلى كود، فأنت في منطقة خطر .  لدينا الآن أدوات يمكنها كتابة الأكواد الروتينية (Boilerplate)، وبناء جمل SQL قوية، وتصميم واجهات مستخدم (UI) أسرع من أي إنسان .</p>
+
+<p><strong>لكن الخبر الجيد هو أن الوظيفة لا تختفي، بل تنتقل إلى مستوى أعلى .</strong></p>
+
+<p>السوق متعطش حالياً لمن يستطيع التفكير، التصميم، وحل المشكلات المعقدة والفوضوية .  لكي تبقى في المنافسة، يجب أن تتوقف عن كونك “مترجماً” للأوامر البرمجية، وتبدأ في التصرف كـ “مهندس أنظمة” .</p>
+
+<p>إليك كيف تقوم بهذا التحول:</p>
+
+<h3 id="1-فكر-في-الأنظمة-وليس-فقط-في-الأكواد-syntax">1. فكر في الأنظمة، وليس فقط في الأكواد (Syntax)</h3>
+
+<p>معظمنا تعلم البرمجة عن طريق حفظ القواعد.  “هذه حلقة تكرار (Loop)”، أو “هذا كلاس (Class)” .</p>
+
+<p>لكن هندسة البرمجيات الحقيقية تدور حول إدارة الفوضى.</p>
+
+<p>لنأخذ <strong>البرمجة كائنية التوجه (OOP)</strong> كمثال . الأمر لا يتعلق فقط بإنشاء Class لـ “سيارة” أو “موظف”.  إنها طريقة لرسم خريطة لمشكلة تجارية معقدة حتى لا ينهار النظام لاحقاً تحت وطأة التعديلات .  الذكاء الاصطناعي يمكنه كتابة ملف Class في ثوانٍ، لكنه يفتقر إلى الرؤية لتخطيط كيفية تفاعل عشرين كائناً مختلفاً مع بعضهم البعض على مدار العامين المقبلين .</p>
+
+<h3 id="2-لا-تنتظر-التذاكر-tickets">2. لا تنتظر التذاكر (Tickets)</h3>
+
+<p>المطور العادي ينتظر أن تُسند إليه المهام.  المطور ذو القيمة العالية يبحث هو عن المشاكل ليحلها .</p>
+
+<p>كل شركة مليئة بنقاط الاحتكاك وعدم الكفاءة .  فريق التسويق الذي يقوم بتعديل ملف Excel يدوياً كل يوم إثنين، أو فريق العمليات الذي ينسخ الملفات يدوياً بين المجلدات .</p>
+
+<p>أنت بحاجة لتبني عقلية “الأتمتة أولاً” (Automation-First) .  تعلم كتابة السكربتات التي تتعامل مع ملفات النظام، وتنظم البيانات غير المهيكلة، وتتعامل مع الأخطاء بذكاء . إذا انقطع الاتصال، السكربت الضعيف يتوقف ويموت.  الأداة الجيدة تنتظر، تعيد المحاولة، تسجل الخطأ، وتستمر .</p>
+
+<p>الذكاء الاصطناعي يمكنه كتابة السكربت إذا أعطيته التعليمات بالحرف.  لكن <strong>أنت</strong> من يجب أن يلاحظ الخلل ويصمم الأداة التي تحل المشكلة جذرياً .</p>
+
+<h3 id="3-تعامل-مع-البيانات-كأنها-ذهب">3. تعامل مع البيانات كأنها ذهب</h3>
+
+<p>في 2025، الوعي بالبيانات (Data Literacy) إلزامي .</p>
+
+<p>يجب أن تفهم هياكل البيانات (Data Structures) بعمق.  لا أتحدث هنا عن اجتياز مقابلات العمل النظرية، بل عن فهم “المقايضات” (Trade-offs) .</p>
+
+<ul>
+  <li><strong>List vs. Set:</strong> إذا كنت بحاجة للتحقق من وجود عنصر داخل مجموعة مليون مرة، استخدام List سيجعل النظام بطيئاً جداً.  استخدام Set سيقوم بالمهمة فوراً .</li>
+  <li><strong>الثبات (Immutability):</strong> معرفة متى تستخدم Tuple بدلاً من List ليعرف المطورون الآخرون أن هذه البيانات <em>ممنوع تغييرها</em> .</li>
+</ul>
+
+<p>هذه القرارات الصغيرة هي ما يحدد ما إذا كان التطبيق سيعمل بسلاسة أم سيزحف ببطء .</p>
+
+<h3 id="هديتك-للبدء-كورس-مجاني">هديتك للبدء (كورس مجاني)</h3>
+
+<p>كما وعدتك في البداية، ولأن التطبيق هو الجزء الأهم .</p>
+
+<p>إذا كنت تبحث عن مراجعة لهذه الأساسيات والآليات—من المبادئ الأولية وصولاً للصورة الأكبر في OOP والتعامل مع الملفات—فقد وجدت مصدراً تعليمياً ممتازاً .</p>
+
+<p>الدورة بعنوان: <strong>Python Complete Course For Beginners</strong> .</p>
+
+<p>إنها تغطي الأساسيات التقنية التي تحتاجها للانتقال من مجرد “كتابة أكواد” إلى بناء أنظمة متكاملة .  عادةً ما تكون هذه الدورة مدفوعة، لكن الرابط أدناه يلغي الرسوم لفترة محدودة .</p>
+
+<p><strong><a href="https://www.udemy.com/course/python-complete-course-for-beginners-h/?couponCode=5029ECB6867D0365F0DB">اضغط هنا للحصول على الكورس مجاناً</a></strong></p>
+
+<p><strong>ملاحظة هامة:</strong> كوبونات الخصم هذه تنتهي صلاحيتها بسرعة كبيرة . لضمان وصول هذه الكورسات المجانية لك فور نشرها (وقبل أن تعود لسعرها الأصلي)، يمكنك تفعيل التنبيهات عبر الضغط على <strong>أيقونة الجرس</strong> الموجودة في أسفل يسار الشاشة.</p>
+
+<p>تذكر دائماً: الكود مجرد أداة.  القيمة الحقيقية تكمن فيك أنت .</p>
+
+<p>بالتوفيق،</p>
+
+<p><strong>Farid and Naima / 10xdev blog Team</strong></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 08:46 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/ai-python-course/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -2010,7 +1806,7 @@ another.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7752</a></li>
+    <li><a>Total Entries: 7713</a></li>
     <li><a>Unique Feeds: 386</a></li>
     
 
