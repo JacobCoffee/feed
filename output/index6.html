@@ -53,183 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202512/generating_data_shapes_with_hypothesis" class="hover:underline"
-              >Generating data shapes with Hypothesis</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In my last blog post (<a href="https://nedbatchelder.com/blog/202512/a_testing_conundrum">A testing conundrum</a>), I described
-trying to test my Hasher class which hashes nested data. I couldn&#8217;t get
-Hypothesis to generate usable data for my test.  I wanted to assert that two
-equal data items would hash equally, but Hypothesis was finding pairs like
-<code>[0]</code> and <code>[False]</code>. These are equal but hash differently because the
-hash takes the types into account.</p><p>In the blog post I said,</p><blockquote><div><p>If I had a schema for the data I would be comparing, I could use it to
-steer Hypothesis to generate realistic data.  But I don&#8217;t have that
-schema...</p></div></blockquote><p>I don&#8217;t want a fixed schema for the data Hasher would accept, but tests to
-compare data generated from the same schema.  It shouldn&#8217;t compare a list of
-ints to a list of bools.  Hypothesis is good at generating things randomly.
-Usually it generates data randomly, but we can also use it to generate schemas
-randomly!</p><h1 id="h_hypothesis_basics">Hypothesis basics<a class="headerlink" href="#h_hypothesis_basics"></a></h1><p>Before describing my solution, I&#8217;ll take a quick detour to describe how
-Hypothesis works.</p><p>Hypothesis calls their randomness machines &#8220;strategies&#8221;. Here is a strategy
-that will produce random integers between -99 and 1000:</p><blockquote class="code"><div class="source"><pre class="python"><span class="kn">import</span><span class="w">&#xa0;</span><span class="nn">hypothesis.strategies</span><span class="w">&#xa0;</span><span class="k">as</span><span class="w">&#xa0;</span><span class="nn">st</span>
-<br /><span class="n">st</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mi">99</span><span class="p">,</span>&#xa0;<span class="n">max_value</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
-<br /></pre></div>
-</blockquote><p>Strategies can be composed:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mi">99</span><span class="p">,</span>&#xa0;<span class="n">max_value</span><span class="o">=</span><span class="mi">1000</span><span class="p">),</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
-<br /></pre></div>
-</blockquote><p>This will produce lists of integers from -99 to 1000. The lists will have up
-to 50 elements.</p><p>Strategies are used in tests with the <code>@given</code> decorator, which takes a
-strategy and runs the test a number of times with different example data drawn
-from the strategy.  In your test you check a desired property that holds true
-for any data the strategy can produce.</p><p>To demonstrate, here&#8217;s a test of sum() that checks that summing a list of
-numbers in two halves gives the same answer as summing the whole list:</p><blockquote class="code"><div class="source"><pre class="python"><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">hypothesis</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">given</span><span class="p">,</span>&#xa0;<span class="n">strategies</span>&#xa0;<span class="k">as</span>&#xa0;<span class="n">st</span>
-<br />
-<br /><span class="nd">@given</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mi">99</span><span class="p">,</span>&#xa0;<span class="n">max_value</span><span class="o">=</span><span class="mi">1000</span><span class="p">),</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">50</span><span class="p">))</span>
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_sum</span><span class="p">(</span><span class="n">nums</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;We&#xa0;don't&#xa0;have&#xa0;to&#xa0;test&#xa0;sum(),&#xa0;this&#xa0;is&#xa0;just&#xa0;an&#xa0;example!</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">mid</span>&#xa0;<span class="o">=</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">nums</span><span class="p">)</span>&#xa0;<span class="o">//</span>&#xa0;<span class="mi">2</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="nb">sum</span><span class="p">(</span><span class="n">nums</span><span class="p">)</span>&#xa0;<span class="o">==</span>&#xa0;<span class="nb">sum</span><span class="p">(</span><span class="n">nums</span><span class="p">[:</span><span class="n">mid</span><span class="p">])</span>&#xa0;<span class="o">+</span>&#xa0;<span class="nb">sum</span><span class="p">(</span><span class="n">nums</span><span class="p">[</span><span class="n">mid</span><span class="p">:])</span>
-<br /></pre></div>
-</blockquote><p>By default, Hypothesis will run the test 100 times, each with a different
-randomly generated list of numbers.</p><h1 id="h_schema_strategies">Schema strategies<a class="headerlink" href="#h_schema_strategies"></a></h1><p>The solution to my data comparison problem is to have Hypothesis generate a
-random schema in the form of a strategy, then use that strategy to generate two
-examples. Doing this repeatedly will get us pairs of data that have the same
-&#8220;shape&#8221; that will work well for our tests.</p><p>This is kind of twisty, so let&#8217;s look at it in pieces.  We start with a list
-of strategies that produce primitive values:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">primitives</span>&#xa0;<span class="o">=</span>&#xa0;<span class="p">[</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">none</span><span class="p">(),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">booleans</span><span class="p">(),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">integers</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mi">1000</span><span class="p">,</span>&#xa0;<span class="n">max_value</span><span class="o">=</span><span class="mi">10_000_000</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">floats</span><span class="p">(</span><span class="n">min_value</span><span class="o">=-</span><span class="mi">100</span><span class="p">,</span>&#xa0;<span class="n">max_value</span><span class="o">=</span><span class="mi">100</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">binary</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
-<br /><span class="p">]</span>
-<br /></pre></div>
-</blockquote><p>Then a list of strategies that produce hashable values, which are all the
-primitives, plus tuples of any of the primitives:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">tuples_of</span><span class="p">(</span><span class="n">elements</span><span class="p">):</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;Make&#xa0;a&#xa0;strategy&#xa0;for&#xa0;tuples&#xa0;of&#xa0;some&#xa0;other&#xa0;strategy.&quot;&quot;&quot;</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">elements</span><span class="p">,</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="nb">tuple</span><span class="p">)</span>
-<br />
-<br /><span class="c1">#&#xa0;List&#xa0;of&#xa0;strategies&#xa0;that&#xa0;produce&#xa0;hashable&#xa0;data.</span>
-<br /><span class="n">hashables</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">primitives</span>&#xa0;<span class="o">+</span>&#xa0;<span class="p">[</span><span class="n">tuples_of</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">s</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">primitives</span><span class="p">]</span>
-<br /></pre></div>
-</blockquote><p>We want to be able to make nested dictionaries with leaves of some other
-type.  This function takes a leaf-making strategy and produces a strategy to
-make those dictionaries:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">nested_dicts_of</span><span class="p">(</span><span class="n">leaves</span><span class="p">):</span>
-<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">&quot;&quot;&quot;Make&#xa0;a&#xa0;strategy&#xa0;for&#xa0;recursive&#xa0;dicts&#xa0;with&#xa0;leaves&#xa0;from&#xa0;another&#xa0;strategy.&quot;&quot;&quot;</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">recursive</span><span class="p">(</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">leaves</span><span class="p">,</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">lambda</span>&#xa0;<span class="n">children</span><span class="p">:</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">dictionaries</span><span class="p">(</span><span class="n">st</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>&#xa0;<span class="n">children</span><span class="p">,</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">max_leaves</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">)</span>
-<br /></pre></div>
-</blockquote><p>Finally, here&#8217;s our strategy that makes schema strategies:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">nested_data_schemas</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">recursive</span><span class="p">(</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">sampled_from</span><span class="p">(</span><span class="n">primitives</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">lambda</span>&#xa0;<span class="n">children</span><span class="p">:</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">one_of</span><span class="p">(</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">children</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span>&#xa0;<span class="n">s</span><span class="p">:</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">lists</span><span class="p">(</span><span class="n">s</span><span class="p">,</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">5</span><span class="p">)),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">children</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">tuples_of</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">sampled_from</span><span class="p">(</span><span class="n">hashables</span><span class="p">)</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="k">lambda</span>&#xa0;<span class="n">s</span><span class="p">:</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">sets</span><span class="p">(</span><span class="n">s</span><span class="p">,</span>&#xa0;<span class="n">max_size</span><span class="o">=</span><span class="mi">10</span><span class="p">)),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">children</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">nested_dicts_of</span><span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">),</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">max_leaves</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
-<br /><span class="p">)</span>
-<br /></pre></div>
-</blockquote><p>For debugging, it&#8217;s helpful to generate an example strategy from this
-strategy, and then an example from that, many times:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">for</span>&#xa0;<span class="n">_</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="nb">range</span><span class="p">(</span><span class="mi">50</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="nb">print</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">nested_data_schemas</span><span class="o">.</span><span class="n">example</span><span class="p">()</span><span class="o">.</span><span class="n">example</span><span class="p">()))</span>
-<br /></pre></div>
-</blockquote><p>Hypothesis is good at making data we&#8217;d never think to try ourselves. Here is
-some of what it made:</p><blockquote class="code"><div class="source"><pre class="python"><span class="p">[</span><span class="kc">None</span><span class="p">,</span>&#xa0;<span class="kc">None</span><span class="p">,</span>&#xa0;<span class="kc">None</span><span class="p">,</span>&#xa0;<span class="kc">None</span><span class="p">,</span>&#xa0;<span class="kc">None</span><span class="p">]</span>
-<br /><span class="p">{}</span>
-<br /><span class="p">[{</span><span class="kc">False</span><span class="p">},</span>&#xa0;<span class="p">{</span><span class="kc">False</span><span class="p">,</span>&#xa0;<span class="kc">True</span><span class="p">},</span>&#xa0;<span class="p">{</span><span class="kc">False</span><span class="p">,</span>&#xa0;<span class="kc">True</span><span class="p">},</span>&#xa0;<span class="p">{</span><span class="kc">False</span><span class="p">,</span>&#xa0;<span class="kc">True</span><span class="p">}]</span>
-<br /><span class="p">{(</span><span class="mf">1.9</span><span class="p">,</span>&#xa0;<span class="mf">80.64553337755876</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="o">-</span><span class="mf">41.30770818038395</span><span class="p">,</span>&#xa0;<span class="mf">9.42967906108538</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">58.835811641800085</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="mf">31.102786990742203</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="mf">28.2724197133397</span><span class="p">,</span>&#xa0;<span class="mf">6.103515625e-05</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">84.35107066147154</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="mf">7.436329211943294e-263</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="o">-</span><span class="mf">17.335739410320514</span><span class="p">,</span>&#xa0;<span class="mf">1.5029061311609365e-292</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">8.17077562035881</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="o">-</span><span class="mf">8.029363284353857e-169</span><span class="p">,</span>&#xa0;<span class="mf">49.45840191722425</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">15.301768150196054</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="mf">5.960464477539063e-08</span><span class="p">,</span>&#xa0;<span class="mf">1.1518373121077722e-213</span><span class="p">),</span>&#xa0;<span class="p">(),</span>&#xa0;<span class="p">(</span><span class="o">-</span><span class="mf">0.3262457914511714</span><span class="p">,)}</span>
-<br /><span class="p">[</span><span class="sa">b</span><span class="s1">'+nY2~</span><span class="se">\xaf\x8d</span><span class="s1">*</span><span class="se">\xbb\xbf</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xe4\xb5\xae\xa2\x1a</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xb6\xab\xaf</span><span class="s1">Ei</span><span class="se">\xc3</span><span class="s1">C</span><span class="se">\xab</span><span class="s1">&quot;</span><span class="se">\xe1</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xf0\x07\xdf\xf5\x99</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'2</span><span class="se">\x06\xd4\xee</span><span class="s1">-</span><span class="se">\xca\xee\x9f\xe4</span><span class="s1">W'</span><span class="p">]</span>
-<br /><span class="p">{</span><span class="s1">'fV'</span><span class="p">:</span>&#xa0;<span class="p">[</span><span class="mf">81.37177374286324</span><span class="p">,</span>&#xa0;<span class="mf">3.082323424992609e-212</span><span class="p">,</span>&#xa0;<span class="mf">3.089885728465406e-151</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">9.51475773638932e-86</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">17.061851038597922</span><span class="p">],</span>&#xa0;<span class="s1">'J»</span><span class="se">\x0c\x86</span><span class="s1">肭|</span><span class="se">\x88\x03\x8a</span><span class="s1">U'</span><span class="p">:</span>&#xa0;<span class="p">[</span><span class="mf">29.549966208819654</span><span class="p">]}</span>
-<br /><span class="p">[{},</span>&#xa0;<span class="o">-</span><span class="mf">68.48316192397687</span><span class="p">]</span>
-<br /><span class="kc">None</span>
-<br /><span class="p">[</span><span class="s1">'</span><span class="se">\x85\U0004bf04</span><span class="s1">°'</span><span class="p">,</span>&#xa0;<span class="s1">'pB</span><span class="se">\x07</span><span class="s1">iQT'</span><span class="p">,</span>&#xa0;<span class="s1">'TRUE'</span><span class="p">,</span>&#xa0;<span class="s1">'</span><span class="se">\x1a</span><span class="s1">5ùZâ</span><span class="se">\U00048752</span><span class="s1">+¹</span><span class="se">\U0005fdf8</span><span class="s1">ê'</span><span class="p">,</span>&#xa0;<span class="s1">'</span><span class="se">\U000fe0b9</span><span class="s1">m*¤</span><span class="se">\U000b9f1e</span><span class="s1">'</span><span class="p">]</span>
-<br /><span class="p">(</span><span class="mf">14.232866652585258</span><span class="p">,</span>&#xa0;<span class="o">-</span><span class="mf">31.193835515904652</span><span class="p">,</span>&#xa0;<span class="mf">62.29850355163285</span><span class="p">)</span>
-<br /><span class="p">{</span><span class="s1">''</span><span class="p">:</span>&#xa0;<span class="p">{</span><span class="s1">''</span><span class="p">:</span>&#xa0;<span class="kc">None</span><span class="p">,</span>&#xa0;<span class="s1">'Ã</span><span class="se">\U000be8de</span><span class="s1">§</span><span class="se">\n</span><span class="s1">È</span><span class="se">\U00093608</span><span class="s1">u'</span><span class="p">:</span>&#xa0;<span class="kc">None</span><span class="p">,</span>&#xa0;<span class="s1">'Y</span><span class="se">\U000709e4</span><span class="s1">¥ùU)GE</span><span class="se">\U000dddc5</span><span class="s1">¬'</span><span class="p">:</span>&#xa0;<span class="kc">None</span><span class="p">}}</span>
-<br /><span class="p">[{(),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\xe7</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">''</span><span class="p">)},</span>&#xa0;<span class="p">{(),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'l</span><span class="se">\xc6\x80\xdf\x16\x91</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">''</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\x10</span><span class="s1">,'</span><span class="p">)},</span>&#xa0;<span class="p">{(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\xbb\xfb\x1c\xf6\xcd\xff\x93\xe0\xec\xed</span><span class="s1">'</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'g'</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\x8e</span><span class="s1">9I</span><span class="se">\xcd</span><span class="s1">gs</span><span class="se">\xaf\xd1\xec\xf7</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\x94\xe6</span><span class="s1">#'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'?</span><span class="se">\xc9\xa0\x01</span><span class="s1">~$k'</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'r'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\x8f\xba\xe6\xfe\x92</span><span class="s1">n</span><span class="se">\xc7</span><span class="s1">K</span><span class="se">\x98\xbb</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\x92\xaa\xe8\xa6</span><span class="s1">s'</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'f</span><span class="se">\x98</span><span class="s1">_</span><span class="se">\xb3\xd7</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xf4</span><span class="s1">+</span><span class="se">\xf7\xbc</span><span class="s1">U8RV'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xda\xb0</span><span class="s1">'</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'D'</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\xab\xe9\xf6\xe9</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'7Zr</span><span class="se">\xb7\x0b</span><span class="s1">l</span><span class="se">\xb6\x92\xb8\xad</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\x8f\xe4</span><span class="s1">]</span><span class="se">\x8f</span><span class="s1">'</span><span class="p">),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\xcf\xfb\xd4\xce\x12\xe2</span><span class="s1">U</span><span class="se">\x94</span><span class="s1">mt'</span><span class="p">,),</span>&#xa0;<span class="p">(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\x9e</span><span class="s1">V</span><span class="se">\x11</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xc5\x88\xde\x8d\xba</span><span class="s1">?</span><span class="se">\xeb</span><span class="s1">'</span><span class="p">),</span>&#xa0;<span class="p">()},</span>&#xa0;<span class="p">{(</span><span class="sa">b</span><span class="s1">'}'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xe9\xd6\x89\x8b</span><span class="s1">'</span><span class="p">)},</span>&#xa0;<span class="p">{(</span><span class="sa">b</span><span class="s1">'</span><span class="se">\xcb</span><span class="s1">`'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'</span><span class="se">\xfd</span><span class="s1">'</span><span class="p">,</span>&#xa0;<span class="sa">b</span><span class="s1">'w</span><span class="se">\x19</span><span class="s1">@</span><span class="se">\xee</span><span class="s1">'</span><span class="p">),</span>&#xa0;<span class="p">()}]</span>
-<br /><span class="p">((),</span>&#xa0;<span class="p">(),</span>&#xa0;<span class="p">())</span>
-<br /></pre></div>
-</blockquote><h1 id="h_finally_writing_the_test">Finally writing the test<a class="headerlink" href="#h_finally_writing_the_test"></a></h1><p>Time to use all of this in a test:</p><blockquote class="code"><div class="source"><pre class="python"><span class="nd">@given</span><span class="p">(</span><span class="n">nested_data_schemas</span><span class="o">.</span><span class="n">flatmap</span><span class="p">(</span><span class="k">lambda</span>&#xa0;<span class="n">s</span><span class="p">:</span>&#xa0;<span class="n">st</span><span class="o">.</span><span class="n">tuples</span><span class="p">(</span><span class="n">s</span><span class="p">,</span>&#xa0;<span class="n">s</span><span class="p">)))</span>
-<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_same_schema</span><span class="p">(</span><span class="n">data_pair</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">data1</span><span class="p">,</span>&#xa0;<span class="n">data2</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">data_pair</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">h1</span><span class="p">,</span>&#xa0;<span class="n">h2</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">Hasher</span><span class="p">(),</span>&#xa0;<span class="n">Hasher</span><span class="p">()</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">h1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">data1</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">h2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">data2</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="n">data1</span>&#xa0;<span class="o">==</span>&#xa0;<span class="n">data2</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">h1</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>&#xa0;<span class="o">==</span>&#xa0;<span class="n">h2</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">else</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;Strictly&#xa0;speaking,&#xa0;unequal&#xa0;data&#xa0;could&#xa0;produce&#xa0;equal&#xa0;hashes,</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;but&#xa0;it's&#xa0;very&#xa0;unlikely,&#xa0;so&#xa0;test&#xa0;for&#xa0;it&#xa0;anyway.</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="n">h1</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>&#xa0;<span class="o">!=</span>&#xa0;<span class="n">h2</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>
-<br /></pre></div>
-</blockquote><p>Here I use the .flatmap() method to draw an example from the
-<code>nested_data_schemas</code> strategy and call the provided lambda with the drawn
-example, which is itself a strategy. The lambda uses <code>st.tuples</code> to make
-tuples with two examples drawn from the strategy. So we get one data schema, and
-two examples from it as a tuple passed into the test as <code>data_pair</code>. The
-test then unpacks the data, hashes them, and makes the appropriate
-assertion.</p><p>This works great: the tests pass. To check that the test was working well, I
-made some breaking tweaks to the Hasher class. If Hypothesis is configured to
-generate enough examples, it finds data examples demonstrating the failures.</p><p>I&#8217;m pleased with the results. Hypothesis is something I&#8217;ve been wanting to
-use more, so I&#8217;m glad I took this chance to learn more about it and get it
-working for these tests.  To be honest, this is way more than I needed to test
-my Hasher class.  But once I got started, I wanted to get it right, and learning
-is always good.</p><p>I&#8217;m a bit concerned that the standard setting (100 examples) isn&#8217;t enough to
-find the planted bugs in Hasher. There are many parameters in my strategies that
-could be tweaked to keep Hypothesis from wandering too broadly, but I don&#8217;t know
-how to decide what to change.</p><h1 id="h_actually">Actually<a class="headerlink" href="#h_actually"></a></h1><p>The code in this post is different than the actual code I ended up with.
-Mostly this is because I was working on the code while I was writing this post,
-and discovered some problems that I wanted to fix. For example, the
-<code>tuples_of</code> function makes homogeneous tuples: varying lengths with
-elements all of the same type. This is not the usual use of tuples (see
-<a href="https://nedbatchelder.com/blog/201608/lists_vs_tuples">Lists vs. Tuples</a>).  Adapting for heterogeneous tuples added
-more complexity, which was interesting to learn, but I didn&#8217;t want to go back
-and add it here.</p><p>You can look at the <a href="https://github.com/coveragepy/coveragepy/blob/582ea59724f2df097c2dd9e1bad372be430ff512/tests/strategies.py" rel="external noopener">final strategies.py</a> to see
-that and other details, including type hints for everything, which was a journey
-of its own.</p><h1 id="h_postscript_ai_assistance">Postscript: AI assistance<a class="headerlink" href="#h_postscript_ai_assistance"></a></h1><p>I would not have been able to come up with all of this by myself. Hypothesis
-is very powerful, but requires a new way of thinking about things. It&#8217;s twisty
-to have functions returning strategies, and especially strategies producing
-strategies. The docs don&#8217;t have many examples, so it can be hard to get a
-foothold on the concepts.</p><p>Claude helped me by providing initial code, answering questions, debugging
-when things didn&#8217;t work out, and so on. If you are interested,
-<a href="https://claude.ai/share/3b7e7e02-36e2-4824-acaf-6d4ab5e41cbd" rel="external noopener">this is
-one of the discussions I had with it</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 21, 2025 04:43 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202512/generating_data_shapes_with_hypothesis"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lukeplant.me.uk/blog/posts/help-my-website-is-too-small/" class="hover:underline"
               >Help my website is too small</a
             >
@@ -1761,231 +1584,6 @@ This is useful to optimize some queries for which the data does not need to be e
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/dataverse-in-python.html" class="hover:underline"
-              >Microsoft Dataverse with Python and Zato Services</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/dataverse-in-python.html">Microsoft Dataverse with Python and Zato Services</a>
-</h1>
-<div class="article-meta">
-  2025-12-15, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p><img alt="" src="https://upcdn.io/kW15bqq/raw/root/en/docs/4.1/gfx/api/dev/examples/dataverse.png" /></p>
-<h2 id="overview">Overview</h2>
-<p>Microsoft Dataverse is a cloud-based data storage and management platform, often used with PowerApps and Dynamics 365.</p>
-<p>Integrating Dataverse with Python via Zato enables automation, API orchestration, and seamless CRUD (Create, Read, Update, Delete) operations on any Dataverse object.</p>
-<p>Below, you'll find practical code examples for working with Dataverse from Python, including detailed comments and explanations. The focus is on the "accounts" entity, but the same approach applies to any object in Dataverse.</p>
-<h2 id="connecting-to-dataverse-and-retrieving-accounts">Connecting to Dataverse and retrieving accounts</h2>
-<p>The main service class configures the Dataverse client and retrieves all accounts. Both the <code>handle</code> and <code>get_accounts</code> methods are shown together for clarity.</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.common.typing_</span><span class="w"> </span><span class="kn">import</span> <span class="n">any_</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataverseClient</span><span class="p">,</span> <span class="n">Service</span>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># Set up Dataverse credentials - in a real service,</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="c1"># this would go to your configuration file.</span>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="n">tenant_id</span> <span class="o">=</span> <span class="s1">'221de69a-602d-4a0b-a0a4-1ff2a3943e9f'</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="n">client_id</span> <span class="o">=</span> <span class="s1">'17aaa657-557c-4b18-95c3-71d742fbc6a3'</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>        <span class="n">client_secret</span> <span class="o">=</span> <span class="s1">'MjsrO1zc0.WEV5unJCS5vLa1'</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>        <span class="n">org_url</span> <span class="o">=</span> <span class="s1">'https://org123456.api.crm4.dynamics.com'</span>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>        <span class="c1"># Build the Dataverse client using the credentials</span>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="n">client</span> <span class="o">=</span> <span class="n">DataverseClient</span><span class="p">(</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>            <span class="n">tenant_id</span><span class="o">=</span><span class="n">tenant_id</span><span class="p">,</span>
-<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>            <span class="n">client_id</span><span class="o">=</span><span class="n">client_id</span><span class="p">,</span>
-<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a>            <span class="n">client_secret</span><span class="o">=</span><span class="n">client_secret</span><span class="p">,</span>
-<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a>            <span class="n">org_url</span><span class="o">=</span><span class="n">org_url</span>
-<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>        <span class="p">)</span>
-<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>
-<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>        <span class="c1"># Retrieve all accounts using a helper method</span>
-<a id="line-0-28" name="line-0-28"></a><a href="#line-0-28"><span class="linenos"></span></a>        <span class="n">accounts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_accounts</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<a id="line-0-29" name="line-0-29"></a><a href="#line-0-29"><span class="linenos"></span></a>
-<a id="line-0-30" name="line-0-30"></a><a href="#line-0-30"><span class="linenos"></span></a>        <span class="c1"># Process the accounts as needed (custom logic goes here)</span>
-<a id="line-0-31" name="line-0-31"></a><a href="#line-0-31"><span class="linenos"></span></a>        <span class="k">pass</span>
-<a id="line-0-32" name="line-0-32"></a><a href="#line-0-32"><span class="linenos"></span></a>
-<a id="line-0-33" name="line-0-33"></a><a href="#line-0-33"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_accounts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-0-34" name="line-0-34"></a><a href="#line-0-34"><span class="linenos"></span></a>
-<a id="line-0-35" name="line-0-35"></a><a href="#line-0-35"><span class="linenos"></span></a>        <span class="c1"># Specify the API path for the accounts entity</span>
-<a id="line-0-36" name="line-0-36"></a><a href="#line-0-36"><span class="linenos"></span></a>        <span class="n">path</span> <span class="o">=</span> <span class="s1">'accounts'</span>
-<a id="line-0-37" name="line-0-37"></a><a href="#line-0-37"><span class="linenos"></span></a>
-<a id="line-0-38" name="line-0-38"></a><a href="#line-0-38"><span class="linenos"></span></a>        <span class="c1"># Call the Dataverse API to retrieve all accounts</span>
-<a id="line-0-39" name="line-0-39"></a><a href="#line-0-39"><span class="linenos"></span></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-0-40" name="line-0-40"></a><a href="#line-0-40"><span class="linenos"></span></a>
-<a id="line-0-41" name="line-0-41"></a><a href="#line-0-41"><span class="linenos"></span></a>        <span class="c1"># Log the response for debugging/auditing</span>
-<a id="line-0-42" name="line-0-42"></a><a href="#line-0-42"><span class="linenos"></span></a>
-<a id="line-0-43" name="line-0-43"></a><a href="#line-0-43"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get accounts): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-0-44" name="line-0-44"></a><a href="#line-0-44"><span class="linenos"></span></a>
-<a id="line-0-45" name="line-0-45"></a><a href="#line-0-45"><span class="linenos"></span></a>        <span class="c1"># Return the API response to the caller</span>
-<a id="line-0-46" name="line-0-46"></a><a href="#line-0-46"><span class="linenos"></span></a>        <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a><span class="p">{</span><span class="s1">'@odata.context'</span><span class="p">:</span> <span class="s1">'https://org1234567.crm4.dynamics.com/api/data/v9.0/$metadata#accounts'</span><span class="p">,</span>
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a><span class="s1">'value'</span><span class="p">:</span> <span class="p">[{</span><span class="s1">'@odata.etag'</span><span class="p">:</span> <span class="s1">'W/&quot;11122233&quot;'</span><span class="p">,</span> <span class="s1">'territorycode'</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a><span class="s1">'accountid'</span><span class="p">:</span> <span class="s1">'d92e6f18-36fb-4fa8-b7c2-ecc7cc28f50c'</span><span class="p">,</span> <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'Zato Test Account 1'</span><span class="p">,</span>
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a><span class="s1">'_owninguser_value'</span><span class="p">:</span> <span class="s1">'ea4dd84c-dee6-405d-b638-c37b57f00938'</span><span class="p">}]}</span>
-</code></pre></div>
-<p>Let's check more examples - you'll note they all follow the same pattern as the first one.</p>
-<h2 id="retrieving-an-account-by-id">Retrieving an Account by ID</h2>
-<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">get_account_by_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>
-<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a>    <span class="c1"># Construct the API path using the account's GUID</span>
-<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span>
-<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
-<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to fetch the account</span>
-<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>
-<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get account by ID): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a>
-<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>    <span class="c1"># Return the fetched account</span>
-<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="retrieving-an-account-by-name">Retrieving an account by name</h2>
-<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">get_account_by_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_name</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>
-<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a>    <span class="c1"># Construct the API path with a filter for the account name</span>
-<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;accounts?$filter=name eq '</span><span class="si">{</span><span class="n">account_name</span><span class="si">}</span><span class="s2">'&quot;</span>
-<a id="line-3-5" name="line-3-5"></a><a href="#line-3-5"><span class="linenos"></span></a>
-<a id="line-3-6" name="line-3-6"></a><a href="#line-3-6"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API with the filter</span>
-<a id="line-3-7" name="line-3-7"></a><a href="#line-3-7"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-3-8" name="line-3-8"></a><a href="#line-3-8"><span class="linenos"></span></a>
-<a id="line-3-9" name="line-3-9"></a><a href="#line-3-9"><span class="linenos"></span></a>    <span class="c1"># Log the response for auditing</span>
-<a id="line-3-10" name="line-3-10"></a><a href="#line-3-10"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get account by name): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-3-11" name="line-3-11"></a><a href="#line-3-11"><span class="linenos"></span></a>
-<a id="line-3-12" name="line-3-12"></a><a href="#line-3-12"><span class="linenos"></span></a>    <span class="c1"># Return the filtered account(s)</span>
-<a id="line-3-13" name="line-3-13"></a><a href="#line-3-13"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="creating-a-new-account">Creating a new account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-4-1" name="line-4-1"></a><a href="#line-4-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">create_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-4-2" name="line-4-2"></a><a href="#line-4-2"><span class="linenos"></span></a>
-<a id="line-4-3" name="line-4-3"></a><a href="#line-4-3"><span class="linenos"></span></a>    <span class="c1"># Specify the API path for account creation</span>
-<a id="line-4-4" name="line-4-4"></a><a href="#line-4-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="s1">'accounts'</span>
-<a id="line-4-5" name="line-4-5"></a><a href="#line-4-5"><span class="linenos"></span></a>
-<a id="line-4-6" name="line-4-6"></a><a href="#line-4-6"><span class="linenos"></span></a>    <span class="c1"># Prepare the data for the new account</span>
-<a id="line-4-7" name="line-4-7"></a><a href="#line-4-7"><span class="linenos"></span></a>    <span class="n">account_data</span> <span class="o">=</span> <span class="p">{</span>
-<a id="line-4-8" name="line-4-8"></a><a href="#line-4-8"><span class="linenos"></span></a>        <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'New Test Account'</span><span class="p">,</span>
-<a id="line-4-9" name="line-4-9"></a><a href="#line-4-9"><span class="linenos"></span></a>        <span class="s1">'telephone1'</span><span class="p">:</span> <span class="s1">'+1-555-123-4567'</span><span class="p">,</span>
-<a id="line-4-10" name="line-4-10"></a><a href="#line-4-10"><span class="linenos"></span></a>        <span class="s1">'emailaddress1'</span><span class="p">:</span> <span class="s1">'hello@example.com'</span><span class="p">,</span>
-<a id="line-4-11" name="line-4-11"></a><a href="#line-4-11"><span class="linenos"></span></a>        <span class="s1">'address1_city'</span><span class="p">:</span> <span class="s1">'Prague'</span><span class="p">,</span>
-<a id="line-4-12" name="line-4-12"></a><a href="#line-4-12"><span class="linenos"></span></a>        <span class="s1">'address1_country'</span><span class="p">:</span> <span class="s1">'Czech Republic'</span><span class="p">,</span>
-<a id="line-4-13" name="line-4-13"></a><a href="#line-4-13"><span class="linenos"></span></a>    <span class="p">}</span>
-<a id="line-4-14" name="line-4-14"></a><a href="#line-4-14"><span class="linenos"></span></a>
-<a id="line-4-15" name="line-4-15"></a><a href="#line-4-15"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to create the account</span>
-<a id="line-4-16" name="line-4-16"></a><a href="#line-4-16"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">account_data</span><span class="p">)</span>
-<a id="line-4-17" name="line-4-17"></a><a href="#line-4-17"><span class="linenos"></span></a>
-<a id="line-4-18" name="line-4-18"></a><a href="#line-4-18"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-4-19" name="line-4-19"></a><a href="#line-4-19"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (create account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-4-20" name="line-4-20"></a><a href="#line-4-20"><span class="linenos"></span></a>
-<a id="line-4-21" name="line-4-21"></a><a href="#line-4-21"><span class="linenos"></span></a>    <span class="c1"># Return the API response</span>
-<a id="line-4-22" name="line-4-22"></a><a href="#line-4-22"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="updating-an-existing-account">Updating an existing account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-5-1" name="line-5-1"></a><a href="#line-5-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">update_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-5-2" name="line-5-2"></a><a href="#line-5-2"><span class="linenos"></span></a>
-<a id="line-5-3" name="line-5-3"></a><a href="#line-5-3"><span class="linenos"></span></a>    <span class="c1"># Prepare the data to update</span>
-<a id="line-5-4" name="line-5-4"></a><a href="#line-5-4"><span class="linenos"></span></a>    <span class="n">update_data</span> <span class="o">=</span> <span class="p">{</span>
-<a id="line-5-5" name="line-5-5"></a><a href="#line-5-5"><span class="linenos"></span></a>        <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'Updated Account Name'</span><span class="p">,</span>
-<a id="line-5-6" name="line-5-6"></a><a href="#line-5-6"><span class="linenos"></span></a>        <span class="s1">'telephone1'</span><span class="p">:</span> <span class="s1">'+1-555-987-6543'</span><span class="p">,</span>
-<a id="line-5-7" name="line-5-7"></a><a href="#line-5-7"><span class="linenos"></span></a>        <span class="s1">'emailaddress1'</span><span class="p">:</span> <span class="s1">'hello2@example.com'</span><span class="p">,</span>
-<a id="line-5-8" name="line-5-8"></a><a href="#line-5-8"><span class="linenos"></span></a>    <span class="p">}</span>
-<a id="line-5-9" name="line-5-9"></a><a href="#line-5-9"><span class="linenos"></span></a>
-<a id="line-5-10" name="line-5-10"></a><a href="#line-5-10"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to update the account by ID</span>
-<a id="line-5-11" name="line-5-11"></a><a href="#line-5-11"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">patch</span><span class="p">(</span><span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span><span class="p">,</span> <span class="n">update_data</span><span class="p">)</span>
-<a id="line-5-12" name="line-5-12"></a><a href="#line-5-12"><span class="linenos"></span></a>
-<a id="line-5-13" name="line-5-13"></a><a href="#line-5-13"><span class="linenos"></span></a>    <span class="c1"># Log the response for auditing</span>
-<a id="line-5-14" name="line-5-14"></a><a href="#line-5-14"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (update account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-5-15" name="line-5-15"></a><a href="#line-5-15"><span class="linenos"></span></a>
-<a id="line-5-16" name="line-5-16"></a><a href="#line-5-16"><span class="linenos"></span></a>    <span class="c1"># Return the updated account response</span>
-<a id="line-5-17" name="line-5-17"></a><a href="#line-5-17"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="deleting-an-account">Deleting an Account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-6-1" name="line-6-1"></a><a href="#line-6-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">delete_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-6-2" name="line-6-2"></a><a href="#line-6-2"><span class="linenos"></span></a>
-<a id="line-6-3" name="line-6-3"></a><a href="#line-6-3"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to delete the account</span>
-<a id="line-6-4" name="line-6-4"></a><a href="#line-6-4"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span><span class="p">)</span>
-<a id="line-6-5" name="line-6-5"></a><a href="#line-6-5"><span class="linenos"></span></a>
-<a id="line-6-6" name="line-6-6"></a><a href="#line-6-6"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-6-7" name="line-6-7"></a><a href="#line-6-7"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (delete account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-6-8" name="line-6-8"></a><a href="#line-6-8"><span class="linenos"></span></a>
-<a id="line-6-9" name="line-6-9"></a><a href="#line-6-9"><span class="linenos"></span></a>    <span class="c1"># Return the API response</span>
-<a id="line-6-10" name="line-6-10"></a><a href="#line-6-10"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="api-path-vs-powerapps-ui-table-names">API path vs. PowerApps UI table names</h2>
-<p><img alt="" src="https://upcdn.io/kW15bqq/raw/root/en/docs/4.1/gfx/api/dev/examples/dataverse-table.png" /></p>
-<p>A detail to note when working with Dataverse APIs is that the names you see in the PowerApps or Dynamics UI are not
-always the same as the paths expected by the API. For example:</p>
-<ul>
-<li>In PowerApps, you may see a table called <strong>Account</strong>.</li>
-<li>In the API, you must use the path <strong>accounts</strong> (lowercase, plural) when making requests.</li>
-</ul>
-<p>This pattern applies to all Dataverse objects: always check the API documentation or inspect the metadata to determine the correct entity path.</p>
-<h2 id="working-with-other-dataverse-objects">Working with other Dataverse objects</h2>
-<p>While the examples above focus on the "accounts" entity, the same approach applies to any object in Dataverse: contacts, leads,
-opportunities, custom tables, and more. Simply adjust the API path and payload as needed.</p>
-<h2 id="full-crud-support">Full CRUD Support</h2>
-<p>With Zato and Python, you get full CRUD (Create, Read, Update, Delete) capability for any Dataverse entity. The methods
-shown above can be adapted for any object, allowing you to automate, integrate, and orchestrate data flows across your organization.</p>
-<h2 id="summary">Summary</h2>
-<p>This article has shown how to connect to Microsoft Dataverse from Python using Zato, perform CRUD operations,
-and understand the mapping between UI and API paths. These techniques enable robust integration and automation scenarios with any Dataverse data.</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ <a href="https://zato.io/en/tutorials/microsoft/365.html">Microsoft 365 APIs and Python Tutorial</a>
-<br />
-➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/4.1/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 03:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/dataverse-in-python.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.pythonanywhere.com/221/" class="hover:underline"
               >Changes on PythonAnywhere Free Accounts</a
             >
@@ -2155,6 +1753,116 @@ users <a href="./221/">here</a>.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://kushaldas.in/posts/johnnycanencrypt-0-17-0-released.html" class="hover:underline"
+              >Johnnycanencrypt 0.17.0 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <!--
+.. title: Johnnycanencrypt 0.17.0 released
+.. slug: johnnycanencrypt-0-17-0-released
+.. date: 2025-12-14T09:16:23+01:00
+.. tags: Debian, Fedora, OpenPGP, Privacy, Python, Rust, Security
+.. link:
+.. description:
+.. type: text
+-->
+<p>A few weeks ago I released Johnnycanencrypt
+<a href="https://github.com/kushaldas/johnnycanencrypt/releases/tag/v0.17.0">0.17.0</a>.
+It is a Python module written in Rust, which provides OpenPGP functionality
+including allows usage of Yubikey 4/5 as smartcards.</p>
+<h2>Added</h2>
+<ul>
+<li>Adds <code>verify_userpin</code> and <code>verify_adminpin</code> functions. #186</li>
+</ul>
+<h2>Fixed</h2>
+<ul>
+<li>#176 updates kushal's public key and tests.</li>
+<li>#177 uses sequoia-openpgp <code>1.22.0</code></li>
+<li>#178 uses scriv for changelog</li>
+<li>#181 updates pyo3 to <code>0.27.1</code></li>
+<li>#42, we now have only acceptable <code>expect</code> calls and no <code>unwrap</code> calls.</li>
+<li>Removes <code>cargo clippy</code> warnings.</li>
+</ul>
+<p>The build system now moved back to <a href="https://www.maturin.rs/">maturin</a>. I
+managed to clean up CI, and now testing properly in all 3 platforms (Linux,
+Mac, Windows). Till this release I had to manually test the smartcard
+functionalities by connecting a Yubikey in Linux/Mac systems, but that will
+change for the future releases. More details will come out soon :)</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 14, 2025 08:16 AM UTC by
+            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
+              >Kushal Das</a
+            >
+          </div>
+          <a
+            href="https://kushaldas.in/posts/johnnycanencrypt-0-17-0-released.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/530/anywidget-jupyter-widgets-made-easy" class="hover:underline"
+              >#530: anywidget: Jupyter Widgets made easy</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            For years, building interactive widgets in Python notebooks meant wrestling with toolchains, platform quirks, and a mountain of JavaScript machinery. Most developers took one look and backed away slowly. Trevor Manz decided that barrier did not need to exist. His idea was simple: give Python users just enough JavaScript to unlock the web’s interactivity, without dragging along the rest of the web ecosystem. That idea became anywidget, and it is quickly becoming the quiet connective tissue of modern interactive computing. Today we dig into how it works, why it has taken off, and how it might change the way we explore data.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 13, 2025 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/530/anywidget-jupyter-widgets-made-easy"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -2166,8 +1874,8 @@ users <a href="./221/">here</a>.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7838</a></li>
-    <li><a>Unique Feeds: 390</a></li>
+    <li><a>Total Entries: 7741</a></li>
+    <li><a>Unique Feeds: 388</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
