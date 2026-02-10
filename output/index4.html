@@ -53,6 +53,263 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/1/14/minijinja-go-port/" class="hover:underline"
+              >Porting MiniJinja to Go With an Agent</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Turns out you can just port things now.  I already attempted this experiment in
+the summer, but it turned out to be a bit too much for what I had time for.
+However, things have advanced since.  Yesterday I ported
+<a href="https://github.com/mitsuhiko/minijinja">MiniJinja</a> (a Rust Jinja2 template
+engine) to native Go, and I used an agent to do pretty much all of the work.  In
+fact, I barely did anything beyond giving some high-level guidance on how I
+thought it could be accomplished.</p>
+<p>In total I probably spent around 45 minutes actively with it.  It worked for
+around 3 hours while I was watching, then another 7 hours alone.  This post is a
+recollection of what happened and what I learned from it.</p>
+<p>All prompting was done by voice using <a href="https://buildwithpi.ai/">pi</a>, starting
+with Opus 4.5 and switching to GPT-5.2 Codex for the long tail of test fixing.</p>
+<ul>
+<li><a href="https://github.com/mitsuhiko/minijinja/pull/854">PR #854</a></li>
+<li><a href="https://shittycodingagent.ai/session/?29f75b708237ceead8b1c8cb55ea2305">Pi session transcript</a></li>
+<li><a href="https://www.youtube.com/watch?v=rqzY8Adxxns">Narrated video of the porting session</a></li>
+</ul>
+<h2>What is MiniJinja</h2>
+<p>MiniJinja is a re-implementation of Jinja2 for Rust. I originally wrote it
+because I wanted to do a infrastructure automation project in Rust and Jinja was
+popular for that.  The original project didn&#8217;t go anywhere, but MiniJinja itself
+continued being useful for both me and other users.</p>
+<p>The way MiniJinja is tested is with snapshot tests: inputs and expected outputs,
+using <a href="https://insta.rs/">insta</a> to verify they match.  These snapshot tests were
+what I wanted to use to validate the Go port.</p>
+<h2>Test-Driven Porting</h2>
+<p>My initial prompt asked the agent to figure out how to validate the port.
+Through that conversation, the agent and I aligned on a path: reuse the existing
+Rust snapshot tests and port incrementally (lexer -&gt; parser -&gt; runtime).</p>
+<p>This meant the agent built Go-side tooling to:</p>
+<ul>
+<li>Parse Rust&#8217;s test input files (which embed settings as JSON headers).</li>
+<li>Parse the reference insta <code>.snap</code> snapshots and compare output.</li>
+<li>Maintain a skip-list to temporarily opt out of failing tests.</li>
+</ul>
+<p>This resulted in a pretty good harness with a tight feedback loop.  The agent had
+a clear goal (make everything pass) and a progression (lexer -&gt; parser -&gt;
+runtime).  The tight feedback loop mattered particularly at the end where it was
+about getting details right.  Every missing behavior had one or more failing
+snapshots.</p>
+<h2>Branching in Pi</h2>
+<p>I used Pi&#8217;s branching feature to structure the session into phases.  I rewound
+back to earlier parts of the session and used the branch switch feature to
+inform the agent automatically what it had already done.  This is similar to
+compaction, but Pi shows me what it puts into the context.  When Pi switches
+branches it does two things:</p>
+<ol>
+<li>It stays in the same session so I can navigate around, but it makes a new
+branch off an earlier message.</li>
+<li>When switching, it adds a summary of what it did as a priming message into
+where it branched off.  I found this quite helpful to avoid the agent doing
+vision quests from scratch to figure out how far it had already gotten.</li>
+</ol>
+<p>Without switching branches, I would probably just make new sessions and have
+more plan files lying around or use something like Amp&#8217;s handoff feature which
+also allows the agent to consult earlier conversations if it needs more
+information.</p>
+<h2>First Signs of Divergence</h2>
+<p>What was interesting is that the agent went from literal porting to behavioral
+porting quite quickly.  I didn&#8217;t steer it away from this as long as the behavior
+aligned.  I let it do this for a few reasons.  First, the code base isn&#8217;t that
+large, so I felt I could make adjustments at the end if needed.  Letting the
+agent continue with what was already working felt like the right strategy.
+Second, it was aligning to idiomatic Go much better this way.</p>
+<p>For instance, on the runtime it implemented a tree-walking interpreter (not a
+bytecode interpreter like Rust) and it decided to use Go&#8217;s reflection for the
+value type.  I didn&#8217;t tell it to do either of these things, but they made more
+sense than replicating my Rust interpreter design, which was partly motivated by
+not having a garbage collector or runtime type information.</p>
+<h2>Where I Had to Push Back</h2>
+<p>On the other hand, the agent made some changes while making tests pass that I
+disagreed with.  It completely gave up on all the &#8220;must fail&#8221; tests because the
+error messages were impossible to replicate perfectly given the runtime
+differences.  So I had to steer it towards fuzzy matching instead.</p>
+<p>It also wanted to regress behavior I wanted to retain (e.g., exact HTML escaping
+semantics, or that <code>range</code> must return an iterator).  I think if I hadn&#8217;t steered
+it there, it might not have made it to completion without going down problematic
+paths, or I would have lost confidence in the result.</p>
+<h2>Grinding to Full Coverage</h2>
+<p>Once the major semantic mismatches were fixed, the remaining work was filling
+in all missing pieces: missing filters and test functions, loop extras, macros,
+call blocks, etc.  Since I wanted to go to bed, I switched to Codex 5.2 and
+queued up a few &#8220;continue making all tests pass if they are not passing yet&#8221;
+prompts, then let it work through compaction.  I felt confident enough that the
+agent could make the rest of the tests pass without guidance once it had the
+basics covered.</p>
+<p>This phase ran without supervision overnight.</p>
+<h2>Final Cleanup</h2>
+<p>After functional convergence, I asked the agent to document internal functions
+and reorganize (like moving filters to a separate file).  I also asked it to
+document all functions and filters like in the Rust code base.  This was also
+when I set up CI, release processes, and talked through what was created to come
+up with some finalizing touches before merging.</p>
+<h2>Parting Thoughts</h2>
+<p>There are a few things I find interesting here.</p>
+<p>First: these types of ports are possible now.  I know porting was already
+possible for many months, but it required much more attention.  This changes some
+dynamics.  I feel less like technology choices are constrained by ecosystem lock-in.
+Sure, porting NumPy to Go would be a more involved undertaking, and getting it
+competitive even more so (years of optimizations in there).  But still, it feels
+like many more libraries can be used now.</p>
+<p>Second: for me, the value is shifting from the code to the tests and
+documentation.  A good test suite might actually be worth more than the code.
+That said, this isn&#8217;t an argument for keeping tests secret &#8212; generating tests
+with good coverage is also getting easier.  However, for keeping code bases in
+different languages in sync, you need to agree on shared tests, otherwise
+divergence is inevitable.</p>
+<p>Lastly, there&#8217;s the social dynamic.  Once, having people port your code to other
+languages was something to take pride in.  It was a sign of accomplishment &#8212; a
+project was &#8220;cool enough&#8221; that someone put time into making it available
+elsewhere.  With agents, it doesn&#8217;t invoke the same feelings.  Will McGugan
+<a href="https://bsky.app/profile/willmcgugan.bsky.social/post/3mccn3l4qdk26">also called out this
+change</a>.</p>
+<h2>Session Stats</h2>
+<p>Lastly, some boring stats for the main session:</p>
+<ul>
+<li>Agent run duration: <del>10 hours (</del>3 hours supervised)</li>
+<li>Active human time: ~45 minutes</li>
+<li>Total messages: 2,698</li>
+<li>My prompts: 34</li>
+<li>Tool calls: 1,386</li>
+<li>Raw API token cost: $60</li>
+<li>Total tokens: 2.2 million</li>
+<li>Models: <code>claude-opus-4-5</code> and <code>gpt-5.2-codex</code> for the unattended overnight run</li>
+</ul>
+<p>This did not count the adding of doc strings and smaller fixups.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 14, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/1/14/minijinja-go-port/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://gael-varoquaux.info/programming/stepping-up-as-probabls-cso-to-supercharge-scikit-learn-and-its-ecosystem.html" class="hover:underline"
+              >Stepping up as probabl’s CSO to supercharge scikit-learn and its ecosystem</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <div class="admonition note">
+<p class="first admonition-title">Note</p>
+<div class="figure align-right">
+<img alt="" src="../programming/attachments/probabl_team_2025.png" style="width: 400px;" />
+<p class="caption">Probabl’s get together, in falls 2025</p>
+</div>
+<p class="last">I’m thrilled to announce that I’m stepping up as <a class="reference external" href="https://probabl.ai/?utm_source=employee_blog&amp;utm_medium=social_employee&amp;utm_campaign=202601_probabl_awareness_post">Probabl</a>’s CSO (Chief Science Officer) to supercharge
+scikit-learn and its ecosystem, pursuing my dreams of tools that help go
+from data to impact.</p>
+</div>
+<div class="section" id="scikit-learn-a-central-tool">
+<h2>Scikit-learn, a central tool</h2>
+<p>Scikit-learn is central …</p></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 11:00 PM UTC by
+            <a href="http://gael-varoquaux.info/feeds/programming.atom.xml" class="link link-hover text-primary"
+              >Ga&#235;l Varoquaux</a
+            >
+          </div>
+          <a
+            href="https://gael-varoquaux.info/programming/stepping-up-as-probabls-cso-to-supercharge-scikit-learn-and-its-ecosystem.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/intro-object-oriented-programming/" class="hover:underline"
+              >Intro to Object-Oriented Programming (OOP) in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn Python OOP fundamentals fast: master classes, objects, and constructors with hands-on lessons in this beginner-friendly video course.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 13, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/intro-object-oriented-programming/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2025/12/anthropic-invests-in-python.html" class="hover:underline"
               >Anthropic invests $1.5 million in the Python Software Foundation and open source security</a
             >
@@ -808,6 +1065,69 @@ incredicable TypeScript/Javascript help :)</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonspeed.com/articles/big-o-tests/" class="hover:underline"
+              >Unit testing your code's performance, part 1: Big-O scaling</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>When you implement an algorithm, you also implement tests to make sure the outputs are correct.
+This can help you:</p>
+
+<ul>
+  <li>Ensure your code is correct.</li>
+  <li>Catch problems if and when you change it in the future.</li>
+</ul>
+
+<p>If you’re trying to make sure your software is fast, or at least doesn’t get slower, automated tests for performance would also be useful.
+But where should you start?</p>
+
+<p>My suggestion: start by testing big-O scaling.
+It’s a critical aspect of your software’s speed, and it doesn’t require a complex benchmarking setup.
+In this article I’ll cover:</p>
+
+<ul>
+  <li>A reminder of what big-O scaling means for algorithms.</li>
+  <li>Why this is such a critical performance property.</li>
+  <li>Identifying your algorithm’s scalability, including empirically with the <code class="language-plaintext highlighter-rouge">bigO</code> library.</li>
+  <li>Using the <code class="language-plaintext highlighter-rouge">bigO</code> library to test your Python code’s big-O scalability.</li>
+</ul>
+
+
+   <a href="https://pythonspeed.com/articles/big-o-tests/">Read more...</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 07, 2026 12:00 AM UTC by
+            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
+              >Python⇒Speed</a
+            >
+          </div>
+          <a
+            href="https://pythonspeed.com/articles/big-o-tests/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://wirtel.be/post/2026/01/07/dsmtpd-1-2-0-test-your-emails-risk-free/" class="hover:underline"
               >dsmtpd 1.2.0: Test Your Emails Risk-Free</a
             >
@@ -1255,166 +1575,6 @@ Artwork was sourced from the <a href="https://www.spriters-resource.com/">Sprite
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/convert-python-bytes-to-strings/" class="hover:underline"
-              >Quiz: How to Convert Bytes to Strings in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Decode bytes into readable strings in Python. Test your skills working with data from files, APIs, and databases.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/convert-python-bytes-to-strings/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/464/malicious-package-no-build-for-you" class="hover:underline"
-              >#464 Malicious Package? No Build For You!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include ty: An extremely fast Python type checker and LSP, Python Supply Chain Security Made Easy, typing_extensions, and MI6 chief: We'll be as fluent in Python as we are in Russian.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/464/malicious-package-no-build-for-you"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/533/web-frameworks-in-prod-by-their-creators" class="hover:underline"
-              >#533: Web Frameworks in Prod by Their Creators</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Today on Talk Python, the creators behind FastAPI, Flask, Django, Quart, and Litestar get practical about running apps based on their framework in production. Deployment patterns, async gotchas, servers, scaling, and the stuff you only learn at 2 a.m. when the pager goes off. For Django, we have Carlton Gibson and Jeff Triplet. For Flask, we have David Lord and Phil Jones, and on team Litestar we have Janek Nouvertné and Cody Fincher, and finally Sebastián Ramírez from FastAPI is here. Let’s jump in.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 08:00 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/533/web-frameworks-in-prod-by-their-creators"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.glyph.im/2026/01/how-to-argue-with-me-about-ai.html" class="hover:underline"
-              >How To Argue With Me About AI, If You Must</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you insist we have a conversation, please come prepared.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 05, 2026 05:22 AM UTC by
-            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
-              >Glyph Lefkowitz</a
-            >
-          </div>
-          <a
-            href="https://blog.glyph.im/2026/01/how-to-argue-with-me-about-ai.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1426,8 +1586,8 @@ Artwork was sourced from the <a href="https://www.spriters-resource.com/">Sprite
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7744</a></li>
-    <li><a>Unique Feeds: 391</a></li>
+    <li><a>Total Entries: 7659</a></li>
+    <li><a>Unique Feeds: 388</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
