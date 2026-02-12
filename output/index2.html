@@ -53,6 +53,172 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://peter-hoffmann.com/2026/local-mac-dev-setup-with-dnsmasq-and-caddy.html" class="hover:underline"
+              >Local macOS Dev Setup: dnsmasq + caddy-snake for python projects</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>When working on a single web project, running <code>flask run</code> on a fixed port is
+usually more than sufficient. However, as soon as you start developing
+<strong>multiple services in parallel</strong>, this approach quickly becomes cumbersome:
+ports collide, you have to remember which service runs on which port, and you
+end up constantly starting, stopping, and restarting individual development
+servers by hand.</p>
+<p>Using a wildcard local domain (<code>*.lan</code>) throuhg dnsmask and a vhost proxy with
+proper WSGI services solves these problems cleanly. Each project gets a stable,
+memorable local subdomain instead of a port number, services can run side by
+side without collisions, and process management becomes centralized and
+predictable. The result is a local development setup with less friction.</p>
+<h1>dnsmasq on macOS Sonoma (Local DNS with <code>.lan</code>)</h1>
+<p>This is a concise summary of how to install and configure <strong>dnsmasq</strong> on <strong>macOS
+Sonoma</strong> to resolve local development domains using a <code>.lan</code> wildcard (e.g.
+<code>*.lan → 127.0.0.1</code>).</p>
+<h2>1. Install dnsmasq</h2>
+<p>Using Homebrew:</p>
+<div class="highlight"><pre><span></span>brew<span class="w"> </span>install<span class="w"> </span>dnsmasq
+</pre></div>
+<p>Homebrew (on Apple Silicon) installs dnsmasq and places the default config in:</p>
+<div class="highlight"><pre><span></span>/opt/homebrew/etc/dnsmasq.conf
+</pre></div>
+<h2>2. Configure dnsmasq</h2>
+<p>Edit the configuration file:</p>
+<div class="highlight"><pre><span></span>sudo<span class="w"> </span>vim<span class="w"> </span>/opt/homebrew/etc/dnsmasq.conf
+</pre></div>
+<p>Add the following:</p>
+<div class="highlight"><pre><span></span># Listen only on localhost
+listen-address=127.0.0.1
+bind-interfaces
+
+# DNS port
+port=53
+
+# Wildcard domain for local development
+address=/.lan/127.0.0.1
+</pre></div>
+<p>This maps <strong>any <code>*.lan</code> hostname</strong> to <code>127.0.0.1</code>.</p>
+<p>It's recommended to not use <code>.dev</code> as this is real Google owned TLD and browsers
+have baked in to use HTTPS only. Also don't use <code>.local</code> as this is reserved for
+mDNS (Bonjour).</p>
+<h2>3. Tell macOS to use dnsmasq</h2>
+<p>macOS ignores <code>/etc/resolv.conf</code>, so DNS must be configured per network interface.</p>
+<h3>Option A: System Settings (GUI)</h3>
+<ol>
+<li>System Settings → Network</li>
+<li>Select your active interface (Wi-Fi / Ethernet)</li>
+<li>Details → DNS</li>
+<li>Add:<div class="highlight"><pre><span></span>127.0.0.1
+</pre></div>
+</li>
+<li>Move it to the <strong>top</strong> of the DNS server list</li>
+</ol>
+<h3>Option B: Command line</h3>
+<div class="highlight"><pre><span></span>networksetup<span class="w"> </span>-setdnsservers<span class="w"> </span>Wi-Fi<span class="w"> </span><span class="m">127</span>.0.0.1
+</pre></div>
+<p>(Replace <code>Wi-Fi</code> with the correct interface name if needed.)</p>
+<h2>4. Start dnsmasq</h2>
+<p>Run it as a background service:</p>
+<div class="highlight"><pre><span></span>sudo<span class="w"> </span>brew<span class="w"> </span>services<span class="w"> </span>start<span class="w"> </span>dnsmasq
+</pre></div>
+<p>Or run it manually for debugging:</p>
+<div class="highlight"><pre><span></span>sudo<span class="w"> </span>dnsmasq<span class="w"> </span>--no-daemon
+</pre></div>
+<h2>5. Flush DNS cache</h2>
+<p>This step is required on Sonoma:</p>
+<div class="highlight"><pre><span></span>sudo<span class="w"> </span>dscacheutil<span class="w"> </span>-flushcache
+sudo<span class="w"> </span>killall<span class="w"> </span>-HUP<span class="w"> </span>mDNSResponder
+</pre></div>
+<h2>6. Test</h2>
+<div class="highlight"><pre><span></span>dig<span class="w"> </span>foo.lan
+ping<span class="w"> </span>foo.lan
+</pre></div>
+<p>Both should resolve to:</p>
+<div class="highlight"><pre><span></span>127.0.0.1
+</pre></div>
+<h2>Result</h2>
+<p>You now have:</p>
+<ul>
+<li>dnsmasq running on <code>127.0.0.1</code></li>
+<li>Wildcard local DNS via <code>*.lan</code></li>
+<li>Fully compatible behavior with macOS Sonoma</li>
+</ul>
+<h1>Caddy</h1>
+<p><strong>Note:</strong> My initial plan was to use caddy with caddy-snake to run multiple
+vhosts for python wsgi apps with the configuration below. But this did
+not work out as expected because caddy-snake does not run multiple python
+interpreters for the different projects, but <strong>only</strong> appends the site packages
+from the python projects to <code>sys.path</code> for all projects and runs all of them in
+the same python interpreter. This leads to problems with different python
+versions or incompatible python requirements installed in the different venv
+versions. So the approach below only works if you use the same python version
+and your requirements are compatible within the different apps.</p>
+<h2>Caddyfile: host multiple WSGI services</h2>
+<p>As we want caddy to run wsgi services we need to build <a href="https://github.com/mliezun/caddy-snake">caddy-snake</a>:</p>
+<p>The caddyfile now needs to be stored in <code>$(brew --prefix)/etc/Caddyfile</code></p>
+<div class="highlight"><pre><span></span>{
+    auto_https off
+}
+
+http://foo.lan {
+    bind 127.0.0.1
+    route {
+        python {
+            module_wsgi app:app
+            working_dir /Users/you/dev/foo
+            venv /Users/you/dev/foo/.venv
+		}
+	}
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+http://bar.lan {
+    bind 127.0.0.1 
+    route {
+        python {
+            module_wsgi app:app
+            working_dir /Users/you/dev/bar
+            venv /Users/you/dev/bar/.venv
+        }
+    }
+}
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 05, 2026 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="https://peter-hoffmann.com/2026/local-mac-dev-setup-with-dnsmasq-and-caddy.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://wirtel.be/post/2026/02/05/2026-certified-ai-developer/" class="hover:underline"
               >Certified AI Developer - A Journey of Growth, Grief, and New Beginning</a
             >
@@ -1636,116 +1802,6 @@ way or another.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/base-image-python-docker-images/" class="hover:underline"
-              >The best Docker base image for your Python application (February 2026)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When you’re building a Docker image for your Python application, you’re building on top of an existing image—and there are many possible choices for the resulting container.
-There are OS images like Ubuntu, and there are the many different variants of the <code class="language-plaintext highlighter-rouge">python</code> base image.
-And now there’s a new choice, installing Python using <code class="language-plaintext highlighter-rouge">uv</code>, which allows you to use any base image you’d like.</p>
-
-<p>Which one should you use?
-Which one is better?
-There are many choices, and it may not be obvious which is the best for your situation.</p>
-
-<p>So to help you make a choice that fits your needs, in this article I’ll go through some of the relevant criteria, and suggest some reasonable defaults that will work for most people.</p>
-
-
-   <a href="https://pythonspeed.com/articles/base-image-python-docker-images/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 30, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/base-image-python-docker-images/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/numpy-parallelism/" class="hover:underline"
-              >Speeding up NumPy with parallelism</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If your NumPy code is too slow, what next?</p>
-
-<p>One option is taking advantage of the multiple cores on your CPU: using
-a thread pool to do work in parallel. Another option is to tune your
-code so it’s less wasteful. Or, since these are two different sources of
-speed, you can do both.</p>
-
-<p>In this article I’ll cover:</p>
-
-<ul>
-  <li>A simple example of making a NumPy algorithm parallel.</li>
-  <li>A separate kind of optimization, making a more efficient
-implementation in Numba.</li>
-  <li>How to get even more speed by using both at once.</li>
-  <li>Aside: A hardware limit on parallelism.</li>
-  <li>Aside: Why not Numba’s built-in parallelism?</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/numpy-parallelism/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 29, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/numpy-parallelism/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/how-long-does-it-take-to-learn-python/" class="hover:underline"
               >How Long Does It Take to Learn Python?</a
             >
@@ -2193,6 +2249,52 @@ curl <span class="nt">-fsSL</span> https://openclaw.ai/install.sh | bash
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://gmpy.dev/blog/2026/event-driven-process-waiting" class="hover:underline"
+              >From Python 3.3 to today: ending 15 years of subprocess polling</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>One of the less fun aspects of process management on POSIX systems is waiting
+for a process to terminate. The standard library's <code>subprocess</code> module has
+relied on a busy-loop polling approach since the <em>timeout</em> parameter was added
+to
+<a href="https://docs.python.org/3/library/subprocess.html#subprocess.Popen.wait">Popen.wait()</a>
+in Python 3.3, around 15 years ago (see
+<a href="[https://url.com](https://github.com/python/cpython/blob/8def603d853c7f5e4ff57f95de289f99e1943669/Lib/subprocess.py#L2056-L2077)">source …</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 27, 2026 11:00 PM UTC by
+            <a href="https://gmpy.dev/feeds/atom.tag.python.xml" class="link link-hover text-primary"
+              >Giampaolo Rodola</a
+            >
+          </div>
+          <a
+            href="https://gmpy.dev/blog/2026/event-driven-process-waiting"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -2204,8 +2306,8 @@ curl <span class="nt">-fsSL</span> https://openclaw.ai/install.sh | bash
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7597</a></li>
-    <li><a>Unique Feeds: 383</a></li>
+    <li><a>Total Entries: 7756</a></li>
+    <li><a>Unique Feeds: 389</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
