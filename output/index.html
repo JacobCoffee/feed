@@ -53,6 +53,302 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/" class="hover:underline"
+              >Kernel-only network configuration on Linux</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>What if I told you there is a way to configure the network on any
+Linux server that:</p>
+
+<ol>
+<li>works across all distributions</li>
+<li>doesn't require any software installed apart from the kernel and a
+boot loader (no <code>systemd-networkd</code>, <code>ifupdown</code>, <code>NetworkManager</code>,
+nothing)</li>
+<li>is backwards compatible all the way back to Linux 2.0, in 1996</li>
+</ol>
+
+
+<p>It has literally 8 different caveats on top of that, but is still
+totally worth your time.</p>
+
+<h1 id="known-options-in-debian">Known options in Debian</h1>
+
+<p>People following Debian development might have noticed there are now
+<em>four</em> ways of configuring the network Debian system. At least that is
+what the <a href="https://wiki.debian.org/NetworkConfiguration#A4_ways_to_configure_the_network">Debian wiki claims</a>, namely:</p>
+
+<ul>
+<li><p><code>ifupdown</code> (<code>/etc/network/interfaces</code>): traditional static
+configuration system, mostly for workstations and servers that has
+been there forever in Debian (since <a href="https://sources.debian.org/src/ifupdown/0.8.45/debian/changelog#L1948-L1952">at least 2000</a>), documented
+<a href="https://wiki.debian.org/NetworkConfiguration">in the Debian wiki</a></p></li>
+<li><p><a href="https://networkmanager.dev/">NetworkManager</a>: self-proclaimed "standard Linux network
+configuration", mostly used on desktops but technically supports
+servers as well, see the <a>Debian wiki page</a> (introduced in 2004)</p></li>
+<li><p><code>systemd-network</code>: used more for servers, see <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_without_gui">Debian reference Doc
+Chapter 5</a> (introduced some time around Debian 8 "jessie", in
+2015)</p></li>
+<li><p><a href="https://netplan.io/">Netplan</a>: latest entry (2018), YAML-based configuration
+abstraction layer on top of the above two, see also <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_for_cloud">Debian
+reference Doc Chapter 5</a> and <a href="https://wiki.debian.org/Netplan">the Debian wiki</a></p></li>
+</ul>
+
+
+<p>At this point, I feel <code>ifupdown</code> is on its way out, possibly replaced
+by <code>systemd-networkd</code>. NetworkManager already manages most desktop
+configurations.</p>
+
+<h1 id="a-new-network-configuration-system">A "new" network configuration system</h1>
+
+<p>The method is this:</p>
+
+<ul>
+<li><code>ip=</code> on the <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">Linux kernel command line</a>: for servers with a
+single IPv4 or IPv6 address, no software required other than the
+kernel and a boot loader (since 2002 or older)</li>
+</ul>
+
+
+<blockquote><p>So by "new" I mean "new to me". This option is <em>really</em> old. The
+<code>nfsroot.txt</code> where it is documented predates the git import of the
+Linux kernel: it's part of the 2005 git import of 2.6.12-rc2. That's
+already 20+ years old already.</p>
+
+<p>The oldest trace I found is in this <a href="https://git.kernel.org/pub/scm/linux/kernel/git/tglx/history.git/commit/Documentation/nfsroot.txt?id=7a2deb32924142696b8174cdf9b38cd72a11fc96">2002 commit</a>, which imports
+the whole file at once, but the option might goes back as far as
+1996-1997, if the copyright on the file is correct and the option
+was present back then.</p></blockquote>
+
+<h1 id="what-are-you-doing">What are you doing.</h1>
+
+<p>The trick is to add an <code>ip=</code> parameter to the kernel's
+command-line. The syntax, as mentioned above, is in <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">nfsroot.txt</a>
+and looks like this:</p>
+
+<pre><code>ip=&lt;client-ip&gt;:&lt;server-ip&gt;:&lt;gw-ip&gt;:&lt;netmask&gt;:&lt;hostname&gt;:&lt;device&gt;:&lt;autoconf&gt;:&lt;dns0-ip&gt;:&lt;dns1-ip&gt;:&lt;ntp0-ip&gt;
+</code></pre>
+
+<p>Most settings are pretty self-explanatory, if you ignore the useless
+ones:</p>
+
+<ul>
+<li><code>&lt;client-ip&gt;</code>: IP address of the server</li>
+<li><code>&lt;gw-ip&gt;</code>: address of the gateway</li>
+<li><code>&lt;netmask&gt;</code>: netmask, in quad notation</li>
+<li><code>&lt;device&gt;</code>: interface name, if multiple available</li>
+<li><code>&lt;autoconf&gt;</code>: how to configure the interface, namely:
+
+<ul>
+<li><code>off</code> or <code>none</code>: no autoconfiguration (static)</li>
+<li><code>on</code> or <code>any</code>: use any protocol (default)</li>
+<li><code>dhcp</code>, essentially like <code>on</code> for all intents and purposes</li>
+</ul>
+</li>
+</ul>
+
+
+<p>Note that the <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/networking_guide/sec-configuring_ip_networking_from_the_kernel_command_line">Red Hat manual</a> has a different opinion:</p>
+
+<pre><code>ip=[&lt;server-id&gt;]:&lt;gateway-IP-number&gt;:&lt;netmask&gt;:&lt;client-hostname&gt;:inteface:[dhcp|dhcp6|auto6|on|any|none|off]
+</code></pre>
+
+<p>It's essentially the same (although <code>server-id</code> is weird), and the
+<code>autoconf</code> variable has other settings, so that's a bit odd.</p>
+
+<h1 id="examples">Examples</h1>
+
+<p>For example, this command-line setting:</p>
+
+<pre><code>ip=192.0.2.42::192.0.2.1:255.255.255.0:::off
+</code></pre>
+
+<p>... will set the IP address to 192.0.2.42/24 and the gateway to
+192.0.2.1. This will properly guess the network interface if there's a
+single one.</p>
+
+<p>A DHCP only configuration will look like this:</p>
+
+<pre><code>ip=::::::dhcp
+</code></pre>
+
+<p>Of course, you don't want to type this by hand every time you boot the
+machine. That wouldn't work. You need to configure the kernel
+commandline, and that depends on your boot loader.</p>
+
+<h2 id="grub">GRUB</h2>
+
+<p>With GRUB, you need to edit (on Debian), the file <code>/etc/default/grub</code>
+(ugh) and find a line like:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=
+</code></pre>
+
+<p>and change it to:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=ip=::::::dhcp
+</code></pre>
+
+<h2 id="systemd-boot-and-uki-setups">systemd-boot and UKI setups</h2>
+
+<p>For <code>systemd-boot</code> UKI setups, it's simpler: just add the setting to
+the <code>/etc/kernel/cmdline</code> file. Don't forget to include anything
+that's non-default from <code>/proc/cmdline</code>.</p>
+
+<p>This assumes that is the <code>Cmdline=@</code> setting in
+<code>/etc/kernel/uki.conf</code>. See <a href="https://anarc.at/blog/2025-08-20-luks-ukify-conversion/">2025-08-20-luks-ukify-conversion</a> for
+my minimal documentation on this.</p>
+
+<h2 id="other-systems">Other systems</h2>
+
+<p>This is perhaps where this is much less portable than it might first
+look, because of course each distribution has its own way of
+configuring those options. Here are some that I know of:</p>
+
+<ul>
+<li><a href="https://wiki.archlinux.org/title/Kernel_parameters">Arch</a> (11 options, mostly <code>/etc/default/grub</code>,
+<code>/boot/loader/entries/arch.conf</code> for <code>systemd-boot</code> or
+<code>/etc/kernel/cmdline</code> for UKI)</li>
+<li><a href="https://fedoramagazine.org/setting-kernel-command-line-arguments-with-fedora-30/">Fedora</a> (mostly <code>/etc/default/grub</code>, may be more <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/managing_monitoring_and_updating_the_kernel/configuring-kernel-command-line-parameters_managing-monitoring-and-updating-the-kernel">RHEL mentions
+grubby</a>, possibly some <code>systemd-boot</code> things here as well)</li>
+<li><a href="https://wiki.gentoo.org/wiki/Kernel/Command-line_parameters">Gentoo</a> (5 options, mostly <code>/etc/default/grub</code>,
+<code>/efi/loader/entries/gentoo-sources-kernel.conf</code> for <code>systemd-boot</code>,
+or <code>/etc/kernel/install.d/95-uki-with-custom-opts.install</code>)</li>
+</ul>
+
+
+<p>It's interesting that <code>/etc/default/grub</code> is consistent across all
+distributions above, while the <code>systemd-boot</code> setups are <em>all over the
+place</em> (except for the UKI case), while I would have expected those be
+<em>more</em> standard than GRUB.</p>
+
+<h2 id="dropbear-initramfs">dropbear-initramfs</h2>
+
+<p>If <code>dropbear-initramfs</code> is setup, it already <em>requires</em> you to have
+such a configuration, and it might not work out of the box.</p>
+
+<p>This is because, by default, it <em>disables</em> the interfaces configured
+in the kernel after completing its tasks (typically unlocking the
+encrypted disks).</p>
+
+<p>To fix this, you need to <em>disable</em> that "feature":</p>
+
+<pre><code>IFDOWN="none"
+</code></pre>
+
+<p>This will keep <code>dropbear-initramfs</code> from disabling the configured
+interface.</p>
+
+<h1 id="why">Why?</h1>
+
+<p>Traditionally, I've always setup my servers with <code>ifupdown</code> on servers
+and NetworkManager on laptops, because that's essentially the
+default. But on some machines, I've started using <code>systemd-networkd</code>
+because <code>ifupdown</code> has ... issues, particularly with reloading network
+configurations. <code>ifupdown</code> is a old hack, feels like legacy, and is
+Debian-specific.</p>
+
+<p>Not excited about configuring another service, I figured I would try
+something else: just configure the network at boot, through the kernel
+command-line.</p>
+
+<p>I was already doing such configurations for <a href="https://packages.debian.org/unstable/dropbear-initramfs">dropbear-initramfs</a>
+(see <a href="https://wiki.debian.org/DropBear">this documentation</a>), which requires the network the be up
+for unlocking the full-disk encryption keys.</p>
+
+<p>So in a sense, this is a "Don't Repeat Yourself" solution.</p>
+
+<h1 id="caveats">Caveats</h1>
+
+<p>Also known as: "wait, that works?" Yes, it does! That said...</p>
+
+<ol>
+<li><p>This is useful for servers where the network configuration will
+not change after boot. Of course, this won't work on laptops or
+any mobile device.</p></li>
+<li><p>This only works for single interface configurations. If you have
+multiple interfaces, bridges, VLANs, wifi, none of this will work.</p></li>
+<li><p>It does support IPv6 and feels like the best way to configure IPv6
+hosts: true zero configuration.</p></li>
+<li><p>It likely does <em>not</em> work with a <em>dual-stack</em> IPv4/IPv6 static
+configuration. It <em>might</em> work with a <em>dynamic</em> dual stack
+configuration, but I doubt it.</p></li>
+<li><p>I don't know what happens when a DHCP lease expires. No daemon
+seems to be running so I assume leases are not renewed, so this is
+more useful for static configurations, which includes server-side
+reserved fixed IP addresses. (A non-renewed lease risks getting
+reallocated to another machine, which would cause an addressing
+conflict.)</p></li>
+<li><p>It will not automatically reconfigure the interface on link
+changes, but <code>ifupdown</code> does not either.</p></li>
+<li><p>It will <em>not</em> write a good <code>resolv.conf</code> for you, that you need to
+configure separately. <em>Maybe</em> passing those <code>dns0-ip</code> settings
+will work? Untested, but DNS is, after all, a mostly user-level
+implementation (typically in <code>libc</code>), the kernel doesn't (again,
+typically) care about DNS.</p></li>
+<li><p>I have not really tested this <a href="https://db.torproject.org/machines.cgi">at scale</a>: only a single, test
+server at home.</p></li>
+</ol>
+
+
+<p>Yes, that's a lot of caveats, but it happens to cover a <em>lot</em> of
+machines for me, and it works surprisingly well. My main doubts are
+about long-term DHCP behaviour, but I don't see why that would be a
+problem with a statically defined lease.</p>
+
+<h1 id="cleanup">Cleanup</h1>
+
+<p>Once you have this configuration, you don't need <em>any</em> "user" level
+network system, so you can get rid of <em>everything</em>:</p>
+
+<pre><code>apt purge systemd-networkd ifupdown network-manager netplan.io
+</code></pre>
+
+<p>Note that <code>ifupdown</code> (and probably others) leave stray files in (e.g.)
+<code>/etc/network</code> which you might want to cleanup, or keep in case all
+this fails and I have put you in utter misery. Configuration files for
+other packages might also be left behind, I haven't tested this, no
+warranty.</p>
+
+<h1 id="credits">Credits</h1>
+
+<p>This whole idea came from the <a href="https://www.autistici.org/">A/I</a> folks (not to be confused with
+<a href="https://en.wikipedia.org/wiki/Bullshit">AI</a>) who have been doing this forever, thanks!</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 16, 2026 04:18 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonmorsels.com/default-dictionary-values/" class="hover:underline"
               >Setting default dictionary values in Python</a
             >
@@ -1962,303 +2258,6 @@ Finally, if you want an artisanal, hand-crafted digest of every week of the show
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2026/2/9/a-language-for-agents/" class="hover:underline"
-              >A Language For Agents</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Last year I first started thinking about what the future of programming
-languages might look like now that agentic engineering is a growing thing.
-Initially I felt that the enormous corpus of pre-existing code would cement
-existing languages in place but now I&#8217;m starting to think the opposite is true.
-Here I want to outline my thinking on why we are going to see more new
-programming languages and why there is quite a bit of space for interesting
-innovation.  And just in case someone wants to start building one, here are some
-of my thoughts on what we should aim for!</p>
-<h2>Why New Languages Work</h2>
-<p>Does an agent perform dramatically better on a language that it has in its
-weights?  Obviously yes.  But there are less obvious factors that affect how
-good an agent is at programming in a language: how good the tooling around it is
-and how much churn there is.</p>
-<p>Zig seems underrepresented in the weights (at least in the models I&#8217;ve used)
-and also changing quickly.  That combination is not optimal, but it&#8217;s still
-passable: you can program even in the upcoming Zig version if you point the
-agent at the right documentation.  But it&#8217;s not great.</p>
-<p>On the other hand, some languages are well represented in the weights but agents
-still don&#8217;t succeed as much because of tooling choices.  Swift is a good
-example: in my experience the tooling around building a Mac or iOS application
-can be so painful that agents struggle to navigate it.  Also not great.</p>
-<p>So, just because it exists doesn&#8217;t mean the agent succeeds and just because it&#8217;s
-new also doesn&#8217;t mean that the agent is going to struggle.  I&#8217;m convinced that
-you can build yourself up to a new language if you don&#8217;t want to depart
-everywhere all at once.</p>
-<p>The biggest reason new languages might work is that the cost of coding is going
-down dramatically.  The result is the breadth of an ecosystem matters less. I&#8217;m
-now routinely reaching for JavaScript in places where I would have used Python.
-Not because I love it or the ecosystem is better, but because the agent does
-much better with TypeScript.</p>
-<p>The way to think about this: if important functionality is missing in my
-language of choice, I just point the agent at a library from a different
-language and have it build a port.  As a concrete example, I recently built an
-Ethernet driver in JavaScript to implement the host controller for our sandbox.
-Implementations exist in Rust, C, and Go, but I wanted something pluggable and
-customizable in JavaScript.  It was easier to have the agent reimplement it than
-to make the build system and distribution work against a native binding.</p>
-<p>New languages will work if their value proposition is strong enough and they
-evolve with knowledge of how LLMs train.  People will adopt them despite being
-underrepresented in the weights.  And if they are designed to work well with
-agents, then they might be designed around familiar syntax that is already known
-to work well.</p>
-<h2>Why A New Language?</h2>
-<p>So why would we want a new language at all?  The reason this is interesting to
-think about is that many of today&#8217;s languages were designed with the assumption
-that punching keys is laborious, so we traded certain things for brevity.  As an
-example, many languages — particular modern ones — lean heavily on type
-inference so that you don&#8217;t have to write out types.  The downside is that you
-now need an LSP or the resulting compiler error messages to figure out what the
-type of an expression is.  Agents struggle with this too, and it&#8217;s also
-frustrating in pull request review where complex operations can make it very
-hard to figure out what the types actually are.  Fully dynamic languages are
-even worse in that regard.</p>
-<p>The cost of writing code is going down, but because we are also producing more
-of it, understanding what the code does is becoming more important.  We might
-actually want more code to be written if it means there is less ambiguity when
-we perform a review.</p>
-<p>I also want to point out that we are heading towards a world where some code is
-never seen by a human and is only consumed by machines.  Even in that case, we
-still want to give an indication to a user, who is potentially a non-programmer,
-about what is going on.  We want to be able to explain to a user what the code
-will do without going into the details of how.</p>
-<p>So the case for a new language comes down to: given the fundamental changes in
-who is programming and what the cost of code is, we should at least consider
-one.</p>
-<h2>What Agents Want</h2>
-<p>It&#8217;s tricky to say what an agent wants because agents will lie to you and they
-are influenced by all the code they&#8217;ve seen.  But one way to estimate how they
-are doing is to look at how many changes they have to perform on files and how
-many iterations they need for common tasks.</p>
-<p>There are some things I&#8217;ve found that I think will be true for a while.</p>
-<h3>Context Without LSP</h3>
-<p>The language server protocol lets an IDE infer information about what&#8217;s under
-the cursor or what should be autocompleted based on semantic knowledge of the
-codebase.  It&#8217;s a great system, but it comes at one specific cost that is tricky
-for agents: the LSP has to be running.</p>
-<p>There are situations when an agent just won&#8217;t run the LSP — not because of
-technical limitations, but because it&#8217;s also lazy and will skip that step if it
-doesn&#8217;t have to.  If you give it an example from documentation, there is no easy
-way to run the LSP because it&#8217;s a snippet that might not even be complete.  If
-you point it at a GitHub repository and it pulls down individual files, it will
-just look at the code.  It won&#8217;t set up an LSP for type information.</p>
-<p>A language that doesn&#8217;t split into two separate experiences (with-LSP and
-without-LSP) will be beneficial to agents because it gives them one unified way
-of working across many more situations.</p>
-<h3>Braces, Brackets, and Parentheses</h3>
-<p>It pains me as a Python developer to say this, but whitespace-based indentation
-is a problem.  The underlying token efficiency of getting whitespace right is
-tricky, and a language with significant whitespace is harder for an LLM to work
-with.  This is particularly noticeable if you try to make an LLM do surgical
-changes without an assisted tool.  Quite often they will intentionally disregard
-whitespace, add markers to enable or disable code and then rely on a code
-formatter to clean up indentation later.</p>
-<p>On the other hand, braces that are not separated by whitespace can cause issues
-too.  Depending on the tokenizer, runs of closing parentheses can end up split
-into tokens in surprising ways (a bit like the &#8220;strawberry&#8221; counting problem),
-and it&#8217;s easy for an LLM to get Lisp or Scheme wrong because it loses track of
-how many closing parentheses it has already emitted or is looking at.  Fixable
-with future LLMs?  Sure, but also something that was hard for humans to get
-right too without tooling.</p>
-<h3>Flow Context But Explicit</h3>
-<p>Readers of this blog might know that I&#8217;m a huge believer in async locals and
-flow execution context — basically the ability to carry data through every
-invocation that might only be needed many layers down the call chain.  Working
-at an observability company has really driven home the importance of this for
-me.</p>
-<p>The challenge is that anything that flows implicitly might not be configured.
-Take for instance the current time.  You might want to implicitly pass a timer
-to all functions.  But what if a timer is not configured and all of a sudden a
-new dependency appears?  Passing all of it explicitly is tedious for both humans
-and agents and bad shortcuts will be made.</p>
-<p>One thing I&#8217;ve experimented with is having effect markers on functions that are
-added through a code formatting step.  A function can declare that it needs the
-current time or the database, but if it doesn&#8217;t mark this explicitly, it&#8217;s
-essentially a linting warning that auto-formatting fixes.  The LLM can start
-using something like the current time in a function and any existing caller gets
-the warning; formatting propagates the annotation.</p>
-<p>This is nice because when the LLM builds a test, it can precisely mock out
-these side effects — it understands from the error messages what it has to
-supply.</p>
-<p>For instance:</p>
-<div class="highlight"><pre><span></span><span class="k">fn</span><span class="w"> </span><span class="nf">issue</span><span class="p">(</span><span class="n">sub</span><span class="p">:</span><span class="w"> </span><span class="nc">UserId</span><span class="p">,</span><span class="w"> </span><span class="n">scopes</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span><span class="n">Scope</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">Token</span>
-<span class="w">    </span><span class="n">needs</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">time</span><span class="p">,</span><span class="w"> </span><span class="n">rng</span><span class="w"> </span><span class="p">}</span>
-<span class="p">{</span>
-<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">Token</span><span class="p">{</span>
-<span class="w">        </span><span class="n">sub</span><span class="p">,</span>
-<span class="w">        </span><span class="n">exp</span><span class="p">:</span><span class="w"> </span><span class="nc">time</span><span class="p">.</span><span class="n">now</span><span class="p">().</span><span class="n">add</span><span class="p">(</span><span class="mi">24</span><span class="n">h</span><span class="p">),</span>
-<span class="w">        </span><span class="n">scopes</span><span class="p">,</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="p">}</span>
-
-<span class="n">test</span><span class="w"> </span><span class="s">&quot;issue creates exp in the future&quot;</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">using</span><span class="w"> </span><span class="n">time</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">time</span><span class="p">.</span><span class="n">fixed</span><span class="p">(</span><span class="s">&quot;2026-02-06T23:00:00Z&quot;</span><span class="p">);</span>
-<span class="w">    </span><span class="n">using</span><span class="w"> </span><span class="n">rng</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">rng</span><span class="p">.</span><span class="n">deterministic</span><span class="p">(</span><span class="n">seed</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-
-<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">t</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">issue</span><span class="p">(</span><span class="n">user</span><span class="p">(</span><span class="s">&quot;u1&quot;</span><span class="p">),</span><span class="w"> </span><span class="p">[</span><span class="s">&quot;read&quot;</span><span class="p">]);</span>
-<span class="w">    </span><span class="n">assert</span><span class="p">(</span><span class="n">t</span><span class="p">.</span><span class="n">exp</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">time</span><span class="p">.</span><span class="n">now</span><span class="p">());</span>
-<span class="p">}</span>
-</pre></div>
-<h3>Results over Exceptions</h3>
-<p>Agents struggle with exceptions, they are afraid of them.  I&#8217;m not sure to what
-degree this is solvable with RL (Reinforcement Learning), but right now agents
-will try to catch everything they can, log it, and do a pretty poor recovery.
-Given how little information is actually available about error paths, that makes
-sense.  Checked exceptions are one approach, but they propagate all the way up
-the call chain and don&#8217;t dramatically improve things.  Even if they end up as
-hints where a linter tracks which errors can fly by, there are still many call
-sites that need adjusting.  And like the auto-propagation proposed for context
-data, it might not be the right solution.</p>
-<p>Maybe the right approach is to go more in on typed results, but that&#8217;s still
-tricky for composability without a type and object system that supports it.</p>
-<h3>Minimal Diffs and Line Reading</h3>
-<p>The general approach agents use today to read files into memory is line-based,
-which means they often pick chunks that span multi-line strings.  One easy way
-to see this fall apart: have an agent work on a 2000-line file that also
-contains long embedded code strings — basically a code generator.  The agent
-will sometimes edit within a multi-line string assuming it&#8217;s the real code when
-it&#8217;s actually just embedded code in a multi-line string.  For multi-line
-strings, the only language I&#8217;m aware of with a good solution is Zig, but its
-prefix-based syntax is pretty foreign to most people.</p>
-<p>Reformatting also often causes constructs to move to different lines.  In many
-languages, trailing commas in lists are either not supported (JSON) or not
-customary.  If you want diff stability, you&#8217;d aim for a syntax that requires
-less reformatting and mostly avoids multi-line constructs.</p>
-<h3>Make It Greppable</h3>
-<p>What&#8217;s really nice about Go is that you mostly cannot import symbols from
-another package into scope without every use being prefixed with the package
-name.  Eg: <code>context.Context</code> instead of <code>Context</code>.  There are escape hatches
-(import aliases and dot-imports), but they&#8217;re relatively rare and usually
-frowned upon.</p>
-<p>That dramatically helps an agent understand what it&#8217;s looking at.  In general,
-making code findable through the most basic tools is great — it works with
-external files that aren&#8217;t indexed, and it means fewer false positives for
-large-scale automation driven by code generated on the fly (eg: <code>sed</code>, <code>perl</code>
-invocations).</p>
-<h3>Local Reasoning</h3>
-<p>Much of what I&#8217;ve said boils down to: agents really like local reasoning.  They
-want it to work in parts because they often work with just a few loaded files in
-context and don&#8217;t have much spatial awareness of the codebase.  They rely on
-external tooling like grep to find things, and anything that&#8217;s hard to grep or
-that hides information elsewhere is tricky.</p>
-<h3>Dependency Aware Builds</h3>
-<p>What makes agents fail or succeed in many languages is just how good the build
-tools are.  Many languages make it very hard to determine what actually needs to
-rebuild or be retested because there are too many cross-references.  Go is
-really good here: it forbids circular dependencies between packages (import
-cycles), packages have a clear layout, and test results are cached.</p>
-<h2>What Agents Hate</h2>
-<h3>Macros</h3>
-<p>Agents often struggle with macros.  It was already pretty clear that humans
-struggle with macros too, but the argument for them was mostly that code
-generation was a good way to have less code to write.  Since that is less of a
-concern now, we should aim for languages with less dependence on macros.</p>
-<p>There&#8217;s a separate question about generics and
-<a href="https://zig.guide/language-basics/comptime/">comptime</a>.  I think they fare
-somewhat better because they mostly generate the same structure with different
-placeholders and it&#8217;s much easier for an agent to understand that.</p>
-<h3>Re-Exports and Barrel Files</h3>
-<p>Related to greppability: agents often struggle to understand <a href="https://tkdodo.eu/blog/please-stop-using-barrel-files">barrel
-files</a> and they don&#8217;t
-like them.  Not being able to quickly figure out where a class or function comes
-from leads to imports from the wrong place, or missing things entirely and
-wasting context by reading too many files.  A one-to-one mapping from where
-something is declared to where it&#8217;s imported from is great.</p>
-<p>And it does not have to be overly strict either.  Go kind of goes this way, but
-not too extreme.  Any file within a directory can define a function, which isn&#8217;t
-optimal, but it&#8217;s quick enough to find and you don&#8217;t need to search too far.
-It works because packages are forced to be small enough to find everything with
-grep.</p>
-<p>The worst case is free re-exports all over the place that completely decouple
-the implementation from any trivially reconstructable location on disk.  Or
-worse: aliasing.</p>
-<h3>Aliasing</h3>
-<p>Agents often hate it when aliases are involved.  In fact, you can get them to
-even complain about it in thinking blocks if you let them refactor something
-that uses lots of aliases.  Ideally a language encourages good naming and
-discourages aliasing at import time as a result.</p>
-<h3>Flaky Tests and Dev Env Divergence</h3>
-<p>Nobody likes flaky tests, but agents even less so.  Ironic given how
-particularly good agents are at creating flaky tests in the first place.  That&#8217;s
-because agents currently love to mock and most languages do not support mocking
-well.  So many tests end up accidentally not being concurrency safe or depend on
-development environment state that then diverges in CI or production.</p>
-<p>Most programming languages and frameworks make it much easier to write flaky
-tests than non-flaky ones.  That&#8217;s because they encourage indeterminism
-everywhere.</p>
-<h3>Multiple Failure Conditions</h3>
-<p>In an ideal world the agent has one command, that lints and compiles and it
-tells the agent if all worked out fine.  Maybe another command to run all tests
-that need running.  In practice most environments don&#8217;t work like this.  For
-instance in TypeScript you can often run the code even <a href="/2025/8/4/shitty-types/">though it fails
-type checks</a>.  That can gaslight the agent.  Likewise
-different bundler setups can cause one thing to succeed just for a slightly
-different setup in CI to fail later.  The more uniform the tooling the better.</p>
-<p>Ideally it either runs or doesn&#8217;t and there is mechanical fixing for as many
-linting failures as possible so that the agent does not have to do it by hand.</p>
-<h2>Will We See New Languages?</h2>
-<p>I think we will.  We are writing more software now than we ever have — more
-websites, more open source projects, more of everything.  Even if the ratio of
-new languages stays the same, the absolute number will go up.  But I also truly
-believe that many more people will be willing to rethink the foundations of
-software engineering and the languages we work with.  That&#8217;s because while for
-some years it has felt you need to build a lot of infrastructure for a language
-to take off, now you can target a rather narrow use case: make sure the agent is
-happy and extend from there to the human.</p>
-<p>I just hope we see two things.  First, some outsider art: people who haven&#8217;t
-built languages before trying their hand at it and showing us new things.
-Second, a much more deliberate effort to document what works and what doesn&#8217;t
-from first principles.  We have actually learned a lot about what makes good
-languages and how to scale software engineering to large teams.  Yet,  finding
-it written down, as a consumable overview of good and bad language design, is
-very hard to come by.  Too much of it has been shaped by opinion on rather
-pointless things instead of hard facts.</p>
-<p>Now though, we are slowly getting to the point where facts matter more, because
-you can actually measure what works by seeing how well agents perform with it.
-No human wants to be subject to surveys, but <a href="/2025/6/17/measuring/">agents don&#8217;t
-care</a>.  We can see how successful they are and where they
-are struggling.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 09, 2026 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2026/2/9/a-language-for-agents/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2270,8 +2269,8 @@ are struggling.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7604</a></li>
-    <li><a>Unique Feeds: 388</a></li>
+    <li><a>Total Entries: 7543</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
