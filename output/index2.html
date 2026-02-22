@@ -53,6 +53,279 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html" class="hover:underline"
+              >Garmin Inreach Mini 2 Leaflet checkin map</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We will be trekking the eastern part of the Great Himalaya Trail in Nepal in
+March/April. Details on the route and our plans can be found at
+<a href="https://greathimalayatrail.de">https://greathimalayatrail.de</a>. Our intent is to keep friends and family
+updated on our progress. Given that we'll be hiking in quite remote areas, a
+satellite phone/pager will be our sole means of communication.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/garmin-inreach-mini.png" /></p>
+<p>After the Garmin inReach Mini 3 was released recently, the Inreach Mini 2 was on
+heavy sale. The inReach Mini 2 has all the features I need: satellite messaging,
+check-ins, offline mode with navigation, and track recording.</p>
+<h1>Plans</h1>
+<p>I'm on the Garmin Essential plan for 18 euros per month. It includes 50 free
+text messages or weather requests each month, plus unlimited check-in messages.
+The smaller Enabled plan (10 Euros) is missing the unlimited checkins, while the
+the Standard plan (34 Euros) gives you 150 free messages and unlimited live tracking.
+More details are on the <a href="https://www.garmin.com/de-DE/p/837461/pn/010-04015-SU/">Garmin page</a></p>
+<h1>Messaging</h1>
+<p>There are three different type of messages that you can send:</p>
+<p><strong>Check-In Messages:</strong> There are three preset messages. You can configure the
+recipients at <a href="https://explore.garmin.com">explore.garmin.com</a>. Depending on your Garmin
+subscription, sending check-in messages are free of charge. In the configuration section,
+you can enable the option to include your latitude/longitude and a link to the
+Garmin map in each SMS message. This information is always included for email
+recipients</p>
+<p><strong>Quick Messages:</strong> You can create up to 20 predefined messages so you don’t
+have to type them while you’re on the trail. The number of free messages you
+get depends on your Garmin subscription; any additional messages are billed per
+use. You can create or edit these messages at explore.garmin.com.</p>
+<p><strong>Normal Messages:</strong> In the Garmin Messenger iPhone app, you can type any custom
+message and send it to both SMS and email recipients. These messages are billed
+the same way as quick messages.</p>
+<p>You can configure the system to send all messages to any email/sms recipients. The great
+thing is that the unlimited check-in messages also include latitude/longitude information.
+Here is a sample message.</p>
+<div class="highlight"><pre><span></span>Arrived at Camp
+
+View the location or send a reply to Peter Hoffmann:
+https://inreachlink.com/&lt;unique_code&gt;
+
+Peter Hoffmann sent this message from: Lat 48.996386 Lon 8.468849
+
+Do not reply directly to this message.
+
+This message was sent to you using the inReach two-way satellite communicator with GPS. To learn more, visit http://explore.garmin.com/inreach.
+</pre></div>
+<p>As we do not want to spam all our friends with daily checkins I have build
+a little leaflet-checkin plugin and an imap scraper to pull and visualize
+the checkin/messages.</p>
+<h1>Build your own Tracking with Check-In Messages</h1>
+<p>For battery life reasons, we are not interested in real-time live tracking.<br />
+Instead, I’ve created a small script that checks a dedicated IMAP email account
+for check-in messages and publishes them to a server, which then displays the
+location of our most recent check-in. Sending a check-in once a day or during
+each break when we are in more remote areas—should give our friends enough
+information in case any problems arise.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/leaflet-checkin-map.png" /></p>
+<p>A straightforward Python script connects to my IMAP server, retrieves all emails from
+the Garmin InReach service, parses the message, timestamp, and latitude/longitude, and
+then updates a <code>positions.json</code> file on my webserver.</p>
+<p>Then a simple static html file with a <a href="https://leafletjs.com">leaflet</a> map pulls
+the <code>positions.json</code> file and displays the messages/checkins on the map.</p>
+<p>A demo of the map is available at:</p>
+<p><a href="https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html">https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html</a></p>
+<p>and you can checkout the code</p>
+<p><a href="https://github.com/hoffmann/garmin-inreach-checkin-map">https://github.com/hoffmann/garmin-inreach-checkin-map</a></p>
+<div class="highlight"><pre><span></span><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;Poll IMAP inbox for Garmin inReach emails and extract positions into positions.json.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">email</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">email.utils</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">imaplib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timezone</span>
+
+<span class="n">BOILERPLATE_PREFIXES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;View the location&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Do not reply&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;This message was sent&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">POSITIONS_FILE</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;positions.json&quot;</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">imaplib</span><span class="o">.</span><span class="n">IMAP4_SSL</span><span class="p">(</span><span class="n">host</span><span class="p">)</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">login</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">imap</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">):</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;INBOX&quot;</span><span class="p">)</span>
+    <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="kc">None</span><span class="p">,</span> <span class="s1">'(OR FROM &quot;no.reply.inreach@garmin.com&quot; SUBJECT &quot;inReach message&quot;)'</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">msg_ids</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">is_multipart</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">walk</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_type</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;text/plain&quot;</span><span class="p">:</span>
+                <span class="n">charset</span> <span class="o">=</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+                <span class="k">return</span> <span class="n">part</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">charset</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+        <span class="k">return</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="n">date_str</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Date&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">date_str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">parsedate_to_datetime</span><span class="p">(</span><span class="n">date_str</span><span class="p">)</span>
+    <span class="n">dt_utc</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">astimezone</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">dt_utc</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">):</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+
+    <span class="c1"># Extract message: first non-empty line</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">stripped</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">stripped</span><span class="p">:</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="n">stripped</span>
+            <span class="k">break</span>
+
+    <span class="c1"># Check if the message is boilerplate</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">message</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="k">for</span> <span class="n">prefix</span> <span class="ow">in</span> <span class="n">BOILERPLATE_PREFIXES</span><span class="p">):</span>
+        <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="c1"># Extract lat/lon</span>
+    <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;Lat\s+([-\d.]+)\s+Lon\s+([-\d.]+)&quot;</span><span class="p">,</span> <span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">lat</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">lon</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_email</span><span class="p">(</span><span class="n">msg_data</span><span class="p">):</span>
+    <span class="n">msg</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">message_from_bytes</span><span class="p">(</span><span class="n">msg_data</span><span class="p">)</span>
+
+    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">timestamp</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">body</span> <span class="o">=</span> <span class="n">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">body</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="n">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">lat</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">lon</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">timestamp</span><span class="p">,</span>
+        <span class="s2">&quot;lat&quot;</span><span class="p">:</span> <span class="n">lat</span><span class="p">,</span>
+        <span class="s2">&quot;lon&quot;</span><span class="p">:</span> <span class="n">lon</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="n">message</span><span class="p">:</span>
+        <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;msg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">message</span>
+    
+
+    <span class="k">return</span> <span class="n">entry</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_positions</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">save_positions</span><span class="p">(</span><span class="n">positions</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">host</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_HOST&quot;</span><span class="p">)</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_USER&quot;</span><span class="p">)</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_PASSWORD&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">([</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">]):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Error: Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD environment variables.&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">msg_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> inReach email(s)&quot;</span><span class="p">)</span>
+
+        <span class="n">new_entries</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">msg_id</span> <span class="ow">in</span> <span class="n">msg_ids</span><span class="p">:</span>
+            <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">msg_id</span><span class="p">,</span> <span class="s2">&quot;(RFC822)&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">entry</span> <span class="o">=</span> <span class="n">parse_email</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">entry</span><span class="p">:</span>
+                <span class="n">new_entries</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">imap</span><span class="o">.</span><span class="n">logout</span><span class="p">()</span>
+
+    <span class="n">existing</span> <span class="o">=</span> <span class="n">load_positions</span><span class="p">()</span>
+    <span class="n">existing_timestamps</span> <span class="o">=</span> <span class="p">{</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">existing</span><span class="p">}</span>
+
+    <span class="n">added</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">new_entries</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">existing_timestamps</span><span class="p">:</span>
+            <span class="n">existing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+            <span class="n">existing_timestamps</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+            <span class="n">added</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">existing</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+    <span class="n">save_positions</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Added </span><span class="si">{</span><span class="n">added</span><span class="si">}</span><span class="s2"> new position(s) (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span><span class="si">}</span><span class="s2"> total)&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 13, 2026 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2026/02/python-is-for-everyone-inside-psfs-d.html" class="hover:underline"
               >Python is for Everyone: Inside the PSF's D&I Work Group</a
             >
@@ -1786,52 +2059,6 @@ are struggling.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://eli.thegreenplace.net/2026/rewriting-pycparser-with-the-help-of-an-llm/" class="hover:underline"
-              >Rewriting pycparser with the help of an LLM</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><a class="reference external" href="https://github.com/eliben/pycparser">pycparser</a> is my most widely used open
-source project (with ~20M daily downloads from PyPI <a class="footnote-reference" href="#footnote-1" id="footnote-reference-1">[1]</a>). It's a pure-Python
-parser for the C programming language, producing ASTs inspired by <a class="reference external" href="https://docs.python.org/3/library/ast.html">Python's
-own</a>. Until very recently, it's
-been using <a class="reference external" href="https://www.dabeaz.com/ply/ply.html">PLY: Python Lex-Yacc</a> for
-the core parsing.</p>
-<p>In this post, I'll describe how …</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 05, 2026 03:35 AM UTC by
-            <a href="http://eli.thegreenplace.net/feeds/python.atom.xml" class="link link-hover text-primary"
-              >Eli Bendersky</a
-            >
-          </div>
-          <a
-            href="https://eli.thegreenplace.net/2026/rewriting-pycparser-with-the-help-of-an-llm/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1843,8 +2070,8 @@ the core parsing.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7441</a></li>
-    <li><a>Unique Feeds: 379</a></li>
+    <li><a>Total Entries: 7538</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
