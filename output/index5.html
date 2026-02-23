@@ -53,8 +53,8 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/chatgpt-api-python/" class="hover:underline"
-              >How to Integrate ChatGPT's API With Python Projects</a
+            <a href="https://sethmlarson.dev/mgba-to-dolphin-not-working-you-need-a-gba-bios?utm_campaign=rss" class="hover:underline"
+              >mGBA → Dolphin not working? You need a GBA BIOS</a
             >
           </h2>
           
@@ -63,20 +63,265 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            Learn how to use the ChatGPT Python API with the openai library to build AI-powered features in your Python applications.
+            <p>The GBA emulator “<a href="https://mgba.io/">mGBA</a>” supports emulating the
+<a href="https://en.wikipedia.org/wiki/GameCube_%E2%80%93_Game_Boy_Advance_link_cable">Game Boy Advance Link Cable</a>
+(not to be confused with the <a href="https://en.wikipedia.org/wiki/Game_Link_Cable#Third_generation">Game Boy Advance /<em>Game</em>/ Link Cable</a>)
+and connecting to a running <a href="https://dolphin-emu.org">Dolphin emulator</a> instance.
+I am interested in this functionality for <a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Four_Swords_Adventures">Legend of Zelda: Four Swords Adventures</a>,
+specifically the “<a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Four_Swords_Adventures#Navi_Trackers">Navi Trackers</a>”
+game mode that was announced for all regions but was only released in Japan
+and Korea. In the future I want to explore the <a href="https://forums.dolphin-emu.org/Thread-tetra-s-trackers-navi-tracker-translation-02-05-2023">English</a> <a href="https://www.patreon.com/posts/zelda-four-beta-60032999">language</a> patches.</p>
+
+<!-- more -->
+
+<p>After <a href="https://dolphin-emu.org/blog/2021/04/24/mgba-and-dolphin-connectivity/">reading the documentation</a> to connect the two emulators I configured the
+controllers to be “GBA (TCP)” in Dolphin and ensured that Dolphin had the
+permissions it needed to do networking (Dolphin is installed as a Flatpak).
+I selected “Connect” on mGBA from the “Connect to Dolphin” popup screen
+and there was zero feedback... no UI changes, errors, or success messages. Hmmm...</p>
+
+<p>I found out in a random Reddit comment section that a GBA BIOS was needed to connect to Dolphin, so I set off
+to legally obtain the BIOSes from my hardware.
+I opted to use the <a href="https://github.com/mgba-emu/bios-dump">BIOS-dump ROM</a> developed by the mGBA team
+to dump the BIOS from my Game Boy Advance SP and DS Lite.</p>
+
+<p>Below is a guide on how to <a href="https://github.com/mgba-emu/bios-dump">build the BIOS ROM from source</a>
+on Ubuntu 24.04, and then dump GBA BIOSes. Please note you'll likely need a GBA flash cartridge
+for running homebrew on your Game Boy Advance. I used
+an EZ-Flash Omega flash cartridge, but I've heard Everdrive GBA is also popular.</p>
+
+<h2>Installing devKitARM on Ubuntu 24.04</h2>
+
+<p>To build this ROM from source you'll need <a href="https://devkitpro.org/wiki/Getting_Started">devKitARM</a>.
+If you already have devKitARM installed you can skip these steps.
+The devKitPro team supplies an <a href="https://apt.devkitpro.org/install-devkitpro-pacman">easy script</a> for installing
+devKitPro toolsets, but unfortunately the <code>apt.devkitpro.org</code> domain
+appears to be behind an aggressive “bot” filter right now
+so their instructions to use <code>wget</code> are not working as written.</p>
+
+<p>Instead, download <a href="https://apt.devkitpro.org/devkitpro-pub.gpg">their GPG key</a>
+with a browser and then run the commands yourself:</p>
+
+<div class="codehilite">
+<pre><span></span><code>apt-get install apt-transport-https
+
+<span class="k">if</span> ! <span class="o">[</span> -f /usr/local/share/keyring/devkitpro-pub.gpg <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+  mkdir -p /usr/local/share/keyring/
+  mv devkitpro-pub.gpg /usr/local/share/keyring/
+<span class="k">fi</span>
+
+<span class="k">if</span> ! <span class="o">[</span> -f /etc/apt/sources.list.d/devkitpro.list <span class="o">]</span><span class="p">;</span> <span class="k">then</span>
+  <span class="nb">echo</span> <span class="s2">&quot;deb [signed-by=/usr/local/share/keyring/devkitpro-pub.gpg] https://apt.devkitpro.org stable main&quot;</span> &gt; /etc/apt/sources.list.d/devkitpro.list
+<span class="k">fi</span>
+
+apt-get update
+apt-get install devkitpro-pacman
+</code></pre>
+</div>
+
+<p>Once you've installed devKitPro pacman (for Ubuntu: <code>dkp-pacman</code>)
+you can install the GBA development tools package group:</p>
+
+<div class="codehilite">
+<pre><span></span><code>dkp-pacman -S gba-dev
+</code></pre>
+</div>
+
+<p>After this you can set the <code>DEVKITARM</code> environment variable
+within your shell profile to <code>/opt/devkitpro/devkitARM</code>.
+Now you should be ready to build the GBA BIOS dumping ROM.</p>
+
+<h2>Building the bios-dump ROM</h2>
+
+<p>Once devKitARM toolkit is installed the next step is much easier.
+You basically download the source, run <code>make</code> with the <code>DEVKITARM</code> environment variable
+set properly, and if all the tools are installed you'll quickly have
+your ROM:</p>
+
+<div class="codehilite">
+<pre><span></span><code>apt-get install build-essential curl unzip
+curl -L -o bios-dump.zip <span class="se">\</span>
+    https://github.com/mgba-emu/bios-dump/archive/refs/heads/master.zip
+unzip bios-dump.zip
+<span class="nb">cd</span> bios-dump-master
+<span class="nb">export</span> <span class="nv">DEVKITARM</span><span class="o">=</span>/opt/devkitpro/devkitARM/
+make
+</code></pre>
+</div>
+
+<p>You should end up with a GBA ROM file titled <code>bios-dump.gba</code>.
+Add this <code>.gba</code> file to your microSD card for the flash cartridge.
+Boot up the flash cartridge using the device you are trying to dump
+BIOS of and after boot-up the screen should quickly show a success message
+along with checksums of the BIOS file. As noted in the mGBA bios-dump README, there are two GBA BIOSes:</p>
+
+<ul>
+<li><code>sha256:fd2547</code>: GBA, GBA SP, GBA SP “AGS-101”, GBA Micro, and Game Boy Player.</li>
+<li><code>sha256:782eb3</code>: DS, DS Lite, and all 3DS variants</li>
+</ul>
+
+<p>I own a GBA SP, a Game Boy Player, and a DS Lite, so I was able to 
+dump three different GBA BIOSes, two of which are identical:</p>
+
+<div class="codehilite">
+<pre><span></span><code>sha256sum *.bin
+fd2547...  gba_sp_bios.bin
+fd2547...  gba_gbp_bios.bin
+782eb3...  gba_ds_bios.bin
+</code></pre>
+</div>
+
+<p>From here I was able to configure mGBA with a GBA BIOS file (Tools→Settings→BIOS)
+and successfully connect to Dolphin running four instances of mGBA; one for each
+of the Links!</p>
+
+<div class="row">
+<div class="col-8">
+<p style="text-align: center;"><img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/G4SE01_2026-01-17_17-11-00.png" style="border: 2px solid black;" /></p>
+</div>
+<div class="col-4">
+<p style="text-align: center;"><img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba_bios-0.png" style="border: 2px solid black;" /></p>
+<p style="text-align: center;">💚❤️💙💜</p>
+<p>mGBA probably could have shown an error message
+when the “connecting” phase requires a BIOS.
+Looks like this behavior been known <a href="https://github.com/mgba-emu/mgba/issues/2210">since 2021</a>.</p>
+</div>
+</div>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 19, 2026 02:00 PM UTC by
+            Posted on January 21, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/mgba-to-dolphin-not-working-you-need-a-gba-bios?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/01/announcing-python-software-foundation.html" class="hover:underline"
+              >Announcing Python Software Foundation Fellow Members for Q4 2025! 🎉</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&nbsp;</p><p><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The PSF is pleased to announce its fourth </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">batch</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> of PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">2025</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! Let us welcome the new PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Q4</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! The following people continue to do amazing things for the Python community:</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Chris Brousseau</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://surfaceowl.com/" target="_blank">Website</a>, <a href="https://www.linkedin.com/in/chrisbrousseau/" target="_blank">LinkedIn</a>, <a href="https://github.com/surfaceowl" target="_blank">GitHub</a>, <a href="https://mastodon.social/@surfaceowl" target="_blank">Mastodon</a>, <a href="https://x.com/surfaceowl" target="_blank">X</a>, <a href="https://pybay.org/" target="_blank">PyBay,</a> <a href="https://github.com/pybay" target="_blank">PyBay GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Dave Forgac</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://daveops.com/" target="_blank">Website</a>, <a href="https://mastodon.social/@tylerdave" target="_blank">Mastodon</a>, <a href="https://github.com/tylerdave" target="_blank">GitHub</a>, <a href="https://www.linkedin.com/in/daveforgac/" target="_blank">LinkedIn</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Inessa Pawson</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://github.com/InessaPawson" target="_blank">GitHub</a>, <a href="https://linkedin.com/in/ipawson" target="_blank">LinkedIn</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">James Abel</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="http://www.abel.co/" target="_blank">Website</a>, <a href="https://www.linkedin.com/in/jamesabel/" target="_blank">LinkedIn</a>, <a href="https://github.com/jamesabel" target="_blank">GitHub</a>, <a href="https://bsky.app/profile/jamesabel.bsky.social" target="_blank">Bluesky</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Karen Dalton</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://www.linkedin.com/in/karend" target="_blank">LinkedIn</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Mia Bajić</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 12pt; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Tatiana Andrea Delgadillo Garzofino</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://taicoding.com/" target="_blank">Website</a>, <a href="https://github.com/taicoding" target="_blank">GitHub</a>, <a href="https://linkedin.com/in/taicoding" target="_blank">LinkedIn</a>, <a href="https://www.instagram.com/taicoding" target="_blank">Instagram</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Thank you for your continued contributions. We have added you to our <a href="https://www.python.org/psf/fellows-roster/" target="_blank">Fellows Roster</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: justify;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The above members help support the Python ecosystem by being phenomenal leaders, sustaining the growth of the Python scientific community, maintaining virtual Python communities, maintaining Python libraries, creating educational material, organizing Python events and conferences, starting Python communities in local regions, and overall being great mentors in our community. Each of them continues to help make Python more accessible around the world. To learn more about the new Fellow members, check out their links above.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Let's continue recognizing Pythonistas all over the world for their impact on our community. The criteria for Fellow members is available on our <a href="https://www.python.org/psf/fellows" target="_blank">PSF Fellow Membership page</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. If you would like to nominate someone to be a PSF Fellow, please send a description of their Python accomplishments and their email address to psf-fellow at python.org.</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> We are accepting nominations for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Quarter 1 of 2026 through February 20th, 2026</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Are you a PSF Fellow and want to help the Work Group review nominations? Contact us at psf-fellow at python.org.</span></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 20, 2026 07:49 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/01/announcing-python-software-foundation.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/uv-vs-pip-packaging-dependency-management/" class="hover:underline"
+              >uv vs pip: Python Packaging and Dependency Management</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Choosing between uv vs pip? This video course compares speed, reproducible environments, compatibility, and dependency management to help you pick the right tool.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 20, 2026 02:00 PM UTC by
             <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
               >Real Python</a
             >
           </div>
           <a
-            href="https://realpython.com/chatgpt-api-python/"
+            href="https://realpython.com/courses/uv-vs-pip-packaging-dependency-management/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2026/01/19/new-book-vibe-coding-video-games-with-python/" class="hover:underline"
+              >New Book: Vibe Coding Video Games with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>My latest book, Vibe Coding Video Games with Python, is now available as an eBook. The paperback will be coming soon, hopefully by mid-February at the latest. The book is around 183 pages in length and is 6&#215;9” in size. In this book, you will learn how to use artificial intelligence to create mini-games. You will attempt [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2026/01/19/new-book-vibe-coding-video-games-with-python/">New Book: Vibe Coding Video Games with Python</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 19, 2026 02:25 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2026/01/19/new-book-vibe-coding-video-games-with-python/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1528,160 +1773,6 @@ incredicable TypeScript/Javascript help :)</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2026/01/08/automating-tls-certificate-monitoring-github-actions-certificate-watcher-slack/" class="hover:underline"
-              >Automating TLS Certificate Monitoring with GitHub Actions, certificate_watcher, and Slack</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="introduction">Introduction</h2>
-<p>As a consultant constantly working with clients, I found myself in a familiar predicament: my head was always down, focused on delivering value to customers, but my own infrastructure monitoring was non-existent. I had no simple way to track SSL/TLS certificate expirations across the multiple domains I managed - personal sites, client projects, and community services.</p>
-<p>I needed a solution, but I had several constraints:</p>
-<ol>
-<li><strong>No time for complex setup</strong>: I couldn&rsquo;t afford to spend days installing, configuring, and deploying yet another monitoring service</li>
-<li><strong>Easy maintenance</strong>: Whatever I built had to be low-maintenance - I didn&rsquo;t want another system to babysit</li>
-<li><strong>Transparency and control</strong>: I wanted a simple text file in Git listing the hosts to monitor, so I could see exactly what was being checked and track changes over time</li>
-<li><strong>Zero infrastructure</strong>: No servers to provision, patch, or pay for</li>
-</ol>
-<p>Around this time, a friend named Julien shared his project called <code>certificate_watcher</code>, a lightweight Python tool for checking SSL certificate expiration. I contributed a few patches (if memory serves), and it clicked: what if I could combine this with GitHub Actions and Slack notifications?</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 08, 2026 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2026/01/08/automating-tls-certificate-monitoring-github-actions-certificate-watcher-slack/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/big-o-tests/" class="hover:underline"
-              >Unit testing your code's performance, part 1: Big-O scaling</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When you implement an algorithm, you also implement tests to make sure the outputs are correct.
-This can help you:</p>
-
-<ul>
-  <li>Ensure your code is correct.</li>
-  <li>Catch problems if and when you change it in the future.</li>
-</ul>
-
-<p>If you’re trying to make sure your software is fast, or at least doesn’t get slower, automated tests for performance would also be useful.
-But where should you start?</p>
-
-<p>My suggestion: start by testing big-O scaling.
-It’s a critical aspect of your software’s speed, and it doesn’t require a complex benchmarking setup.
-In this article I’ll cover:</p>
-
-<ul>
-  <li>A reminder of what big-O scaling means for algorithms.</li>
-  <li>Why this is such a critical performance property.</li>
-  <li>Identifying your algorithm’s scalability, including empirically with the <code class="language-plaintext highlighter-rouge">bigO</code> library.</li>
-  <li>Using the <code class="language-plaintext highlighter-rouge">bigO</code> library to test your Python code’s big-O scalability.</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/big-o-tests/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 07, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/big-o-tests/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2026/01/07/dsmtpd-1-2-0-test-your-emails-risk-free/" class="hover:underline"
-              >dsmtpd 1.2.0: Test Your Emails Risk-Free</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="the-test-email-that-never-should-have-been-sent">The Test Email That Never Should Have Been Sent</h2>
-<p>You know that feeling? You&rsquo;re developing a new email feature, you run your test script, and <em>boom</em> — you realize 3 seconds too late that you used the production database. Your CEO just received an email with the subject &ldquo;TEST - DO NOT READ - LOREM IPSUM&rdquo;.</p>
-<p>Or worse: you configured a cloud SMTP server for testing, forgot to disable actual sending, and now your Mailgun account is suspended for &ldquo;suspicious activity&rdquo; because you sent 847 emails to <code>test@example.com</code> in 5 minutes.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 07, 2026 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2026/01/07/dsmtpd-1-2-0-test-your-emails-risk-free/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -1693,8 +1784,8 @@ In this article I’ll cover:</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7434</a></li>
-    <li><a>Unique Feeds: 380</a></li>
+    <li><a>Total Entries: 7499</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
