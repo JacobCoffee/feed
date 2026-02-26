@@ -53,6 +53,90 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202601/testing_exceptions_and_caches" class="hover:underline"
+              >Testing: exceptions and caches</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Two testing-related things I found recently.</p><h1 id="h_unified_exception_testing">Unified exception testing<a class="headerlink" href="#h_unified_exception_testing"></a></h1><p>Kacper Borucki blogged about <a href="https://borutzki.github.io/2026/01/15/how-to-parametrize-exception-testing-in-pytest.html" rel="external noopener">parameterizing exception
+testing</a>, and linked to <a href="https://docs.pytest.org/en/stable/example/parametrize.html#parametrizing-conditional-raising" rel="external noopener">pytest docs</a> and a
+<a href="https://stackoverflow.com/questions/20274987/how-to-use-pytest-to-check-that-error-is-not-raised/68012715#68012715" rel="external noopener">StackOverflow answer</a> with similar approaches.</p><p>The common way to test exceptions is to use
+<a href="https://docs.pytest.org/en/7.1.x/how-to/assert.html#assertions-about-expected-exceptions" rel="external noopener"><code>pytest.raises</code></a> as a context manager, and have
+separate tests for the cases that succeed and those that fail.  Instead, this
+approach lets you unify them.</p><p>I tweaked it to this, which I think reads nicely:</p><blockquote class="code"><div class="source"><pre class="python"><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">contextlib</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">nullcontext</span>&#xa0;<span class="k">as</span>&#xa0;<span class="n">produces</span>
+<br />
+<br /><span class="kn">import</span><span class="w">&#xa0;</span><span class="nn">pytest</span>
+<br /><span class="kn">from</span><span class="w">&#xa0;</span><span class="nn">pytest</span><span class="w">&#xa0;</span><span class="kn">import</span>&#xa0;<span class="n">raises</span>
+<br />
+<br /><span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">parametrize</span><span class="p">(</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="s2">&quot;example_input,&#xa0;result&quot;</span><span class="p">,</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">[</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">(</span><span class="mi">3</span><span class="p">,</span>&#xa0;<span class="n">produces</span><span class="p">(</span><span class="mi">2</span><span class="p">)),</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">(</span><span class="mi">2</span><span class="p">,</span>&#xa0;<span class="n">produces</span><span class="p">(</span><span class="mi">3</span><span class="p">)),</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">(</span><span class="mi">1</span><span class="p">,</span>&#xa0;<span class="n">produces</span><span class="p">(</span><span class="mi">6</span><span class="p">)),</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">(</span><span class="mi">0</span><span class="p">,</span>&#xa0;<span class="n">raises</span><span class="p">(</span><span class="ne">ZeroDivisionError</span><span class="p">)),</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">,</span>&#xa0;<span class="n">raises</span><span class="p">(</span><span class="ne">TypeError</span><span class="p">)),</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="p">],</span>
+<br /><span class="p">)</span>
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">test_division</span><span class="p">(</span><span class="n">example_input</span><span class="p">,</span>&#xa0;<span class="n">result</span><span class="p">):</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">with</span>&#xa0;<span class="n">result</span>&#xa0;<span class="k">as</span>&#xa0;<span class="n">e</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">assert</span>&#xa0;<span class="p">(</span><span class="mi">6</span>&#xa0;<span class="o">/</span>&#xa0;<span class="n">example_input</span><span class="p">)</span>&#xa0;<span class="o">==</span>&#xa0;<span class="n">e</span>
+<br /></pre></div>
+</blockquote><p>One parameterized test that covers both good and bad outcomes. Nice.</p><h1 id="h_antilru">AntiLRU<a class="headerlink" href="#h_antilru"></a></h1><p>The <a href="https://docs.python.org/3/library/functools.html#functools.lru_cache" rel="external noopener"><code>@functools.lru_cache</code></a> decorator (and its
+convenience cousin <code>@cache</code>) are good ways to save the result of a function
+so that you don&#8217;t have to compute it repeatedly.  But, they hide an implicit
+global in your program: the dictionary of cached results.</p><p>This can interfere with testing. Your tests should all be isolated from each
+other. You don&#8217;t want a side effect of one test to affect the outcome of another
+test. The hidden global dictionary will do just that. The first test calls the
+cached function, then the second test gets the cached value, not a newly
+computed one.</p><p>Ideally, lru_cache would only be used on <em>pure</em> functions: the result only depends on the arguments.
+If it&#8217;s only used for pure functions, then you don&#8217;t need to worry about interactions between tests
+because the answer will be the same for the second test anyway.</p><p>But lru_cache is used on functions that pull information from the
+environment, perhaps from a network API call.  The tests might mock out the API
+to check the behavior under different API circumstances. Here&#8217;s where the
+interference is a real problem.</p><p>The lru_cache decorator makes a <code>.clear_cache</code> method available on each
+decorated function. I had some code that explicitly called that method on the
+cached functions. But then I added a new cached function, forgot to update the
+conftest.py code that cleared the caches, and my tests were failing.</p><p>A more convenient approach is provided by
+<a href="https://pypi.org/project/pytest-antilru/" rel="external noopener">pytest-antilru</a>: it&#8217;s a pytest plugin that monkeypatches
+<code>@lru_cache</code> to track all of the cached functions, and clears them all
+between tests. The caches are still in effect during each test, but can&#8217;t
+interfere between them.</p><p>It works great. I was able to get rid of all of the manually maintained cache
+clearing in my conftest.py.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 25, 2026 08:32 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202601/testing_exceptions_and_caches"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/535/pyview-real-time-python-web-apps" class="hover:underline"
               >#535: PyView: Real-time Python Web Apps</a
             >
@@ -1526,46 +1610,6 @@ We couldn’t be more grateful for Anthropic’s remarkable support, and we hope
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/534/diskcache-your-secret-python-perf-weapon" class="hover:underline"
-              >#534: diskcache: Your secret Python perf weapon</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Your cloud SSD is sitting there, bored, and it would like a job. Today we’re putting it to work with DiskCache, a simple, practical cache built on SQLite that can speed things up without spinning up Redis or extra services. Once you start to see what it can do, a universe of possibilities opens up. We're joined by Vincent Warmerdam to dive into DiskCache.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 13, 2026 05:32 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/534/diskcache-your-secret-python-perf-weapon"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -1577,8 +1621,8 @@ We couldn’t be more grateful for Anthropic’s remarkable support, and we hope
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7518</a></li>
-    <li><a>Unique Feeds: 386</a></li>
+    <li><a>Total Entries: 7633</a></li>
+    <li><a>Unique Feeds: 390</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
