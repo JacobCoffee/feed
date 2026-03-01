@@ -53,6 +53,927 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/530/anywidget-jupyter-widgets-made-easy" class="hover:underline"
+              >#530: anywidget: Jupyter Widgets made easy</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            For years, building interactive widgets in Python notebooks meant wrestling with toolchains, platform quirks, and a mountain of JavaScript machinery. Most developers took one look and backed away slowly. Trevor Manz decided that barrier did not need to exist. His idea was simple: give Python users just enough JavaScript to unlock the web’s interactivity, without dragging along the rest of the web ecosystem. That idea became anywidget, and it is quickly becoming the quiet connective tissue of modern interactive computing. Today we dig into how it works, why it has taken off, and how it might change the way we explore data.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 13, 2025 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/530/anywidget-jupyter-widgets-made-easy"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2025/12/13/skills-vs-mcp/" class="hover:underline"
+              >Skills vs Dynamic MCP Loadouts</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I&#8217;ve been moving all my MCPs to skills, including the remaining one I still
+used: the Sentry MCP<sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup>.  Previously I had already moved entirely away from
+Playwright to a Playwright skill.</p>
+<p>In the last month or so there have been discussions about using <a href="https://www.anthropic.com/engineering/advanced-tool-use">dynamic tool
+loadouts</a> to defer
+loading of tool definitions until later.  Anthropic has also been toying around
+with the idea of wiring together MCP calls via code, something <a href="/2025/7/3/tools/">I have
+experimented with</a>.</p>
+<p>I want to share my updated findings with all of this and why the deferred tool
+loading that Anthropic came up with does not fix my lack of love for MCP.  Maybe
+they are useful for someone else.</p>
+<h2>What is a Tool?</h2>
+<p>When the agent encounters a tool definition through reinforcement learning or
+otherwise, it is encouraged to emit tool calls through special tokens when it
+encounters a situation where that tool call would be appropriate.  For all
+intents and purposes, tool definitions can only appear between special tool
+definition tokens in a system prompt.  Historically this means that you cannot
+emit tool definitions later in the conversation state.  So your only real option
+is for a tool to be loaded when the conversation starts.</p>
+<p>In agentic uses, you can of course compress your conversation state or change
+the tool definitions in the system message at any point.  But the consequence is
+that you will lose the reasoning traces and also the cache.  In the case of
+Anthropic, for instance, this will make your conversation significantly more
+expensive.  You would basically start from scratch and pay full token rates plus
+cache write cost, compared to cache read.</p>
+<p>One recent innovation from Anthropic is deferred tool loading.  You still
+declare tools ahead of time in the system message, but they are not injected
+into the conversation when the initial system message is emitted.  Instead they
+appear at a later point.  The tool definitions however still have to be static
+for the entire conversation, as far as I know.  So the tools that could exist
+are defined when the conversation starts.  The way Anthropic discovers the tools
+is purely by regex search.</p>
+<h2>Contrasting with Skills</h2>
+<p>This is all quite relevant because even though MCP with deferred loading feels
+like it should perform better, it actually requires quite a bit of engineering
+on the LLM API side.  The skill system gets away without any of that and, at
+least from my experience, still outperforms it.</p>
+<p>Skills are really just short summaries of which skills exist and in which file
+the agent can learn more about them.  These are proactively loaded into the
+context.  So the agent understands in the system context (or maybe somewhere
+later in the context) what capabilities it has and gets a link to the manual for
+how to use them.</p>
+<p>Crucially, skills do not actually load a tool definition into the context.  The
+tools remain the same: bash and the other tools the agent already has.  All it
+learns from the skill are tips and tricks for how to use these tools more
+effectively.</p>
+<p>Because the main thing it learns is how to use other command line tools and
+similar utilities, the fundamentals of how to chain and coordinate them together
+do not actually change.  The reinforcement learning that made the Claude family
+of models very good tool callers just helps with these newly discovered tools.</p>
+<h2>MCP as Skills?</h2>
+<p>So that obviously raises the question: if skills work so well, can I move the
+MCP outside of the context entirely and invoke it through the CLI in a similar
+way as Anthropic proposes?  The answer is yes, you can, but it doesn&#8217;t work
+well.  One option here is Peter Steinberger&#8217;s
+<a href="https://github.com/steipete/mcporter">mcporter</a>.  In short, it reads the
+<code>.mcp.json</code> files and exposes the MCPs behind it as callable tools:</p>
+<div class="highlight"><pre><span></span>npx mcporter call 'linear.create_comment(issueId: &quot;ENG-123&quot;, body: &quot;Looks good!&quot;)'
+</pre></div>
+<p>And yes, it looks very much like a command line tool that the LLM can invoke.
+The problem however is that the LLM does not have any idea about what tools are
+available, and now you need to teach it that.  So you might think: why not make
+some skills that teach the LLM about the MCPs?  Here the issue for me comes from
+the fact that MCP servers have no desire to maintain API stability.  They are
+increasingly starting to trim down tool definitions to the bare minimum to
+preserve tokens.  This makes sense, but for the skill pattern it&#8217;s not what you
+want.  For instance, the Sentry MCP server at one point switched the query
+syntax entirely to natural language.  A great improvement for the agent, but my
+suggestions for how to use it became a hindrance and I did not discover the
+issue straight away.</p>
+<p>This is in fact quite similar to Anthropic&#8217;s deferred tool loading: there is no
+information about the tool in the context at all.  You <em>need</em> to create a
+summary.  The eager loading of MCP tools we have done in the past now has ended
+up with an awkward compromise: the description is both too long to eagerly load
+it, and too short to really tell the agent how to use it.  So at least
+from my experience, you end up maintaining these manual skill summaries for MCP
+tools exposed via mcporter or similar.</p>
+<h2>Path Of Least Resistance</h2>
+<p>This leads me to my current conclusion: I tend to go with what is easiest, which
+is to ask the agent to write its own tools as a skill.  Not only does it not
+take all that long, but the biggest benefit is that the tool is largely under my
+control.  Whenever it breaks or needs some other functionality, I ask the agent
+to adjust it.  The Sentry MCP is a great example.  I think it&#8217;s probably one of
+the better designed MCPs out there, but I don&#8217;t use it anymore.  In part because
+when I load it into the context right away I lose around 8k tokens out of the
+box, and I could not get it to work via mcporter.  On the other hand, I have
+Claude maintain a skill for me.  And yes, that skill is probably quite buggy and
+needs to be updated, but because the agent maintains it, it works out better.</p>
+<p>It&#8217;s quite likely that all of this will change, but at the moment manually
+maintained skills and agents writing their own tools have become my preferred
+way.  I suspect that dynamic tool loading with MCP will become a thing, but it
+will probably quite some protocol changes to bring in skill-like summaries and
+built-in manuals for the tools.  I also suspect that MCP would greatly benefit
+of protocol stability.  The fact that MCP servers keep changing their tool
+descriptions at will does not work well with materialized calls and external
+tool descriptions in READMEs and skill files.</p>
+<div class="footnotes">
+<ol>
+<li id="fn-1">
+<p>Keen readers will remember that last time, the last MCP I used was
+Playwright.  In the meantime I added and removed two more MCPs: Linear and
+Sentry, mostly because of authentication issues and neither having a great
+command line interface.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 13, 2025 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2025/12/13/skills-vs-mcp/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2025/12/pycon-us-2026-registration-hotels.html" class="hover:underline"
+              >PyCon US 2026 - Registration, Hotels, Travel Grants & More!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <span id="docs-internal-guid-4231fc08-7fff-f1b5-6c47-4a895f44d637">The news you’ve been waiting for is finally here: registration for PyCon US 2026 is officially open! <br /><br />PyCon US will take place May 13 - May 19, 2026, in Long Beach, California at the <a href="https://www.longbeachcc.com/">Long Beach Convention and Entertainment Center</a>. The core of the conference, May 15 - May 17, 2026, packs in three days' worth of our community’s best talks, amazing keynote speakers, and our famed lightning talks to close out each day—but it’s much more than that!<br /><br />It’s gathering together with the members of our community to learn from, share with, and connect. It’s joining a conversation in the hallway with the creators of our open source projects. It’s taking yourself from beginner to intermediate; intermediate to advanced; or advanced to cutting edge. For some, it’s getting started with Python for the first time. We have loads of exciting plans in the works for this year, and we can’t wait to spend this special time with you!</span><br /><h2 style="text-align: left;">How to Register</h2>Once you have created an account on the <a href="http://us.pycon.org/2026/">PyCon US 2026 conference website</a>, you can register via the registration button on your <a href="https://us.pycon.org/2026/accounts/dashboard/">dashboard</a>. Head over to our <a href="https://us.pycon.org/2026/attend/information/">Registration Information page</a> to get all the details on how to register.<br /><h3 style="text-align: left;">Early Bird Registration Rates </h3>PyCon US is providing discounted rates for Corporate, Student, and Individual tickets for the first 30 days that registration is open. Don’t wait, register now to receive your discount!<ul style="text-align: left;"><li><b>Early Bird Corporate</b> - $849</li><li><b>Early Bird Individual</b> - $419</li><li><b>Early Bird Student</b> - $100</li></ul>Regular rates will go into effect on January 12, 2026:<br /><h3 style="text-align: left;">Regular Registration Rates</h3><ul style="text-align: left;"><li>Corporate - $899 USD</li><li>Individual - $469 USD</li><li>Student - $139 USD</li></ul><h2 style="text-align: left;">Hotels</h2>PyCon US has contracted special rates with nearby hotels. When you complete your registration for PyCon US 2026, you will be able to book a hotel reservation on your dashboard through our official housing bureau, Orchid Events. Booking through Orchid helps support PyCon US and it is the only way to get the conference rates, so book now while supplies last!<br /><br />We highly recommend staying in Long Beach rather than Los Angeles. Staying local will help you avoid LA’s notorious traffic and long commutes so you can arrive at talks, tutorials, and events on time (and with less stress!). Staying in Long Beach also gives you more opportunities to connect with the community, recharge between sessions, and fully enjoy the PyCon US experience.<div><br /></div><div>More information can be found on the <a href="https://us.pycon.org/2026/venue/hotels/">Hotels</a> page.<br /><br /><b><i>Note</i></b>: Beware of Housing Pirates! PyCon US or Orchid Events will not be calling delegates to sell rooms. If you are contacted by an agency other than Orchid Events offering to make your hotel reservations, we urge you not to use their services. We cannot protect you against fraud if you book a reservation with an outside party.<br /><h2 style="text-align: left;">Call for Proposals - Deadline December 19th!</h2>There’s still time to submit your proposal to present a Talk, Charla, Poster, or Tutorial at PyCon US! More information on <a href="https://us.pycon.org/2026/speaking/guidelines/">our website</a> and on <a href="https://pretalx.com/pycon-us-2026/">our CfP platform</a>.<br /><br />PyCon US is introducing two dedicated Talk tracks to the schedule this year, “the Future of AI with Python” and “Trailblazing Python Security”. For more information and how to submit your proposal <a href="http://us.pycon.org/2026/speaking/guidelines/">visit the Proposal Guidelines page</a>.<br /><h2 style="text-align: left;">Health &amp; Safety Guidelines and Code of Conduct</h2>PyCon US is committed to protecting the health and safety of our community. To ensure that we are gathering safely, we have implemented updated guidelines and protocols to be followed by all attendees during the event. We ask that you please review <a href="https://us.pycon.org/2026/about/health-safety-guidelines/">our Health &amp; Safety guidelines</a> prior to registration. <br /><br />To support a safe environment and enjoyable experience for all, PyCon US attendees are also required as always to comply with our Code of Conduct, which you can <a href="https://policies.python.org/us.pycon.org/code-of-conduct/">review on the PyCon US Code of Conduct page</a>.<br /><h2 style="text-align: left;">T-shirts &amp; PyLadies Auction</h2>Conference T-shirts and tickets to the PyLadies Auction have not yet been released, but will be available to add to your PyCon US 2026 registration in the coming weeks. Keep an eye out on the <a href="http://us.pycon.org/2026/">PyCon US 2026 website</a> and <a href="https://python.us19.list-manage.com/subscribe?u=5697f493c3a48994f504d4deb&amp;id=a0a3bd5663">subscribe to PyCon US News</a> to be one of the first to know and grab yours while supplies last!<br /><h2 style="text-align: left;">Tutorials</h2>Tutorials will be presented on Wednesday, May 13, 2026, and Thursday, May 14, 2026. We are accepting proposals for tutorials through December 19, 2025. Find more information on how to submit your proposal via <a href="https://us.pycon.org/2026/speaking/guidelines/">our website</a> and <a href="https://pretalx.com/pycon-us-2026/">our CfP platform</a>. Once our program committee has scheduled the selected tutorials, you will be able to add them to your conference registration. <br /><br />Watch for tutorial registration launch in March 2026. Opt-in for <a href="https://python.us19.list-manage.com/subscribe?u=5697f493c3a48994f504d4deb&amp;id=a0a3bd5663">PyCon US News</a> and follow us on <a href="https://x.com/pycon">X</a>, <a href="https://bsky.app/profile/pycon.us">Bluesky</a>, <a href="https://fosstodon.org/@pycon">Mastodon</a>, and the <a href="https://www.linkedin.com/company/thepsf/">PSF LinkedIn</a> for the announcement.<br /><h2 style="text-align: left;">Sponsorship and Sponsor Presentations</h2>Sponsorship for PyCon US 2026 is open now, and you can see the details of our sponsorship options and apply directly on our <a href="https://www.python.org/sponsors/application/">Sponsorship Application page</a>. We’re grateful to all of our sponsors who make PyCon US possible!<br /><br />For those interested in a paid speaking opportunity, Sponsor Presentations will take place on Thursday, May 14, 2026, and Friday, May 15, 2026. To reserve a slot for an hour-long Sponsor Presentation on the topic of your choice, <a href="http://python.org/sponsors/application">please apply</a> for Partner Level Sponsorship or higher and select the check mark next to “Sponsor Presentation.” Slots are limited and typically sell out, so please submit your request soon. Contact <a href="mailto:sponsors@python.org">sponsors@python.org</a> with any questions.<br /><h2 style="text-align: left;">Travel Grants - Applications now Open!</h2>Check out the <a href="http://us.pycon.org/2026/attend/travel-grants/">Travel Grant page</a> to learn more about the support we provide for travel, hotel, and registration to ensure that everyone has an opportunity to attend PyCon US. We actively encourage people to apply for travel grants and welcome applications from any attendees who otherwise would not be able to attend. Our goal is to support diversity and provide opportunity for attendees and attract Python developers at all experience levels from around the world. For questions about the application process, visit the <a href="http://us.pycon.org/2026/attend/faq/">Travel Grant FAQ page</a>.<div><br /></div><div>Deadline to apply is February 25, 2026.<h2 style="text-align: left;">Cancellation Fees</h2>Registration cancellations must be submitted in writing to <a href="mailto:pycon-reg@python.org">pycon-reg@python.org</a> and received by May 1, 2026, in order to receive a refund minus the $50 cancellation fee ($25 for students; waived for cancellation due to health reasons). No refunds will be granted for cancellations received after May 1, 2026, unless you must cancel for any health-related reasons (see more details in the <a href="https://us.pycon.org/2026/about/health-safety-guidelines/">Health &amp; Safety Guidelines</a>). In lieu of cancellation, you have the option to transfer your registration to another person. For details about transferring your registration, visit the <a href="https://us.pycon.org/2026/attend/information/">registration page</a>.<br /><h2 style="text-align: left;">Startup Row - Applications now open!</h2>Startup Row is where early-stage companies show off what they’re doing with Python at PyCon US. Eligible startup stage companies are welcome to apply for a complimentary booth that will be open for attendees to visit from May 15 - 17, 2026. If you are a startup and would like the opportunity to share your projects with the community, submit your application!<br /><br />Read the details on our <a href="https://us.pycon.org/2026/attend/startup-row/">Startup Row page</a> and be sure to submit your applications by January 16, 2026.<br /><h2 style="text-align: left;">Community Booths - Applications now open!</h2>Each year, we set aside booth space in the Expo Hall for nonprofit organizations and community open source projects that serve the Python community and the broader open source ecosystem. If that describes your organization or group, we’d love for you to apply for one of our complimentary Community Booths. Visit the <a href="http://us.pycon.org/2026/attend/community-booths/">Community Booth page</a> for more details and submit your application by February 5, 2026. </div></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 11, 2025 07:47 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2025/12/pycon-us-2026-registration-hotels.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/" class="hover:underline"
+              >Revisiting "Let's Build a Compiler"</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>There's an old compiler-building tutorial that has become part of the field's
+lore: the <a class="reference external" href="https://compilers.iecc.com/crenshaw/">Let's Build a Compiler</a>
+series by Jack Crenshaw (published between 1988 and 1995).</p>
+<p>I <a class="reference external" href="https://eli.thegreenplace.net/2003/07/29/great-compilers-tutorial">ran into it in 2003</a>
+and was very impressed, but it's now 2025 and this tutorial is still being mentioned quite
+often …</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 10, 2025 04:40 AM UTC by
+            <a href="http://eli.thegreenplace.net/feeds/python.atom.xml" class="link link-hover text-primary"
+              >Eli Bendersky</a
+            >
+          </div>
+          <a
+            href="https://eli.thegreenplace.net/2025/revisiting-lets-build-a-compiler/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.europython-society.org/general-assembly-2025/" class="hover:underline"
+              >General Assembly 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We&#x2019;re excited to invite you to this year&#x2019;s General Assembly meeting! We&#x2019;ll gather on <strong>Wednesday, 17 December 2025 20:00 CET</strong>, held online via Zoom. EPS membership is required to participate and additional joining instructions will be shared closer to the date.</p><p>You can</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 09, 2025 02:39 PM UTC by
+            <a href="http://www.europython-society.org/rss" class="link link-hover text-primary"
+              >EuroPython Society</a
+            >
+          </div>
+          <a
+            href="https://www.europython-society.org/general-assembly-2025/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/461/this-episdoe-has-a-typo" class="hover:underline"
+              >#461 This episdoe has a typo</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include PEP 798: Unpacking in Comprehensions, Pandas 3.0.0rc0, typos, and.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 09, 2025 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/461/this-episdoe-has-a-typo"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2025/12/pycharm-2025-3-unified-ide-jupyter-notebooks-in-remote-development-uv-as-default-and-more/" class="hover:underline"
+              >PyCharm 2025.3 – Unified IDE, Jupyter notebooks in remote development, uv as default, and more</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            We’re excited to announce that PyCharm 2025.3 is here! This release continues our mission to make PyCharm the most powerful Python IDE for web, data, and AI/ML development. It marks the migration of Community users to the unified PyCharm and brings full support for Jupyter notebooks in remote development, uv as the default environment manager, [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 04:57 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2025/12/pycharm-2025-3-unified-ide-jupyter-notebooks-in-remote-development-uv-as-default-and-more/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/platform/2025/12/meet-the-islands-theme-the-new-default-look-for-jetbrains-ides/" class="hover:underline"
+              >Meet the Islands Theme – The New Default Look for JetBrains IDEs</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            The&#160;Islands&#160;theme&#160;is now the default look across JetBrains IDEs starting with version 2025.3.This update is more than a visual refresh. It’s our commitment to creating a soft, balanced environment designed to support focus and comfort throughout your workflow. We began introducing the new theme&#160;earlier this year, gathering feedback, conducting research, and testing it hands-on with developers [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 09:53 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/platform/2025/12/meet-the-islands-theme-the-new-default-look-for-jetbrains-ides/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/automate-microsoft-365-in-python.html" class="hover:underline"
+              >Automate Microsoft 365 like a pro: skip the OAuth headaches</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/automate-microsoft-365-in-python.html">Automate Microsoft 365 like a pro: skip the OAuth headaches</a>
+</h1>
+<div class="article-meta">
+  2025-12-08, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p>Are you tired of fighting with Microsoft 365 APIs and complex authentication flows? This
+<a href="https://zato.io/en/tutorials/microsoft/365.html">practical tutorial</a>
+cuts through the complexity,
+showing you how to build production-ready Python automations for Outlook, Calendar, and SharePoint in just 60 minutes.</p>
+<p>No OAuth2 struggles, no Graph API complexity - just working code you can deploy today.</p>
+<p>What you'll learn in the <a href="https://zato.io/en/tutorials/microsoft/365.html">tutorial</a>:</p>
+<ul>
+<li>Connect to Microsoft 365 APIs with minimal Python code</li>
+<li>Build real email, calendar, and SharePoint automations</li>
+<li>Schedule background tasks without programming</li>
+<li>Access Entra ID (Azure AD) user data effortlessly</li>
+<li>Implement enterprise-grade patterns that solve actual business problems</li>
+</ul>
+<p><br /></p>
+<p><a href="https://zato.io/en/tutorials/microsoft/365.html"><img alt="Automate Microsoft 365 in Python" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/automate-microsoft-365/automate-microsoft-365-vertical.webp" style="width: 60%;" />
+</a></p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
+<br />
+➤ <a href="https://zato.io/articles/network-packet-broker.html">What is a Network Packet Broker? How to automate networks in Python?</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
+<br />
+➤ <a href="https://zato.io/en/docs/4.1/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
+<br />
+➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 08, 2025 03:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/automate-microsoft-365-in-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://dev.to/ldrscke/brkrs-a-brand-new-take-on-classic-brick-breaking-play-it-tweak-it-own-it-3254" class="hover:underline"
+              >🎮 *brkrs*: A Brand New Take on Classic Brick-Breaking – Play It, Tweak It, Own It!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Remember the pure, unadulterated joy (and occasional rage) of games like Breakout and Arkanoid? Dodging, bouncing, and strategically smashing bricks for that satisfying <em>thwack</em>?</p>
+
+<p>Well, get ready for <strong>brkrs</strong> – a modern, full-featured brick-breaker that brings all that classic arcade action to a new generation, built with cutting-edge <strong><a href="https://rust-lang.org/" rel="noopener noreferrer">Rust</a></strong> 🦀 and the incredibly flexible <strong><a href="https://bevy.org/" rel="noopener noreferrer">Bevy</a></strong> game engine!</p>
+
+<p><strong>Want to jump straight into the action or peek under the hood? Find everything here:</strong> <a href="https://github.com/cleder/brkrs" rel="noopener noreferrer"><strong>github.com/cleder/brkrs</strong></a></p>
+
+<p><strong>brkrs</strong> isn't just another clone; it's a love letter to the genre, packed with modern physics, dynamic levels, and a secret weapon: it's entirely open-source, designed for you to play, tinker, and even contribute!</p>
+
+
+
+
+<h2>
+  
+  
+  🚀 The Story: From Retro Dreams to Modern Reality
+</h2>
+
+<p>Many of us have dreamed of remaking our favorite classics. For me, that dream was to revive an old <a href="https://github.com/cleder/yaac" rel="noopener noreferrer">Arkanoid-style game, "YaAC 🐧"</a>, using today's best game development tools. What started as a manual journey quickly evolved into something much more: a real game that's also a living showcase of modern game dev practices.</p>
+
+<p>It’s built on a philosophy of "Kaizen no michi" (改善の道) – making small, continuous improvements. This means the game is always evolving, and every change is carefully considered.</p>
+
+
+
+
+<h2>
+  
+  
+  🕹️ Play It Now: Levels That Challenge, Physics That Impress
+</h2>
+
+<p>No downloads needed to get a taste of the action!</p>
+
+<p><a href="https://cleder.github.io/brkrs/" rel="noopener noreferrer"><strong>Hit up the web version and start smashing bricks here</strong></a></p>
+
+<p>Sorry at this time its only 2 levels (it is still early in the development process), but 70 more (lifted from YAAC) are coming soon, so stay tuned, or even better, help to make it come true ;-)</p>
+
+<p><strong>brkrs</strong> extends the classic formula with some seriously cool features:</p>
+
+<ul>
+<li>
+<strong>Classic Gameplay, Modern Feel:</strong> Paddle, ball, and bricks, but with a polished, satisfying punch.</li>
+<li>
+<strong>Rich Physics (Rapier3D):</strong> Experience accurate and engaging ball physics that make every bounce feel real.</li>
+<li>
+<strong>Dynamic Levels:</strong> Human-readable and easy-to-modify level configurations mean endless possibilities for custom stages.</li>
+<li>
+<strong>Paddle Rotation:</strong> Add a new layer of skill and strategy to your shots.</li>
+<li>
+<strong>Cross-Platform Fun:</strong> Play it on your desktop or directly in your browser thanks to WebAssembly!</li>
+</ul>
+
+
+
+
+<h2>
+  
+  
+  🛠️ Go Deeper: A Game for Builders, Too
+</h2>
+
+<p>For those who love to dive into the mechanics of their favourite games, <strong>brkrs</strong> is a treasure trove. It's not just playable; it's also a fantastic example of a well-structured <strong><a href="https://rust-lang.org/" rel="noopener noreferrer">Rust</a></strong> and <strong><a href="https://bevy.org/" rel="noopener noreferrer">Bevy</a></strong> project.</p>
+
+<p><strong>Want to try building it yourself?</strong> You'll need Rust, Cargo, and Git.<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>git clone https://github.com/cleder/brkrs.git
+<span class="nb">cd </span>brkrs
+cargo run <span class="nt">--release</span>
+</code></pre>
+
+</div>
+
+
+
+<p><strong>Controls:</strong> Move the paddle with your mouse, use the scroll wheel to rotate (if enabled), and hit ESC to pause.</p>
+
+<p>This is your chance to not just play, but to truly <strong>tinker</strong>. Ever wanted to add a new power-up? Change how a brick explodes? Or even design your own crazy levels? <strong>brkrs</strong> makes it approachable.</p>
+
+
+
+
+<h2>
+  
+  
+  🧠 Behind the Scenes: Spec-Driven Awesomeness
+</h2>
+
+<p>The game's development isn't just chaotic coding; it's built on <strong>spec-driven development (SDD)</strong>. This means every feature starts with a clear, detailed plan, much like a game designer's blueprint. We even use <strong><a href="https://github.com/github/spec-kit?tab=readme-ov-file#-spec-kit" rel="noopener noreferrer">GitHub's spec-kit</a></strong> to formalize these plans. It's a structured way to ensure every piece of the game works exactly as intended, minimizing bugs and maximizing fun.</p>
+
+<p>And here's the kicker: this clear, step-by-step approach makes <strong>brkrs</strong> a perfect playground for experimenting with <strong>AI-assisted coding</strong>. Imagine using AI to help design a new brick type or tweak game logic – the structured specs make it surprisingly effective!</p>
+
+
+
+
+<h2>
+  
+  
+  📣 Help Wanted: Your Skills Can Level Up <strong>brkrs</strong>!
+</h2>
+
+<p>While the code is solid, a great game needs more than just logic! We are actively looking for creative community members to join the effort and help turn <strong>brkrs</strong> into a visually and aurally stunning experience.</p>
+
+<p>This is your chance to get your work into a real, playable, open-source game!</p>
+
+<ul>
+<li>
+<strong>🎧 Sound &amp; Music:</strong> We need satisfying <strong>sound effects</strong> (the <em>thwack</em> of a brick, the <em>clink</em> of a power-up) and engaging <strong>background music</strong>.</li>
+<li>
+<strong>🎨 Art &amp; Textures:</strong> Help us create unique <strong>brick textures</strong>, stylish <strong>paddle designs</strong>, backgrounds, and other necessary <strong>artwork</strong>.</li>
+<li>
+<strong>📐 Level Design:</strong> Got an evil streak? Use the easy-to-modify level configuration files (RON) to create new, challenging, and fun <strong>level designs</strong>!</li>
+<li>
+<strong>🧪 Testing &amp; Feedback:</strong> Simply playing the game and reporting bugs or suggesting balance tweaks is incredibly valuable!</li>
+</ul>
+
+<p>If you're a designer, artist, musician, or just a gamer with a great eye for detail, <strong>reach out</strong> or <strong>submit a Pull Request</strong> with your contributions!</p>
+
+
+
+
+<h2>
+  
+  
+  🤝 Join the Fun: Learn, Contribute, Create!
+</h2>
+
+<p><strong>brkrs</strong> is more than a game; it's a community project following "Seika no Ho" (清華の法), "the way of clear planning."</p>
+
+<ul>
+<li>🎮️ <strong>Play the Game:</strong> Enjoy the current levels and discover new strategies.</li>
+<li>🔭️ <strong>Explore the Code:</strong> See how modern <strong>Rust</strong> and <strong>Bevy</strong> work in a real project.</li>
+<li>💡️ <strong>Suggest Ideas:</strong> What power-ups or brick types would YOU like to see?</li>
+<li>🤝️ <strong>Contribute:</strong> Even small tweaks or new level designs are welcome!</li>
+</ul>
+
+<p>Full documentation, quickstart 🚀️ guides, and developer resources are all available on <a href="https://brkrs.readthedocs.io/" rel="noopener noreferrer"><strong>brkrs.readthedocs.io</strong></a>.</p>
+
+<h3>
+  
+  
+  <strong>Ready to break some bricks and make some waves in game development?</strong>
+</h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 07, 2025 08:33 PM UTC by
+            <a href="https://dev.to/feed/ldrscke.rss" class="link link-hover text-primary"
+              >Christian Ledermann</a
+            >
+          </div>
+          <a
+            href="https://dev.to/ldrscke/brkrs-a-brand-new-take-on-classic-brick-breaking-play-it-tweak-it-own-it-3254"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://dev.to/ldrscke/breakout-to-breakthrough-brkrs-the-rust-game-where-specs-become-code-and-ai-is-welcome-4o9c" class="hover:underline"
+              >🚀 Breakout to Breakthrough: brkrs —The Rust Game Where Specs Become Code (and AI is Welcome!)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Tired of tutorial code that stops working the moment the lesson ends? Meet <strong>brkrs</strong>—a fully playable, Arkanoid/Breakout-style game written in <strong><a href="https://rust-lang.org/" rel="noopener noreferrer">Rust</a></strong> 🦀 and built with the <strong><a href="https://bevy.org/" rel="noopener noreferrer">Bevy</a></strong> engine.</p>
+
+<p>But this isn't just a game. It's an open-source <strong>learning playground</strong> dedicated to <strong>spec-first development</strong> and <strong>AI-assisted coding experiments.</strong></p>
+
+<p><strong>Check out the full repository here:</strong> <a href="https://github.com/cleder/brkrs?tab=readme-ov-file#readme" rel="noopener noreferrer"><strong>github.com/cleder/brkrs</strong></a></p>
+
+<p>As Linus Torvalds famously said: <strong>“Talk is cheap. Show me the code.”</strong> We say: <strong>"Show me the game, the spec, and the code all at once!"</strong></p>
+
+
+
+
+<h2>
+  
+  
+  💡 The Philosophy: Spec-First, Incremental, and AI-Ready
+</h2>
+
+<p>Game development, especially in a framework like <strong>Bevy</strong>, can be a steep climb. The brkrs project was born from the desire to take an old idea <a href="https://github.com/cleder/yaac" rel="noopener noreferrer">(an Arkanoid clone)</a> and build it the modern way—a way that accelerates learning and embraces new tooling.</p>
+
+<p>We follow a simple, yet powerful, development loop:</p>
+
+<ol>
+<li> <strong>Spec-First:</strong> Every single feature, no matter how small, begins as a clear specification using GitHub's <strong>speckit</strong>.</li>
+<li> <strong>Incremental PRs:</strong> The spec flows through a small, focused issue or Pull Request. This embodies the "<strong>Kaizen no michi</strong>" (改善の道) philosophy of small, positive, daily changes.</li>
+<li> <strong>Code &amp; Play:</strong> The result is working <strong>Rust</strong> code you can immediately see in the game.</li>
+</ol>
+
+<p>This structured approach makes <strong>brkrs</strong> the perfect sandbox for the AI coding community:</p>
+
+<ul>
+<li>
+<strong>Agentic Testing:</strong> Need a small, contained task for your coding agent? Point it at a spec and a pending issue.</li>
+<li>
+<strong>AI-Assisted Feature Dev:</strong> Want to see how your favorite LLM handles adding a new brick behavior or adjusting physics? The clear specs provide the perfect prompt.</li>
+<li>
+<strong>Workflow Learning:</strong> Every merged PR is a clean, documented example of how a real-world feature is implemented in <strong>Rust</strong>/Bevy.</li>
+</ul>
+
+<h3>
+  
+  
+  What is Spec-Driven Development?
+</h3>
+
+<p>The core of our workflow is the use of <strong><a href="https://github.com/github/spec-kit?tab=readme-ov-file#-spec-kit" rel="noopener noreferrer">GitHub's spec-kit</a></strong>. This is a framework for <strong>spec-driven development (SDD)</strong>, an approach where detailed, human-readable specifications are written <em>before</em> any code. SDD serves as the single source of truth for the desired behavior of a feature. By providing clear inputs, outputs, and requirements upfront, it minimizes guesswork, aligns team expectations, and provides a perfect, structured input for any AI coding assistant or agent.</p>
+
+
+
+
+<h2>
+  
+  
+  🕹️ Try It Now: Playable &amp; Pluggable
+</h2>
+
+<p>You don't need to compile anything to get started!</p>
+
+<p><strong><a href="https://cleder.github.io/brkrs/" rel="noopener noreferrer">Play the live web version right now</a></strong>!</p>
+
+<p>The core experience extends the classic Breakout formula with:</p>
+
+<ul>
+<li>
+<strong>Richer Physics</strong> (via Rapier3D) constrained to a flat 2D plane.</li>
+<li>
+<strong>Paddle Rotation</strong> and customizable per-level settings.</li>
+<li>
+<strong>Human-readable Levels</strong> that are easy to modify and extend using RON files.</li>
+</ul>
+
+
+
+
+<h2>
+  
+  
+  🛠️ Quickstart: Play, Tweak, and Learn
+</h2>
+
+<p>Ready to dive into the code? You'll need <strong>Rust</strong>, Cargo, and Git.<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>git clone https://github.com/cleder/brkrs.git
+<span class="nb">cd </span>brkrs
+cargo run <span class="nt">--release</span>
+</code></pre>
+
+</div>
+
+
+
+<p><strong>Controls:</strong> Move the paddle with the mouse, use the scroll wheel to rotate, and ESC to pause.</p>
+
+<p>Now, the fun begins. Want to change the gravity for Level 3? Want to create a new <code>HyperBrick</code> component? The entire architecture—from the <strong>Level Loader</strong> to the <strong>Brick System</strong>—is designed for easy modification.</p>
+
+<blockquote>
+<p><strong>Challenge:</strong> Following the Samurai principle of "<strong>Seika no Ho</strong>" (清華の法), "the way of clear planning," pick a small feature, write a mini-spec, and implement it.</p>
+</blockquote>
+
+<h2>
+  
+  
+  🤝 Your Learning Path and Contribution
+</h2>
+
+<p>The goal is to make learning modern <strong>Rust</strong>/Bevy development as enjoyable as playing the game.</p>
+
+<p>Here’s how you can engage:</p>
+
+<ol>
+<li> <strong>Read a Spec:</strong> Check out the repo or wiki for a feature you'd like to see.</li>
+<li> <strong>Pick an Issue:</strong> Find a small, contained task that aligns with a spec.</li>
+<li> <strong>Experiment with AI:</strong> Use your favourite AI tool (e.g., GitHub Copilot, a local agent) to help draft the code for the task.</li>
+<li> <strong>Submit a PR:</strong> Show the community how you turned a spec into working <strong>Rust</strong> code!</li>
+</ol>
+
+<p><strong>brkrs</strong> is more than just a Breakout clone—it’s a living textbook for best practices in modern, spec-driven, and AI-augmented software development.</p>
+
+
+
+
+<h2>
+  
+  
+  🔗 Documentation
+</h2>
+
+<p>All the details you need to get started are right here:</p>
+
+<ul>
+<li><a href="https://brkrs.readthedocs.io/" rel="noopener noreferrer"><strong>Full Documentation</strong></a></li>
+<li>
+<a href="https://brkrs.readthedocs.io/en/latest/quickstart.html" rel="noopener noreferrer">Quickstart Guide</a> — Get up and running in 10 minutes.</li>
+</ul>
+
+<h3>
+  
+  
+  <strong>Ready to break some bricks and code?</strong>
+</h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 07, 2025 07:55 PM UTC by
+            <a href="https://dev.to/feed/ldrscke.rss" class="link link-hover text-primary"
+              >Christian Ledermann</a
+            >
+          </div>
+          <a
+            href="https://dev.to/ldrscke/breakout-to-breakthrough-brkrs-the-rust-game-where-specs-become-code-and-ai-is-welcome-4o9c"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://shed-skin.blogspot.com/2025/12/shed-skin-restricted-python-to-c.html" class="hover:underline"
+              >Shed Skin restricted-Python-to-C++ compiler v0.9.11</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I have just released version 0.9.11 of Shed Skin, a restricted-Python-to-C++ compiler. Most importantly, it adds support for Python 3.14. It also adds support for many 3.x features that were not yet implemented, in addition to basic support for the base64 module. It also optimizes a few more common code patterns.
+
+<p>Paul Boddie was able to add support for libpcre2, and in the process updated conan to version 2. Thanks to Shakeeb and now Paul, Shed Skin has had first-class Windows support for the last few releases.
+
+<p>A new release is often triggered by a nice new example. In this case I found an advanced/educational 3d renderer by Benny Bobaganoosh, and rewrote it from Java to Python. In ~500 lines of code, it renders an .obj file with perspective-correct texture mapping and so on, clipping, lighting.. It becomes about 13 times faster after compilation (in other words, it goes from about 2 to about 30 FPS).
+
+<div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhRFEPZpQURqkukT2_2xLVsc_sK2hVqy_BmJdA4EOpzSfhM_iMoGqC8kLkjRyo69FGqGrUbHcYuzvD-N0Q-JA4iNtfxRUbrASb9m6IHoDjsXYl2pz7cJWeHeOovZa6BiCt1BYpuC-2swmNo3yY8mXUOV-oeaVgqiW3S5eK4PcF8h67zap4v6xdaGfCklMiN/s557/h1.png" style="display: block; padding: 1em 0; text-align: center;"><img alt="" border="0" height="320" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhRFEPZpQURqkukT2_2xLVsc_sK2hVqy_BmJdA4EOpzSfhM_iMoGqC8kLkjRyo69FGqGrUbHcYuzvD-N0Q-JA4iNtfxRUbrASb9m6IHoDjsXYl2pz7cJWeHeOovZa6BiCt1BYpuC-2swmNo3yY8mXUOV-oeaVgqiW3S5eK4PcF8h67zap4v6xdaGfCklMiN/s320/h1.png" /></a></div>
+
+<p>For the full list of changes in the release, please see the <a href="https://github.com/shedskin/shedskin/releases/tag/v0.9.11">release notes</a>.
+
+<p>Something I have noticed while working on this release is that small object allocations seem to have become faster under Linux, to the degree that programs that would become _slower_ after compilation because of excessive small-object allocation, are now usually _faster_ again, at least on my system. This motivated me to measure the speedup for all 84 example programs at the moment versus cpython 3.13. While it's still all over the place, I was happy to see a median speedup of 12 times, and an average of 20 times.
+
+<p>I would very much appreciate more feedback on/assistance with the project. There is always enough low-hanging fruit to help with! See for example the current list of issues for 0.9.12. But just testing random things, finding interesting new example programs, cleaning up parts of the code and such are also much appreciated.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 05, 2025 11:08 AM UTC by
+            <a href="http://shed-skin.blogspot.com/feeds/posts/default" class="link link-hover text-primary"
+              >Mark Dufour</a
+            >
+          </div>
+          <a
+            href="http://shed-skin.blogspot.com/2025/12/shed-skin-restricted-python-to-c.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.caktusgroup.com/blog/2025/12/03/learning-llm-basics-ollama-function-calling/" class="hover:underline"
               >LLM Basics: Ollama Function Calling</a
             >
@@ -641,6 +1562,109 @@ furnished to <span class="k">do</span> so, subject to the following conditions:
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zerotomastery.io/blog/python-monthly-newsletter-november-2025/?utm_source=python-rss-feed" class="hover:underline"
+              >[November 2025] Python Monthly Newsletter 🐍</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            72nd issue of Andrei's Python Monthly:  , and much more. Read the full newsletter to get up-to-date with everything you need to know from last month.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 01, 2025 10:00 AM UTC by
+            <a href="https://zerotomastery.io/rss/python-rss.xml" class="link link-hover text-primary"
+              >Zero to Mastery</a
+            >
+          </div>
+          <a
+            href="https://zerotomastery.io/blog/python-monthly-newsletter-november-2025/?utm_source=python-rss-feed"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zato.io/en/blog/network-packet-broker-automation-python.html" class="hover:underline"
+              >Network packet broker automation in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h1 class="insights-header">
+  <a class="rounded nav-title" href="https://zato.io/en/blog/network-packet-broker-automation-python.html">Network packet broker automation in Python</a>
+</h1>
+<div class="article-meta">
+  2025-12-01, by Dariusz Suchojad
+<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
+</div>
+
+<p><img alt="What is a network packet broker and what does it do?" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/img/articles/network-packet-broker/what-is-a-network-packet-broker.png" /></p>
+<p>Packet brokers are crucial for network engineers, providing a clear, detailed view of network traffic,
+aiding in efficient issue identification and resolution.</p>
+<p>But what is a network packet broker (NBP) really? Why are they needed? And how to automate one in Python?</p>
+<p><strong>➤ Read this article about <a href="https://zato.io/articles/network-packet-broker.html">network packet brokers</a></strong> and their automation in Python to find out more.</p>
+<h2 id="more-resources">More resources</h2>
+<p>➤ <a href="https://zato.io/en/industry/telecom/index.html">Click here</a> to read more about using Python and Zato in telecommunications
+<br />
+➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
+<br />
+➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
+<br />
+➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
+<div class="nav-title footer">
+    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 01, 2025 03:00 AM UTC by
+            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
+              >Zato Blog</a
+            >
+          </div>
+          <a
+            href="https://zato.io/en/blog/network-packet-broker-automation-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/528/python-apps-with-llm-building-blocks" class="hover:underline"
               >#528: Python apps with LLM building blocks</a
             >
@@ -909,8 +1933,8 @@ or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tu
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.scikit-learn.org/team/virgil-chan-interview/" class="hover:underline"
-              >Interview with Virgil Chan, scikit-learn Team Member</a
+            <a href="https://www.pythonguis.com/tutorials/getting-started-nicegui/" class="hover:underline"
+              >Getting Started With NiceGUI for Web UI Development in Python — Your First Steps With the NiceGUI Library for Web UI Development</a
             >
           </h2>
           
@@ -919,1031 +1943,20 @@ or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tu
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            Author: Reshama Shaikh , Virgil Chan
+            NiceGUI is a Python library that allows developers to create interactive web applications with minimal effort. It's intuitive and easy to use. It provides a high-level interface to build modern web-based graphical user interfaces (GUIs) without requiring deep knowledge of web technologies like HTML, CSS, or JavaScript.
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 26, 2025 12:00 AM UTC by
-            <a href="https://blog.scikit-learn.org/feed.xml" class="link link-hover text-primary"
-              >scikit-learn</a
+            Posted on November 27, 2025 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
             >
           </div>
           <a
-            href="https://blog.scikit-learn.org/team/virgil-chan-interview/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/11/transparency-2024.html" class="hover:underline"
-              >PSF Code of Conduct Working Group Shares First Transparency Report</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            The PSF’s <a href="https://wiki.python.org/psf/ConductWG/Charter">Code of Conduct Working Group</a> is a group of volunteers whose purpose is to foster a diverse and inclusive Python community by enforcing the <a href="https://policies.python.org/python.org/code-of-conduct/">PSF Code of Conduct</a>, along with providing guidance and recommendations to the Python community on codes of conduct, that supports the PSF mission support and facilitate the growth of a diverse and international community of Python programmers. <br /><br />The working group has recently committed to publishing annual transparency reports and we are pleased to share the <a href="https://policies.python.org/python.org/code-of-conduct/reports/PSF-Transparency-Report-2024.pdf">first report with you today, for the 2024 calendar year</a>. The initial transparency report took some time to produce, but we've improved our recording keeping practices to make future reports easier to prepare.<br /><br />The Working Group spent time formalizing our record keeping this year, and going forward we plan to publish our transparency reports in the first quarter of each year. Each year’s report will be added to the same place in the <a href="https://policies.python.org/python.org/code-of-conduct/#transparency-reports">PSF's Code of Conduct documentation</a> so that community members can easily access them. If you have thoughts or feedback on how to make these reports more useful, we welcome you to send us an email at conduct-wg@python.org.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 25, 2025 06:51 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/11/transparency-2024.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.holoviz.org/posts/param_release_2.3/" class="hover:underline"
-              >Rich parameters & reactive programming with Param: 2.3 release</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Release announcement for Param 2.3, including improved docstrings, two new Parameter attributes default_factory and metadata, the new ParameterizedABC abstract base class, and more!
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 25, 2025 12:00 AM UTC by
-            <a href="https://blog.holoviz.org/index.xml" class="link link-hover text-primary"
-              >HoloViz</a
-            >
-          </div>
-          <a
-            href="https://blog.holoviz.org/posts/param_release_2.3/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.europython-society.org/new-europython-society-fellow-in-2025/" class="hover:underline"
-              >New EuroPython Society Fellow in 2025</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A warm welcome to Martin Borus as the second elected <a href="https://www.europython-society.org/europython-society-fellow-grant/#europython-fellows">EuroPython Society Fellow</a> in 2025.<br /><br /><strong>EuroPython Society Fellows</strong></p><p>EuroPython Society Fellows have contributed significantly towards our <a href="https://www.europython-society.org/mission/">mission</a>, the <a href="https://www.europython-society.org/europython/">EuroPython conference</a> and the <a href="https://www.europython-society.org/about/">Society</a> as an organisation. They are eligible for a lifetime free attendance of the EuroPython conference and will</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 24, 2025 05:58 PM UTC by
-            <a href="http://www.europython-society.org/rss" class="link link-hover text-primary"
-              >EuroPython Society</a
-            >
-          </div>
-          <a
-            href="https://www.europython-society.org/new-europython-society-fellow-in-2025/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2025/11/python-black-friday-and-cyber-monday-sales-2025/" class="hover:underline"
-              >Python Black Friday &amp; Cyber Monday sales (2025)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It&rsquo;s time for some <strong>discounted</strong> Python-related skill-building.
-This is my <strong><a href="https://treyhunner.com/blog/categories/sales/">eighth annual compilation</a></strong> of Python learning-related Black Friday &amp; Cyber Monday deals.
-If you find a Python-related deal in the next week that isn&rsquo;t on this list, please contact me.</p>
-
-<h2>Python-related sales</h2>
-
-<p>It&rsquo;s not even Black Friday yet, but most of these Python-related Black Friday sales are <strong>already live</strong>:</p>
-
-<ul>
-<li><strong><a href="https://www.pythonmorsels.com/lifetime-access-sale">Python Morsels</a></strong>: I&rsquo;m offering <strong>lifetime access</strong> for the second time ever (more details below)</li>
-<li><strong><a href="https://courses.dataschool.io/pass">Data School</a></strong>: a new subscription to access all of Kevin&rsquo;s <strong>7 courses plus all upcoming courses</strong></li>
-<li><strong><a href="http://talkpython.fm/black-friday">Talk Python</a></strong>: AI Python bundle, the Everything Bundle, and Michael&rsquo;s Talk Python in Production</li>
-<li><strong><a href="https://lernerpython.com/pricing/">Reuven Lerner</a></strong>: get 20% off <strong>your first year</strong> of the <strong>LernerPython+data</strong> tier (code <code>BF2025</code>)</li>
-<li><strong><a href="https://pythontest.com/2025-black-friday/">Brian Okken</a></strong>: get 50% off his pytest books and courses (code <code>SAVE50</code>)</li>
-<li><strong><a href="https://mathspp.gumroad.com/l/all-books-bundle/BF202550">Rodrigo</a></strong>: get 50% off all his books including his all books bundle (code <code>BF202550</code>)</li>
-<li><strong><a href="https://www.blog.pythonlibrary.org/2025/11/18/black-friday-python-deals-came-early/">Mike Driscoll</a></strong>: get 50% off all his <strong>Python books and courses</strong> (code <code>BLACKISBACK</code>)</li>
-<li><strong><a href="https://thepythoncodingplace.thinkific.com/bundles/the-python-coding-place-membership?coupon=black50">The Python Coding Place</a></strong>: get 50% the <strong>all course bundle</strong> of 12 courses</li>
-<li><strong><a href="https://learnbyexample.gumroad.com/l/all-books/FestiveOffer">Sundeep Agarwal</a></strong>: ~55% off Sundeep&rsquo;s <strong>all books bundle</strong> with code <code>FestiveOffer</code></li>
-<li><strong><a href="https://nodeledge.ai/learn/paths/essential-python-for-data-science-and-ml">Nodeledge</a></strong>: get 20% off your first payment (code <code>BF2025</code>)</li>
-<li><strong><a href="https://www.oreilly.com/online-learning/2025-cyber-sale.html?code=CYBERSAVE25">O'Reilly Media</a></strong>: 40% off <strong>the first year</strong> with code <code>CYBERWEEK25</code> ($299 instead of $499)</li>
-<li><strong><a href="https://www.manning.com/catalog/programming-languages-and-styles/python">Manning</a></strong> is offering 50% off from Nov 25 to Dec 1</li>
-<li><strong><a href="https://mastodon.social/@b0rk@jvns.ca/115571664177415123">Wizard Zines</a></strong>: 50% all of Julia Evan&rsquo;s <em>great</em> <strong>zines on various tech topics</strong> that I personally find both fun and useful (not Python-related, but one of my favorite annual sales)&hellip; this is a one-day Black Friday exclusive sale</li>
-</ul>
-
-
-<!--
-Likely additional sales:
-
-- **[Brian Okken](https://courses.pythontest.com)**
-- **[Matt Harrison][]**
-- **[Rodrigo][]**
-- **[Test Driven][]**
-- **[Pragmatic Bookshelf][]**
-- **[No Starch][]**
-- **[Manning][]**
--->
-
-
-<p>I will be keeping an idea on other potential sales and updating this post as I find them.
-If you&rsquo;ve seen a sale that I haven&rsquo;t, please contact me or comment below.</p>
-
-<h2>Django-related sales</h2>
-
-<p>Adam Johnson has also published a list of <a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/">Django-related deals for Black Friday</a> (which he&rsquo;s been doing for a few years now).
-I&rsquo;ve included links below to the different sections in Adam&rsquo;s post&hellip;</p>
-
-<p>Courses and books:</p>
-
-<ul>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#my-books">Adam&rsquo;s books</a>: his books and bundles on Django, Git, and GitHub DX and Django test performance are all 50% off</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#learndjango-com-course-bundle">LearnDjango.com course bundle</a>: Will Vincent is offering 50% off his 3 courses</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#django-5-by-example">Django 5 By Example</a>: 30% off this book by Antonio Melé</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#django-in-action">Django in Action</a>: 50% off this book by Christopher Trudeau</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#async-patterns-in-django">Async Patterns in Django</a>: 50% off this book by Paul Bailey</li>
-</ul>
-
-
-<p>Packages related to Django:</p>
-
-<ul>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#aidas-bendoraitis-paid-packages">Aidas Bendoraitis</a>: has 3 Django packages available at a 20% discount</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#appliku">Appliku</a>: 30% of annual plans for this Django deployment tool</li>
-<li><a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#saas-pegasus">Saas Pegasus</a>: 50% off the unlimited license for this configurable Django project template</li>
-</ul>
-
-
-<p>Adam also gives a shout out to <a href="https://adamj.eu/tech/2025/11/20/django-black-friday-deals-2025/#bonus-django-itself">sponsoring Django itself</a>.</p>
-
-<h2>More on my sale: Python Morsels Lifetime Access</h2>
-
-<p>Python Morsels is a hands-on, <strong>exercise-driven</strong> Python skill-building platform designed to help developers <strong>write cleaner, more idiomatic Python</strong> through real-world practice.
-This growing library of exercises, videos, and courses is aimed primarily at intermediate and professional developers.
-If you haven&rsquo;t used Python Morsels, you can read about it <a href="https://treyhunner.com/2025/11/lifetime-access-sale-2025/">in my sale announcement post</a>.</p>
-
-<p>This Black Friday / Cyber Monday, I&rsquo;m offering <a href="https://www.pythonmorsels.com/lifetime-access-sale">lifetime access</a>: all current and future content for in a single payment.
-If you&rsquo;d like to build confidence in your everyday Python skills, consider this sale.
-It&rsquo;s <strong>about 50% cheaper than paying annually for five years</strong>.</p>
-
-<p><a class="subscribe-btn form-big" href="https://pythonmorsels.com/lifetime-access-sale/">Get lifetime access to Python Morsels</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 24, 2025 04:00 PM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2025/11/python-black-friday-and-cyber-monday-sales-2025/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2025/11/python-is-for-everyone-grab-pycharm-pro.html" class="hover:underline"
-              >Python is for Everyone: Grab PyCharm Pro for 30% off—plus a special bonus!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>So far <a href="https://pyfound.blogspot.com/2025/11/python-is-for-everyone-join-in-psf-year.html" target="_blank">this year’s PSF fundraising campaign</a> has been a truly inspiring demonstration of the Python community's generosity, strength, and solidarity. We set a special 🥧 themed goal of $314,159.26 (it’s <a href="https://www.python.org/downloads/release/python-3140/" target="_blank">the year of Python 3.14</a>!), and with your support, we are already at 93% of that goal—WOW!! Thank you to every single person who has already donated: you have our deep gratitude, and we are committed to making every dollar count.&nbsp;</p><p>🚨 New target alert: If we hit our goal of $100Kπ- we are going to release a nice video AND we are going to set a new goal, as well as an additional <b><i>super stretch</i></b> goal. <a href="http://donate.python.org" target="_blank">Can you chip in to get us there</a>? We’re confident that with your contributions and support we can reach those new heights. Because Python is for everyone, thanks to you!<br /><br />Today, we’re excited to share another way for you to participate AND get awesome benefits from JetBrains! We have the opportunity to once again partner with JetBrains to deliver a special promotion: <a href="https://lp.jetbrains.com/support-python" target="_blank">30% off PyCharm Pro with ALL proceeds going to the PSF</a>. <b>New this year: </b>Folks who take advantage of this offer will also receive a free tier of AI Assistant in PyCharm! Read on to learn more about the PyCharm promotion, how to grab it while it lasts, and other ways you can contribute to the PSF’s 2025 end-of-year fundraiser. Huge thanks to <a href="https://www.jetbrains.com/" target="_blank">JetBrains</a> for stepping up to provide this awesome deal 🐍⚡️</p><p>&nbsp;</p><h2 style="text-align: left;">LIMITED TIME! Grab PyCharm Pro at 30% off with a free tier of AI Assistant:</h2><ul style="text-align: left;"><li><b>Grab a discounted Python IDE: PyCharm!</b> JetBrains is once again supporting the PSF by providing a 30% discount on PyCharm Pro and ALL proceeds will go to the PSF! Your subscription will include a free tier of AI Assistant in PyCharm. You can take advantage of this discount by clicking the button on the <a href="https://lp.jetbrains.com/support-python" target="_blank">JetBrains promotion page</a>, and the discount will be automatically applied when you check out. The promotion will only be available through December 12th, so go grab the deal today!</li></ul><h2 style="text-align: center;">&gt;&gt;&gt; <a href="https://lp.jetbrains.com/support-python" target="_blank">Get PyCharm Pro!</a> &lt;&lt;&lt;</h2><div style="text-align: center;">&nbsp;</div><h2 style="text-align: left;">There are two ways to join our fundraiser through <a href="http://donate.python.org" target="_blank">donate.python.org</a>:</h2><ul style="text-align: left;"><li><b>Donate directly to the PSF!</b> Your donation is a direct way to support and power the future of the Python programming language and community you love. Every donation makes a difference, and we work hard to make a little go a long way.</li><li><b>Become a PSF Supporting Member!</b> When you sign up as a Supporting Member of the PSF, you become a part of the PSF, are eligible to vote in PSF elections, and help us sustain our mission with your annual support. You can sign up as a Supporting Member at the usual annual rate ($99 USD), or you can take advantage of our sliding scale option (starting at $25 USD)!</li></ul><h2 style="text-align: center;">&gt;&gt;&gt; <a href="http://donate.python.org" target="_blank">Donate or Become a Member Today!</a> &lt;&lt;&lt;</h2><div style="text-align: center;">&nbsp;</div><h2 style="text-align: left;">If you already donated, you’re already a PSF member, AND you already grabbed PyCharm at 30% off (look at you, you exemplary supporter!🏆) you can:</h2><ul style="text-align: left;"><li><b>Share the fundraiser with your regional and project-based communities:</b> Share this blog post in your Python-related Discords, Slacks, social media accounts- wherever your Python community is! Keep an eye on <a href="https://pyfound.blogspot.com/2025/02/where-is-psf-2025-edition.html" target="_blank">our social media accounts</a> and repost to share the latest stories and news for the campaign.</li><li><b>Share your Python story with a call to action: </b>We invite you to share your personal Python, PyCon, or PSF story. What impact has it made in your life, in your community, in your career? Share your story in a blog post or on your social media platform of choice and add a link to <a href="http://donate.python.org" target="_blank">donate.python.org</a>.</li><li><b>Ask your employer to sponsor:</b> If your company is using Python to build its products and services, check to see if they already sponsor the PSF on our<a href="https://www.python.org/psf/sponsors/" target="_blank"> Sponsors page</a>. If not, reach out to your organization's internal decision-makers and impress on them just how important it is for us to power the future of Python together, and send them our&nbsp;<a href="https://www.python.org/sponsors/application/" target="_blank">sponsor prospectus</a>.</li></ul><div style="text-align: left;">&nbsp;</div><h2 style="text-align: left;">Your donations and support:</h2><ul style="text-align: left;"><li>Keep Python thriving </li><li>Support CPython and PyPI progress </li><li>Increase security across the Python ecosystem </li><li>Bring the global Python community together </li><li>Make our community more diverse and robust every year</li></ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 24, 2025 03:44 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2025/11/python-is-for-everyone-grab-pycharm-pro.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nicolaiarocci.com/flask-started-as-an-april-fools-joke/" class="hover:underline"
-              >Flask started as an April Fool's joke</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The story that the Python micro web framework Flask started as an April Fool&rsquo;s
-joke is well known in Python circles, but it was nice to <a href="https://www.youtube.com/watch?v=GXJwX3tpMe0">see it told by Armin
-Ronacher</a> himself<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup>.</p>
-<p>I&rsquo;m fond of Flask. It was a breath of fresh air when it came out, and most of my
-Python <a href="https://nicolaiarocci.com/opensource/#python">open-source</a> work is based on it.</p>
-<div class="footnotes">
-<hr />
-<ol>
-<li id="fn:1">
-<p>The video is produced by the people who also authored the remarkable <a href="https://nicolaiarocci.com/python-the-documentary/">Python: The Documentary</a>.&#160;<a class="footnote-backref" href="#fnref:1">&#x21a9;&#xfe0e;</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 24, 2025 02:29 PM UTC by
-            <a href="http://nicolaiarocci.com/tags/python/index.xml" class="link link-hover text-primary"
-              >Nicola Iarocci</a
-            >
-          </div>
-          <a
-            href="https://nicolaiarocci.com/flask-started-as-an-april-fools-joke/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://snarky.ca/should-i-rewrite-the-python-launcher-for-unix-in-python/" class="hover:underline"
-              >Should I rewrite the Python Launcher for Unix in Python?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I want to be upfront that this blog post is for me to write down some thoughts that I have on the idea of rewriting the Python Launcher for Unix from Rust to pure Python. This blog post is not meant to explicitly be educational or enlightening for others, but</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 22, 2025 12:18 AM UTC by
-            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
-              >Brett Cannon</a
-            >
-          </div>
-          <a
-            href="https://snarky.ca/should-i-rewrite-the-python-launcher-for-unix-in-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.codingthepast.com/2025/11/22/Data-Science-Quiz.html" class="hover:underline"
-              >Data Science Quiz For Humanities</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Test your skills with this interactive data science quiz covering statistics, Python, R, and data analysis.</p>
-
-<div class="quiz-container">
-  
-
-  Progress
-
-  <br />
-  
-  <div class="progress-wrap">
-    <div class="progress-bar" id="progressBar" style="width: 0%;"></div>
-  </div>
-  <div class="muted" id="progressText">Answered 0 of 15</div>
-
-  <form class="fade-in" id="quizForm">
-
-    <!-- Questions 1–15 -->
-
-    <!-- 1 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">1</div><div class="q-title"><strong>Which of the following best describes a z-score?</strong></div></div>
-      <div class="options">
-        <label><input name="q1" type="radio" value="A" /> A measure of central tendency</label>
-        <label><input name="q1" type="radio" value="B" /> The number of standard deviations a value is from the mean</label>
-        <label><input name="q1" type="radio" value="C" /> The square of the correlation coefficient</label>
-        <label><input name="q1" type="radio" value="D" /> A type of probability distribution</label>
-      </div>
-    </section>
-
-    <!-- 2 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">2</div><div class="q-title"><strong>What is the main advantage of using tidy data principles in R?</strong></div></div>
-      <div class="options">
-        <label><input name="q2" type="radio" value="A" /> Increased computation speed</label>
-        <label><input name="q2" type="radio" value="B" /> Easier visualization and consistent analysis</label>
-        <label><input name="q2" type="radio" value="C" /> Reduced memory usage</label>
-        <label><input name="q2" type="radio" value="D" /> Automatically removes missing values</label>
-      </div>
-    </section>
-
-    <!-- 3 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">3</div><div class="q-title"><strong>In Python, which library is most commonly used for data manipulation?</strong></div></div>
-      <div class="options">
-        <label><input name="q3" type="radio" value="A" /> matplotlib</label>
-        <label><input name="q3" type="radio" value="B" /> numpy</label>
-        <label><input name="q3" type="radio" value="C" /> pandas</label>
-        <label><input name="q3" type="radio" value="D" /> statsmodels</label>
-      </div>
-    </section>
-
-    <!-- 4 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">4</div><div class="q-title"><strong>Which metric is best for evaluating a classification model on imbalanced data?</strong></div></div>
-      <div class="options">
-        <label><input name="q4" type="radio" value="A" /> Accuracy</label>
-        <label><input name="q4" type="radio" value="B" /> Recall</label>
-        <label><input name="q4" type="radio" value="C" /> Variance</label>
-        <label><input name="q4" type="radio" value="D" /> R-squared</label>
-      </div>
-    </section>
-
-    <!-- 5 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">5</div><div class="q-title"><strong>In a linear regression, what does R² represent?</strong></div></div>
-      <div class="options">
-        <label><input name="q5" type="radio" value="A" /> Slope of the regression line</label>
-        <label><input name="q5" type="radio" value="B" /> Variance explained by the model</label>
-        <label><input name="q5" type="radio" value="C" /> Covariance between variables</label>
-        <label><input name="q5" type="radio" value="D" /> Degree of overfitting</label>
-      </div>
-    </section>
-
-    <!-- 6 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">6</div><div class="q-title"><strong>In historical or humanities datasets, which challenge occurs most frequently?</strong></div></div>
-      <div class="options">
-        <label><input name="q6" type="radio" value="A" /> Excessively large sample sizes</label>
-        <label><input name="q6" type="radio" value="B" /> Perfectly standardized variable names</label>
-        <label><input name="q6" type="radio" value="C" /> Missing or incomplete records</label>
-        <label><input name="q6" type="radio" value="D" /> Highly structured relational databases</label>
-      </div>
-    </section>
-
-    <!-- 7 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">7</div><div class="q-title"><strong>What does the <code>groupby()</code> function do in pandas?</strong></div></div>
-      <div class="options">
-        <label><input name="q7" type="radio" value="A" /> Sorts values by category</label>
-        <label><input name="q7" type="radio" value="B" /> Applies aggregate operations to subsets of data</label>
-        <label><input name="q7" type="radio" value="C" /> Removes duplicates</label>
-        <label><input name="q7" type="radio" value="D" /> Normalizes columns</label>
-      </div>
-    </section>
-
-    <!-- 8 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">8</div><div class="q-title"><strong>What is the primary purpose of cross-validation?</strong></div></div>
-      <div class="options">
-        <label><input name="q8" type="radio" value="A" /> Increase training accuracy</label>
-        <label><input name="q8" type="radio" value="B" /> Test different loss functions</label>
-        <label><input name="q8" type="radio" value="C" /> Evaluate a model on unseen data to reduce overfitting</label>
-        <label><input name="q8" type="radio" value="D" /> Speed up model training</label>
-      </div>
-    </section>
-
-    <!-- 9 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">9</div><div class="q-title"><strong>Feature engineering refers to:</strong></div></div>
-      <div class="options">
-        <label><input name="q9" type="radio" value="A" /> Training a model with more iterations</label>
-        <label><input name="q9" type="radio" value="B" /> Preparing input variables to improve model performance</label>
-        <label><input name="q9" type="radio" value="C" /> Removing outliers</label>
-        <label><input name="q9" type="radio" value="D" /> Selecting the best model</label>
-      </div>
-    </section>
-
-    <!-- 10 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">10</div><div class="q-title"><strong>Which visualization is most appropriate for the distribution of a continuous variable?</strong></div></div>
-      <div class="options">
-        <label><input name="q10" type="radio" value="A" /> Bar chart</label>
-        <label><input name="q10" type="radio" value="B" /> Histogram</label>
-        <label><input name="q10" type="radio" value="C" /> Pie chart</label>
-        <label><input name="q10" type="radio" value="D" /> Line plot</label>
-      </div>
-    </section>
-
-    <!-- 11 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">11</div><div class="q-title"><strong>A z-score of +2.5 means:</strong></div></div>
-      <div class="options">
-        <label><input name="q11" type="radio" value="A" /> The value is below the mean</label>
-        <label><input name="q11" type="radio" value="B" /> The value is 2.5 SD above the mean</label>
-        <label><input name="q11" type="radio" value="C" /> The value is an outlier</label>
-        <label><input name="q11" type="radio" value="D" /> The standard deviation is 2.5</label>
-      </div>
-    </section>
-
-    <!-- 12 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">12</div><div class="q-title"><strong>Which is an advantage of using R for statistical analysis?</strong></div></div>
-      <div class="options">
-        <label><input name="q12" type="radio" value="A" /> Native GPU acceleration</label>
-        <label><input name="q12" type="radio" value="B" /> Strong statistical libraries and ggplot2</label>
-        <label><input name="q12" type="radio" value="C" /> Automatic machine learning</label>
-        <label><input name="q12" type="radio" value="D" /> Faster than Python</label>
-      </div>
-    </section>
-
-    <!-- 13 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">13</div><div class="q-title"><strong>Normalization in data preprocessing means:</strong></div></div>
-      <div class="options">
-        <label><input name="q13" type="radio" value="A" /> Converting categorical data to numeric</label>
-        <label><input name="q13" type="radio" value="B" /> Rescaling values to a standard range like 0–1</label>
-        <label><input name="q13" type="radio" value="C" /> Detecting outliers</label>
-        <label><input name="q13" type="radio" value="D" /> Filling missing values</label>
-      </div>
-    </section>
-
-    <!-- 14 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">14</div><div class="q-title"><strong>Why may historical datasets be biased?</strong></div></div>
-      <div class="options">
-        <label><input name="q14" type="radio" value="A" /> They always include all records</label>
-        <label><input name="q14" type="radio" value="B" /> Selective or incomplete record-keeping</label>
-        <label><input name="q14" type="radio" value="C" /> Automatic modern data collection</label>
-        <label><input name="q14" type="radio" value="D" /> Perfect measurement systems</label>
-      </div>
-    </section>
-
-    <!-- 15 -->
-    <section class="question">
-      <div class="q-head"><div class="q-num">15</div><div class="q-title"><strong>Which Python function can compute a z-score?</strong></div></div>
-      <div class="options">
-        <label><input name="q15" type="radio" value="A" /> pandas.normalize()</label>
-        <label><input name="q15" type="radio" value="B" /> scipy.stats.zscore()</label>
-        <label><input name="q15" type="radio" value="C" /> numpy.z()</label>
-        <label><input name="q15" type="radio" value="D" /> matplotlib.stats()</label>
-      </div>
-    </section>
-
-    <div class="controls">
-      <button class="primary" id="submitBtn" type="button">Submit Quiz</button>
-      <button class="ghost" id="resetBtn" type="button">Try again</button>
-    </div>
-
-    <div id="result"></div>
-
-  </form>
-
-  <strong></strong>
-
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 22, 2025 12:00 AM UTC by
-            <a href="https://www.codingthepast.com/feed_python_planet.xml" class="link link-hover text-primary"
-              >Bruno Ponne / Coding The Past</a
-            >
-          </div>
-          <a
-            href="https://www.codingthepast.com/2025/11/22/Data-Science-Quiz.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/" class="hover:underline"
-              >Claude Code : comment un assistant IA m'a fait gagner des jours de développement</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="tldr">TL;DR</h2>
-<p>Après une semaine d&rsquo;utilisation intensive de Claude Code<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> pendant PyCon Ireland et sur mes projets personnels, je suis complètement bluffé par les gains de productivité. L&rsquo;outil m&rsquo;a permis de migrer automatiquement le site Python Ireland de Django 5.0 vers 5.2 et Wagtail 6.2 vers 7.2, de développer un outil de conversion de livres scannés en 5 minutes, et de générer une documentation complète en quelques minutes. Contrairement à Cursor ou Windsurf, Claude Code s&rsquo;intègre partout (PyCharm, VS Code, Zed, Neovim, ligne de commande), ce qui en fait un véritable game changer pour les développeurs professionnels.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 22, 2025 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/" class="hover:underline"
-              >Claude Code : comment un assistant IA m'a fait gagner des jours de développement</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="tldr">TL;DR</h2>
-<p>Après une semaine d&rsquo;utilisation intensive de Claude Code<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> pendant PyCon Ireland et sur mes projets personnels, je suis complètement bluffé par les gains de productivité. L&rsquo;outil m&rsquo;a permis de migrer automatiquement le site Python Ireland de Django 5.0 vers 5.2 et Wagtail 6.2 vers 7.2, de développer un outil de conversion de livres scannés en 5 minutes, et de générer une documentation complète en quelques minutes. Contrairement à Cursor ou Windsurf, Claude Code s&rsquo;intègre partout (PyCharm, VS Code, Zed, Neovim, ligne de commande), ce qui en fait un véritable game changer pour les développeurs professionnels.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 22, 2025 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/" class="hover:underline"
-              >Claude Code : comment un assistant IA m'a fait gagner des jours de développement</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="tldr">TL;DR</h2>
-<p>Après une semaine d&rsquo;utilisation intensive de Claude Code<sup id="fnref:1"><a class="footnote-ref" href="#fn:1">1</a></sup> pendant PyCon Ireland et sur mes projets personnels, je suis complètement bluffé par les gains de productivité. L&rsquo;outil m&rsquo;a permis de migrer automatiquement le site Python Ireland de Django 5.0 vers 5.2 et Wagtail 6.2 vers 7.2, de développer un outil de conversion de livres scannés en 5 minutes, et de générer une documentation complète en quelques minutes. Contrairement à Cursor ou Windsurf, Claude Code s&rsquo;intègre partout (PyCharm, VS Code, Zed, Neovim, ligne de commande), ce qui en fait un véritable game changer pour les développeurs professionnels.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 22, 2025 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2025/11/22/claude-code-retour-experience-pycon-ireland/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2025/11/lifetime-access-sale-2025/" class="hover:underline"
-              >Python Morsels Lifetime Access Sale</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you code in Python regularly, you&rsquo;re already learning new things everyday.</p>
-
-<p>You hit a wall, or something breaks. Then you search around, spend some hours on Stack Overflow, and eventually, you figure it out.</p>
-
-<p><strong>But this kind of learning is unstructured. It&rsquo;s reactive, instead of intentional.</strong></p>
-
-<p>You fix the problem at hand, but the underlying gaps in your knowledge remain unaddressed.</p>
-
-<h2>A more structured way to improve your Python skills</h2>
-
-<p>Python Morsels gives you <strong>a structured, hands-on way to improve your Python skills</strong> through weekly practice:</p>
-
-<ul>
-<li>Notice significant progress with as little as 30 minutes a week</li>
-<li>Learn to naturally think more Pythonically</li>
-<li>Explore new approaches to problem-solving</li>
-<li>Challenge yourself to get outside your comfort zone regularly</li>
-</ul>
-
-
-<p>Python Morsels is a subscription service because <strong>I&rsquo;m adding new learning resources almost every week</strong>.</p>
-
-<p>But through December 1st, you can get <strong><a href="https://pythonmorsels.com/lifetime-access-sale/">lifetime access</a></strong> for a one-time payment.</p>
-
-<h2>How it works</h2>
-
-<p>When you sign up for Python Morsels, you&rsquo;ll choose your current Python skill level, from novice to advanced.</p>
-
-<p>Based on your skill level, <strong>each Monday I&rsquo;ll send you a personalized routine</strong> with:</p>
-
-<ul>
-<li>a short screencast to watch (or read)</li>
-<li>a multi-part exercise to move you outside your comfort zone</li>
-<li>a mini exercise that you can accomplish in just 10 minutes</li>
-<li>links to dive deeper into subsequent screencasts and exercises</li>
-</ul>
-
-
-<p>Think of Python Morsels as a gym for your Python skills: you come in for quick training sessions, put in the reps, and make a little more progress each time.</p>
-
-<p>All these resources are accessible to you forever, and with lifetime access you&rsquo;ll never pay another subscription fee.</p>
-
-<h2>What Python Morsels includes</h2>
-
-<p>Python Morsels has grown a lot over the past 8 years. Currently, Python Morsels has:</p>
-
-<ul>
-<li>235+ Video Lessons (or screencasts, as I call them)</li>
-<li>262+ Hands-On Exercises (with solution walkthroughs)</li>
-<li>500+ Optional Bonuses (to challenge every skill level)</li>
-<li>303+ Articles Organized Topic-Wise (if you prefer reading)</li>
-</ul>
-
-
-<p>I&rsquo;ll be sending you personalized recommendations every week, but you can use these resources however they fit your routine: as learning guides, hands-on practice sessions, quick cheatsheets, long-term reference material, or quick Python workouts.</p>
-
-<p>In addition to this, Python Morsels also gives you access to:</p>
-
-<ul>
-<li>Python Jumpstart - a structured course for beginners</li>
-<li>Additional Deep-Dive Courses - structured tracks to master a concept</li>
-<li>Exercise Paths - topic-based exercises to strengthen a specific skill</li>
-</ul>
-
-
-<p>Because Python Morsels runs as an active subscription service, I&rsquo;m always adding new screencasts, new exercises, and updated material on a weekly or monthly cycle. I also keep everything up-to-date with each new Python release, incorporating newly added features and retiring end-of-life&rsquo;d Python versions.</p>
-
-<h2>Lock in lifetime access</h2>
-
-<p>Python Morsels usually costs <strong>$240/year</strong> but you can get <strong>lifetime access</strong> through December 1st for a one-time payment. I&rsquo;ve only offered lifetime access <strong>once before</strong> in 8 years.</p>
-
-<p>If you&rsquo;ve been on the fence about subscribing to Python Morsels or want to invest in building a daily learning habit, this is a good time to do it.</p>
-
-<p><a class="subscribe-btn form-big" href="https://pythonmorsels.com/lifetime-access-sale/">Get lifetime access to Python Morsels</a></p>
-
-<p>If you have questions about the sale, please comment below or <a href="mailto:he&amp;#108;p&amp;#64;&amp;#112;%7&amp;#57;th%6Fnmo&amp;#114;s%6&amp;#53;ls&amp;#46;&amp;#99;&amp;#111;m">email me</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 21, 2025 10:42 PM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2025/11/lifetime-access-sale-2025/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/security-release-for-issue-14366/8953" class="hover:underline"
-              >Security Release for issue #14366</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><a href="https://foss.heptapod.net/ced">Cédric Krier</a> has found that <a href="https://pypi.org/project/trytond/">trytond</a> does not <a href="https://bugs.tryton.org/14366">enforce access rights for data export</a> (since version 6.0).</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38582-impact-1" name="p-38582-impact-1"></a>Impact</h2>
-<p><a href="https://www.first.org/cvss/calculator/3-0#CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N/E:H/RL:O/RC:C">CVSS v3.0 Base Score: 6.5</a></p>
-<ul>
-<li>Attack Vector: Network</li>
-<li>Attack Complexity: Low</li>
-<li>Privileges Required: Low</li>
-<li>User Interaction: None</li>
-<li>Scope: Unchanged</li>
-<li>Confidentiality: High</li>
-<li>Integrity: None</li>
-<li>Availability: None</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38582-workaround-2" name="p-38582-workaround-2"></a>Workaround</h2>
-<p>There is no workaround.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38582-resolution-3" name="p-38582-resolution-3"></a>Resolution</h2>
-<p>All affected users should upgrade <code>trytond</code> to the latest version.</p>
-<p>Affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>7.6: &lt;= 7.6.10</li>
-<li>7.4: &lt;= 7.4.20</li>
-<li>7.0: &lt;= 7.0.39</li>
-<li>6.0: &lt;= 6.0.69</li>
-</ul>
-</li>
-</ul>
-<p>Non affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>7.6: &gt;= 7.6.11</li>
-<li>7.4: &gt;= 7.4.21</li>
-<li>7.0: &gt;= 7.0.40</li>
-<li>6.0: &gt;= 6.0.70</li>
-</ul>
-</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38582-reference-4" name="p-38582-reference-4"></a>Reference</h2>
-<ul>
-<li><a class="inline-onebox" href="https://bugs.tryton.org/14366">Export data does not enforce access rights (#14366) · Issues · Tryton / Tryton · GitLab</a></li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38582-concerns-5" name="p-38582-concerns-5"></a>Concerns?</h2>
-<p>Any security concerns should be reported on the bug-tracker at <a href="https://bugs.tryton.org/">https://bugs.tryton.org/</a> with the confidential checkbox checked.</p>
-            <p><small>3 posts - 3 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/security-release-for-issue-14366/8953">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 21, 2025 03:00 PM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/security-release-for-issue-14366/8953"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/security-release-for-issue-14363/8951" class="hover:underline"
-              >Security Release for issue #14363</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><a href="https://foss.heptapod.net/Abdul123">Abdulfatah Abdillahi</a> has found that <a href="https://www.npmjs.com/package/tryton-sao">sao</a> <a href="https://bugs.tryton.org/14363">does not escape the completion values</a>. The content of completion is generally the record name which may be edited in many ways depending on the model. The content may include some JavaScript which is executed in the same context as sao which gives access to sensitive data such as the session.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38579-impact-1" name="p-38579-impact-1"></a>Impact</h2>
-<p><a href="https://www.first.org/cvss/calculator/3-0#CVSS:3.0/AV:N/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:N/E:H/RL:O/RC:C/CR:H/IR:H/MAV:N/MAC:L/MPR:L/MUI:R/MS:U/MC:H/MI:H/MA:N">CVSS v3.0 Base Score: 7.3</a></p>
-<ul>
-<li>Attack Vector: Network</li>
-<li>Attack Complexity: Low</li>
-<li>Privileges Required: Low</li>
-<li>User Interaction: Required</li>
-<li>Scope: Unchanged</li>
-<li>Confidentiality: High</li>
-<li>Integrity: High</li>
-<li>Availability: None</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38579-workaround-2" name="p-38579-workaround-2"></a>Workaround</h2>
-<p>There is no general workaround.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38579-resolution-3" name="p-38579-resolution-3"></a>Resolution</h2>
-<p>All affected users should upgrade <code>sao</code> to the latest version.</p>
-<p>Affected versions per series:</p>
-<ul>
-<li><code>sao</code>:
-<ul>
-<li>7.6: &lt;= 7.6.10</li>
-<li>7.4: &lt;= 7.4.20</li>
-<li>7.0: &lt;= 7.0.39</li>
-<li>6.0: &lt;= 6.0.68</li>
-</ul>
-</li>
-</ul>
-<p>Non affected versions per series:</p>
-<ul>
-<li><code>sao</code>:
-<ul>
-<li>7.6: &gt;= 7.6.11</li>
-<li>7.4: &gt;= 7.4.21</li>
-<li>7.0: &gt;= 7.0.40</li>
-<li>6.0: &gt;= 6.0.69</li>
-</ul>
-</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38579-reference-4" name="p-38579-reference-4"></a>Reference</h2>
-<ul>
-<li><a class="inline-onebox" href="https://bugs.tryton.org/14363">Stored XSS Vulnerability Found in Party Field Leading to Arbitrary JavaScript Execution (#14363) · Issues · Tryton / Tryton · GitLab</a></li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-38579-concerns-5" name="p-38579-concerns-5"></a>Concerns?</h2>
-<p>Any security concerns should be reported on the bug-tracker at <a href="https://bugs.tryton.org/">https://bugs.tryton.org/</a> with the confidential checkbox checked.</p>
-            <p><small>3 posts - 3 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/security-release-for-issue-14363/8951">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 21, 2025 03:00 PM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/security-release-for-issue-14363/8951"
+            href="https://www.pythonguis.com/tutorials/getting-started-nicegui/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1963,12 +1976,12 @@ Python <a href="https://nicolaiarocci.com/opensource/#python">open-source</a> wo
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7470</a></li>
-    <li><a>Unique Feeds: 383</a></li>
+    <li><a>Total Entries: 7519</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (536)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (215)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (199)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Caktus Consulting Group (180)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (537)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (215)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (199)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Caktus Consulting Group (180)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
