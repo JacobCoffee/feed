@@ -299,6 +299,158 @@ Every iterable-accepting function/class is a comprehension-like tool waiting to 
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss" class="hover:underline"
+              >Relative “Dependency Cooling” in pip v26.0 with crontab</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <blockquote>
+  <p><strong>WARNING:</strong> Most of this blog post is
+    a hack, everyone should probably just
+    wait for relative dependency cooling to come
+    to a future version of pip.</p>
+</blockquote>
+
+<!-- more -->
+
+<p>pip v26.0 <a href="https://ichard26.github.io/blog/2026/01/whats-new-in-pip-26.0/#excluding-distributions-by-upload-time">added support for the <code>--uploaded-prior-to</code> option</a> in version 26.0.
+This new option enables implementing “<a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns">dependency cooling</a>”, a technique
+described by <a href="https://yossarian.net">William Woodruff</a>, that provides simple but effective
+protections for the <a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns#fn:filippo:~:text=Approx%2E%20Window%20of%20Opportunity">relatively short attack-window time</a>
+of malware published to public software repositories. This brings the
+reaction time to malware back within the realm of humans, who sometimes need to
+execute manual triage processes to take down malware from PyPI.</p>
+
+<!-- more -->
+
+<p>So if you set <code>--uploaded-prior-to</code> to 7 days before this post
+was published, February 25th, you'd do so like this:</p>
+
+<pre><code>python -m pip install \
+  --uploaded-prior-to=2026-02-25 \
+  urllib3
+</code></pre>
+
+<p>But this is only an absolute date, and we have to remember
+to set the option on each call to <code>pip install</code>? That seems like
+a lot of work!</p>
+
+<p>Dependency cooling works best when the policy can be set in a
+<a href="https://nesbitt.io/2026/03/04/package-managers-need-to-cool-down.html">global configuration file to a relative value</a>
+like “7 days”.  The “window” of acceptable packages is then automatically updating over time
+without needing to set a new absolute value constantly. “Set-and-forget”-style.</p>
+
+<p>uv allows <a href="https://docs.astral.sh/uv/guides/scripts/#improving-reproducibility">setting a relative value</a> via <code>--exclude-newer</code>,
+but pip doesn't support relative ranges. I mostly use pip and still wanted to test this feature today, so I
+created a little hack to update my user <code>pip.conf</code> configuration file
+on a regular basis instead. Here's what my <code>pip.conf</code> file looks like:</p>
+
+<pre><code>[install]
+uploaded-prior-to = 2026-02-25
+</code></pre>
+
+<p>And below is the entire Python script doing the updating. Quick reminder that
+I only tested this on my own system, your mileage
+may vary, do not use in production.</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
+<span class="c1"># License: MIT</span>
+
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="c1"># Parse the command line options.</span>
+    <span class="n">pip_conf</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="n">days</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+
+    <span class="c1"># Load the existing pip.conf file.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not find pip.conf file at: </span><span class="si">{</span><span class="n">pip_conf</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">1</span>
+
+    <span class="c1"># Update the existing uploaded-prior-to value.</span>
+    <span class="n">uploaded_prior_to_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s2">&quot;^uploaded-prior-to\s*=\s*2[0-9]</span><span class="si">{3}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Could not find uploaded-prior-to option in pip.conf under [install]&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">1</span>
+    <span class="n">new_uploaded_prior_to</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span> <span class="o">-</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="n">days</span><span class="p">)</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;uploaded-prior-to = </span><span class="si">{</span><span class="n">new_uploaded_prior_to</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">pip_conf_data</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Write the new uploaded-prior-to</span>
+    <span class="c1"># value to pip.conf</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">0</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre>
+</div>
+
+<p>The script takes two parameters, your <code>pip.conf</code> file you want
+to update (typically <code>~/.config/pip/pip.conf</code> on Linux) and
+an integer number of days. I used 14 in my cron example below.</p>
+
+<p>Simple right? I installed and <code>chmod u+X</code>-ed the script in my <code>/usr/local/bin</code> directory
+and then added to my crontab using <code>crontab -u (USERNAME) -e</code>:</p>
+
+<pre><code>0 * * * * (/usr/local/bin/pip-dependency-cooldown /home/sethmlarson/.config/pip/pip.conf 14)  2&gt;&amp;1 | logger -t pip-dependency-cooldown
+</code></pre>
+
+<p>This pattern will run the script once per hour and update the value
+of <code>uploaded-prior-to</code> to the new day. Now I only receive packages that
+were published 14 or more days ago by default when running <code>pip install</code> without any other options.</p>
+
+<p>Stay tuned for more about dependency cooldowns for Python installers
+once pip supports relative values.</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 04, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/724" class="hover:underline"
               >Issue #724: Unit Testing Performance, Ordering, FastAPI, and More (March 3, 2026)</a
             >
@@ -2233,46 +2385,6 @@ And keep in mind that <strong>every character counts when you're ordering string
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/run-python-scripts/" class="hover:underline"
-              >How to Run Your Python Scripts and Code</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to run Python scripts from the command line, REPL, IDEs, and file managers on Windows, Linux, and macOS. Master all execution approaches.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 25, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/run-python-scripts/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2284,8 +2396,8 @@ And keep in mind that <strong>every character counts when you're ordering string
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7404</a></li>
-    <li><a>Unique Feeds: 384</a></li>
+    <li><a>Total Entries: 7535</a></li>
+    <li><a>Unique Feeds: 383</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
