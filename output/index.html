@@ -201,6 +201,255 @@ stewardship for this project, <a href="https://anarc.at/contact/">contact me</a>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://fruch.github.io/python/2026/03/06/maybe-orm-odm-not-dead-yet" class="hover:underline"
+              >Maybe ORM/ODM are not dead? Yet...</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>So, let’s pick up where we left off. A couple of weeks ago, I wrote about how I took a 4-year-old fever dream—an ODM for Cassandra and ScyllaDB called <a href="https://github.com/fruch/coodie">coodie</a>—and let an AI build the whole thing while I sipped my morning coffee.</p>
+
+<p>It was a fun experiment. But then, a funny coincidence happened (or maybe the algorithm just has a sick sense of humor).</p>
+
+<p>Right after I hit publish and started feeling good about my newfound “prompt engineer” status, I was listening to an episode of the <a href="https://pythonbytes.fm">pythonbytes podcast</a> discussing Michael Kennedy’s recent post, <a href="https://blog.michaelckennedy.net">Raw+DC: The ORM pattern of 2026?</a>. The overarching thesis of their discussion? ORMs and ODMs are fundamentally dead. They are a relic of the past, bloated, abstraction-heavy, and ultimately, absolute performance killers.</p>
+
+<p>I actually fired off a Twitter thread in response to it. And honestly, at first, I had to concede. They make a really good point. I spend my days deep in the ScyllaDB trenches, where we fight for every single microsecond. Putting a thick Python abstraction layer on top of a highly optimized driver usually sounds like a brilliant way to turn a sports car into a tractor.</p>
+
+<p>But it got me thinking. How bad was coodie? Was my AI-generated Beanie-wannabe actually a performance disaster waiting to happen?</p>
+
+<h2 id="giving-it-a-test-run">Giving it a test run</h2>
+
+<p>Like any respectable developer looking for an excuse to avoid real work, I decided to put my money where my AI-generated mouth is. Instead of sitting at my desk, I just offloaded the whole task to the Copilot agent from my phone to run some extensive benchmarks.</p>
+
+<p>I didn’t just want to compare coodie to existing solutions like <a href="https://docs.datastax.com/en/developer/python-driver/latest/cqlengine/">cqlengine</a>. I wanted to establish an absolute performance floor. I wanted to test it against the Raw+DC pattern (Python dataclasses + hand-written CQL with prepared statements) to see exactly how much the “ORM tax” was really costing us.</p>
+
+<p>The test spun up a local ScyllaDB node, hammered it with various workloads—inserts, reads, conditional updates, batch operations—and fetched the results back.</p>
+
+<h2 id="the-finally-surprising-results">The finally surprising results</h2>
+
+<p>I had the agent run the script. I fully expected coodie to be heavily penalized. We all accept slower performance in exchange for autocomplete, declarative schemas, and not writing raw CQL strings.</p>
+
+<p>I stared at the results the agent sent back to my screen. Then I told it to clear the cache, restart the Scylla container, and run it again just to be sure.</p>
+
+<p>The results were genuinely surprising, and running them actually highlighted a few spots where we could squeeze out even more performance, leading straight to <a href="https://github.com/fruch/coodie/pull/190">PR #190</a> to apply those lessons learned.</p>
+
+<p>Here is the breakdown of what the agent and I found across the board.</p>
+
+<h3 id="three-way-benchmark-results-scylla-driver">Three-way Benchmark Results (scylla driver)</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Benchmark</th>
+      <th>Raw+DC (µs)</th>
+      <th>coodie (µs)</th>
+      <th>cqlengine (µs)</th>
+      <th>coodie vs Raw+DC</th>
+      <th>coodie vs cqlengine</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>single-insert</td>
+      <td>456</td>
+      <td>485</td>
+      <td>615</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.79× ✅</td>
+    </tr>
+    <tr>
+      <td>insert-if-not-exists</td>
+      <td>1,180</td>
+      <td>1,170</td>
+      <td>1,370</td>
+      <td><strong>~1.00×</strong></td>
+      <td>0.85× ✅</td>
+    </tr>
+    <tr>
+      <td>insert-with-ttl</td>
+      <td>448</td>
+      <td>469</td>
+      <td>640</td>
+      <td><strong>1.05×</strong></td>
+      <td>0.73× ✅</td>
+    </tr>
+    <tr>
+      <td>get-by-pk</td>
+      <td>461</td>
+      <td>520</td>
+      <td>665</td>
+      <td><strong>1.13×</strong></td>
+      <td>0.78× ✅</td>
+    </tr>
+    <tr>
+      <td>filter-secondary-index</td>
+      <td>1,370</td>
+      <td>2,740</td>
+      <td>8,530</td>
+      <td><strong>2.00×</strong> 🟠</td>
+      <td>0.32× ✅</td>
+    </tr>
+    <tr>
+      <td>filter-limit</td>
+      <td>575</td>
+      <td>627</td>
+      <td>1,220</td>
+      <td><strong>1.09×</strong></td>
+      <td>0.51× ✅</td>
+    </tr>
+    <tr>
+      <td>count</td>
+      <td>904</td>
+      <td>1,500</td>
+      <td>1,590</td>
+      <td><strong>1.66×</strong> 🟡</td>
+      <td>0.94× ✅</td>
+    </tr>
+    <tr>
+      <td>partial-update</td>
+      <td>409</td>
+      <td>960</td>
+      <td>542</td>
+      <td><strong>2.35×</strong> 🔴</td>
+      <td>1.77× ❌</td>
+    </tr>
+    <tr>
+      <td>update-if-condition (LWT)</td>
+      <td>1,140</td>
+      <td>1,620</td>
+      <td>1,340</td>
+      <td><strong>1.42×</strong> 🟡</td>
+      <td>1.21× ❌</td>
+    </tr>
+    <tr>
+      <td>single-delete</td>
+      <td>941</td>
+      <td>925</td>
+      <td>1,190</td>
+      <td><strong>~1.00×</strong></td>
+      <td>0.78× ✅</td>
+    </tr>
+    <tr>
+      <td>bulk-delete</td>
+      <td>872</td>
+      <td>921</td>
+      <td>1,200</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.77× ✅</td>
+    </tr>
+    <tr>
+      <td>batch-insert-10</td>
+      <td>596</td>
+      <td>634</td>
+      <td>1,700</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.37× ✅</td>
+    </tr>
+    <tr>
+      <td>batch-insert-100</td>
+      <td>42,800</td>
+      <td>1,960</td>
+      <td>52,900</td>
+      <td><strong>0.05× 🚀</strong></td>
+      <td>0.04× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-write</td>
+      <td>448</td>
+      <td>485</td>
+      <td>679</td>
+      <td><strong>1.08×</strong></td>
+      <td>0.71× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-read</td>
+      <td>478</td>
+      <td>508</td>
+      <td>689</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.74× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-roundtrip</td>
+      <td>939</td>
+      <td>1,060</td>
+      <td>1,380</td>
+      <td><strong>1.13×</strong></td>
+      <td>0.77× ✅</td>
+    </tr>
+    <tr>
+      <td>model-instantiation</td>
+      <td>0.671</td>
+      <td>2.02</td>
+      <td>12.1</td>
+      <td><strong>3.01×</strong> 🔴</td>
+      <td>0.17× ✅</td>
+    </tr>
+    <tr>
+      <td>model-serialization</td>
+      <td>10.1</td>
+      <td>2.05</td>
+      <td>4.56</td>
+      <td><strong>0.20× 🚀</strong></td>
+      <td>0.45× ✅</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="summary-of-findings">Summary of Findings</h2>
+
+<p><strong>Near Parity on the Hot Paths:</strong> For standard reads (get-by-pk), inserts, deletes, and basic limited queries, coodie is operating with a completely negligible overhead compared to writing raw CQL by hand (usually hovering around 5-13% tax). It also outperforms cqlengine across the board on these operations.</p>
+
+<p><strong>Pydantic V2 is a beast:</strong> We need to remember that Pydantic V2 is basically a blazing-fast Rust engine wearing a Python trench coat. The data validation, object instantiation, and serialization happen at the speed of Rust, keeping the overhead minimal from the start. Just look at the serialization and batch performance multipliers!</p>
+
+<p><strong>The AI kept it lean:</strong> The code the LLM generated wasn’t building massive ASTs or doing unnecessary query translations. coodie essentially formats a clean dictionary and hands it straight to the underlying Scylla driver to do its native magic. It gets out of the way.</p>
+
+<p><strong>Lessons Learned (<a href="https://github.com/fruch/coodie/pull/190">PR #190</a>):</strong> Even with great initial numbers, running the full benchmark suite revealed bottlenecks on things like partial-update and count. We realized we were doing redundant data validation during read operations when fetching data we already knew was valid straight from the database. By bypassing the extra validation pass and loading the raw rows more directly into the Pydantic models (using <code class="language-plaintext highlighter-rouge">model_construct()</code> for DB data), we can shave off the remaining overhead.</p>
+
+<h2 id="wrapping-up">Wrapping up</h2>
+
+<p>So, maybe ORM/ODM are not dead? Yet…</p>
+
+<p>If the final overhead of using an ODM on hot paths is a measly 5-13%, but in exchange I get full type-safety, declarative schemas, and zero boilerplate, I am taking the ODM every single time.</p>
+
+<p>It seems my digital sidekick built something that is actually production-ready, and with a little bit of human-driven optimization, it screams.</p>
+
+<p>You can check out the code, star it, or run your own tests over at <a href="https://github.com/fruch/coodie">github.com/fruch/coodie</a>.</p>
+
+<p>PRs are welcome. יאללה, let’s see how fast we can make it.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 06, 2026 12:00 AM UTC by
+            <a href="http://fruch.github.io/feed.python.xml" class="link link-hover text-primary"
+              >Israel Fruchter</a
+            >
+          </div>
+          <a
+            href="http://fruch.github.io/python/2026/03/06/maybe-orm-odm-not-dead-yet"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/quizzes/openrouter-api/" class="hover:underline"
               >Quiz: How to Use the OpenRouter API to Access Multiple AI Models via Python</a
             >
@@ -2903,91 +3152,6 @@ Finally, if you want an artisanal, hand-crafted digest of every week of the show
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121" class="hover:underline"
-              >Tryton News March 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div>  </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/9/9d4232da578af20227f7233128e17af01742fe6e.jpeg" title="Photo Pexels, cottonbro studio"><img alt="Boy in White T-shirt Sitting on Chair in Front of Computer" height="500" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/9/9d4232da578af20227f7233128e17af01742fe6e_2_503x500.jpeg" title="Photo Pexels, cottonbro studio" width="503" /></a></div><p></p>
-
-<p>In the last month we focused on fixing bugs, improving the behaviour of things, speeding-up performance issues - building on the changes from <a href="https://discuss.tryton.org/t/tryton-release-7-8/">our last release</a>. We also added some new features which we would like to introduce to you in this newsletter.</p>
-<p>For an in depth overview of the <a href="https://bugs.tryton.org/">Tryton issues please take a look at our issue tracker </a> or see the issues and merge requests <a href="https://code.tryton.org/tryton/-/labels">filtered by label</a>.</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--sales-purchase">Sales, Purchases and Projects</h3>
-<p>Now we <a href="https://bugs.tryton.org/14538">add the web shop URL to sales</a>.</p>
-<p>We now add a <a href="https://bugs.tryton.org/14507">menu entry for <em>party identifier.</em></a></p>
-<h3 id="heading--accounting">Accounting, Invoicing and Payments</h3>
-<p>Now we can <a href="https://code.tryton.org/tryton/-/commit/d859e52b7ba404c95d2ed3c8f0887e0cceb2c1df">search for shipments on the invoice line</a>.</p>
-<p>In UBL we now <a href="https://bugs.tryton.org/14517">set <code>BillingReference</code> to <em>Invoice</em> and <em>Credit Note</em></a>.</p>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/fa6de53a766e1bfb5cfd04009a3f8ba3d04e7ebc">improve the layout of the <em>invoice credit form</em></a>.</p>
-<p>Now we enforce the Peppol rule “<a href="https://www.peppolguide.sg/billing/rules/BR-27/">[BR-27]-The Item net price (BT-146) shall NOT be negative</a>”. So we <a href="https://bugs.tryton.org/14504">make sure that the <em>unit price</em> on an <em>invoice line</em> is not negative</a>.</p>
-<p>We now add an <a href="https://code.tryton.org/tryton/-/commit/e6e5d9c225711c755e8d71ee279c14b8b9cc7d04"><em>Update Status</em> button to the Peppol document</a>.</p>
-<h3 id="heading--stock">Stock, Production and Shipments</h3>
-<p>Now we can <a href="https://bugs.tryton.org/14424">charge duties for UPS for <em>buyer</em> or <em>seller</em> on import and export defined in the incoterms</a>.</p>
-<h3 id="heading--ui">User Interface</h3>
-<p>Now we <a href="https://bugs.tryton.org/14634">allow to re-order tabs in Sao</a>.</p>
-<p>In the <a href="https://bugs.tryton.org/14574">favourites menu we now display a message</a> how to use it, instead of showing an empty menu.</p>
-<p>We also <a href="https://bugs.tryton.org/14575">improve the <em>blank state</em> of <em>notifications</em> by showing a message</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/13306">add a button in Sao for closing the search filter</a>.</p>
-<h3 id="heading--system-data-config">System Data and Configuration</h3>
-<p>Now <a href="https://code.tryton.org/tryton/-/commit/f1888e0e031352187fb5b24207c55618f3081e61">we update the required version of <code>python-stdnum</code> to version <code>2.22</code></a> and introduced new party identifier.</p>
-
-More <a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121/1">(click for more details)</a>
-<h2 id="heading--new-releases">New Releases</h2>
-<p>We released bug fixes for the currently maintained <a href="https://discuss.tryton.org/t/release-process/395">long term support series</a><br />
-<a href="https://code.tryton.org/tryton/-/commits/branch/7.0">7.0</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/6.0">6.0</a>, and for the penultimate series <a href="https://code.tryton.org/tryton/-/commits/branch/7.8">7.8</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/7.6">7.6</a>.</p>
-<h2 id="heading--security">Security</h2>
-Please update your systems to take care of a security related bug we found last month. 
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<p>Now we also <a href="https://code.tryton.org/tryton/-/commit/0a667448a4dd1be5561d205ffa56b077cf79b972">display the <code>create date</code> and <code>create time</code> in the error list</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14528">add <code>basic</code> authentication for <em>user applications</em></a>. Because in some cases the consumer of the user application may not be able to use the <code>bearer</code> authentication.</p>
-<p>Now we <a href="https://bugs.tryton.org/14530">allow to activate the <em>development mode</em> with WSGI applications by setting the environment variable <code>TRYTOND_DEV</code></a>.</p>
-<p>Writing compatible HTML for email can be very difficult. <a href="https://mjml.io/">MJML</a> provides a syntax to ease the creation of such emails. So now we <a href="https://bugs.tryton.org/12597">support the MJML email format in Tryton</a>.</p>
-<h2 id="heading--developer">Changes for Implementers and Developers</h2>
-<p>We now add a <a href="https://bugs.tryton.org/14202">timestamp field on <code>ModelStorage</code> for last modified.</a></p>
-<p>Now we <a href="https://bugs.tryton.org/4369">introduce a new type of field for SQL expressions: <code>Field.sql_column(tables, Model)</code></a></p>
-<p>We now <a href="https://bugs.tryton.org/14539">allow <code>UserError</code> and <code>UserWarning</code> exceptions to be raised on evaluating button</a> inputs.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/646d50f1e24e3070c5cfc7817e1a19ed8202c08d">replace the extension separator by an underscore in report names used as temporary files</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14526">do no longer check for missing parent depends when the <code>One2Many</code> is readonly</a>.</p>
-<p>Now we <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/2971">preserve the line numbers when converting doctest files to python files</a>.</p>
-<p>Authors: <a class="mention" href="https://discuss.tryton.org/u/dave">@dave</a> <a class="mention" href="https://discuss.tryton.org/u/pokoli">@pokoli</a> <a class="mention" href="https://discuss.tryton.org/u/udono">@udono</a></p>
-            <p><small>1 post - 1 participant</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 01, 2026 07:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-news-march-2026/9121"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -2999,8 +3163,8 @@ Please update your systems to take care of a security related bug we found last 
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7509</a></li>
-    <li><a>Unique Feeds: 388</a></li>
+    <li><a>Total Entries: 7520</a></li>
+    <li><a>Unique Feeds: 387</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
