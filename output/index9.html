@@ -53,8 +53,8 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/" class="hover:underline"
-              >What Actually Is Claude Code’s Plan Mode?</a
+            <a href="https://www.pythonguis.com/tutorials/getting-started-flet/" class="hover:underline"
+              >Getting Started With Flet for GUI Development — Your First Steps With the Flet Library for Desktop and Web Python GUIs</a
             >
           </h2>
           
@@ -63,738 +63,20 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>I&#8217;ve mentioned this a few times now, but when I started using Claude it was
-because <a href="https://x.com/steipete/">Peter</a> got me hooked on it.  From the very
-beginning I became a religious user of what is colloquially called YOLO mode,
-which basically gives the agent all the permissions so I can just watch it do
-its stuff.</p>
-<p>One consequence of YOLO mode though is that it didn&#8217;t work well together with
-the plan mode that Claude Code had.  In the beginning it didn&#8217;t inherit all the
-tool permissions, so in plan mode it actually asked for approval all the time.
-I found this annoying and as a result I never really used plan mode.</p>
-<p>Since I haven&#8217;t been using it, I ended up with other approaches.  I&#8217;ve talked
-about this before, but it&#8217;s a version of iterating together with the agent on
-creating a form of handoff in the form of a markdown file.  My approach has
-been getting the agent to ask me clarifying questions, taking these questions
-into an editor, answering them, and then doing a bunch of iterations until I&#8217;m
-decently happy with the end result.</p>
-<p>That has been my approach and I thought that this was pretty popular these days.
-For instance Mario&#8217;s <a href="https://shittycodingagent.ai/">pi</a> which I also use, does
-not have a plan mode and Amp is <a href="https://x.com/beyang/status/2001150592480313425">removing
-theirs</a>.</p>
-<p>However today I had two interesting conversations with people who really like
-plan mode.  As a non-user of plan mode, I wanted to understand how it works.  So
-I specifically looked at the Claude Code implementation to understand what it
-does, how it prompts the agent, and how it steers the client.  I wanted to use
-the tool loop just to get a better understanding of what I&#8217;m missing out on.</p>
-<p>This post is basically just what I found out about how it works, and maybe it&#8217;s
-useful to someone who also does not use plan mode and wants to know what it
-actually does.</p>
-<h2>Plan Mode in Claude Code</h2>
-<p>First we need to agree on what a plan is in Claude Code.  A plan in Claude Code
-is effectively a markdown file that is written into Claude&#8217;s plans folder by
-Claude in plan mode.  The generated plan doesn&#8217;t have any extra structure beyond
-text.  So at least up to that point, there really is not much of a difference
-between you asking it to write a markdown file or it creating its own internal
-markdown file.</p>
-<p>There are however some other major differences.  One is that there are recurring
-prompts to remind the agent that it&#8217;s in read-only mode.  The tools for writing
-files through the agent&#8217;s built-in tools are actually still there.  It has a
-little state machine going on to enter and exit plan mode that it can use.
-Interestingly, it seems like the edit file tool is actually used to manipulate
-the plan file.  So the agent is seemingly editing its own plan file!</p>
-<p>Because plan mode is also a tool (or at least the entering and exiting plan mode
-is), the agent can enter it itself.  This has the same effect as if you were to
-press shift+tab. <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup></p>
-<p>To encourage the agent to write the plan file, there is a custom prompt injected
-when you enter it.  There is no other enforcement from what I can tell.  Other
-agents might do this differently.</p>
-<p>When exiting plan mode it will read the plan file that it wrote to disk and then
-start working off that.  So the path towards spec in the prompt always goes via
-the file system.</p>
-<h2>Can You Plan Mode Without Plan Mode?</h2>
-<p>This obviously raises the question: if the differences are not that significant
-and it is just &#8220;the prompt&#8221; and some workflow around it, how much would you
-have to write into the prompt yourself to get very similar behavior to what the
-plan mode in Claude Code does?</p>
-<p>From a user experience point of view, you basically get two things.</p>
-<ol>
-<li>You get a markdown file, but you never get to see it because it&#8217;s hidden away
-in a folder.  I would argue that putting it into a specific file has some
-benefits because you can edit it.</li>
-<li>However there is something which you can&#8217;t really replicate and that is that
-plan mode at the end comes with a prompt to the user.  That user interface
-you cannot bring up trivially because there is no way to bring it up without
-going through the exit plan mode flow, which requires the file to be in a
-specific location.</li>
-</ol>
-<p>But if we ignore those parts and say that we just want similar behavior to what
-plan mode does from prompting alone, how much prompt do we have to write?  What
-specifically is the delta of entering plan mode versus just writing stuff into
-the context manually?</p>
-<h2>The Prompt Differences</h2>
-<p>When entering plan mode a bunch of stuff is thrown into the context in addition
-to the system prompt.  I don&#8217;t want to give the entire prompt here verbatim
-because it&#8217;s a little bit boring, but I want to break it down by roughly what it
-sends.</p>
-<p>The first thing it sends is general information that is now in plan mode which
-is read-only:</p>
-<blockquote>
-<p>Plan mode is active. The user indicated that they do not want you to execute
-yet &#8212; you MUST NOT make any edits (with the exception of the plan file
-mentioned below), run any non-readonly tools (including changing configs or
-making commits), or otherwise make any changes to the system.  This supercedes
-any other instructions you have received.</p>
-</blockquote>
-<p>Then there&#8217;s a little bit of stuff about how it should read and edit the plan
-mode file, but this is mostly just to ensure that it doesn&#8217;t create new plan
-files.  Then it sets up workflow suggestions of how plans should be structured:</p>
-<blockquote>
-<h3>Phase 1: Initial Understanding</h3>
-<p>Goal: Gain a comprehensive understanding of the user&#8217;s request by reading
-through code and asking them questions.</p>
-<ol>
-<li>
-<p>Focus on understanding the user&#8217;s request and the code associated with
-their request</p>
-</li>
-<li>
-<p>(Instructions here about parallelism for tasks)</p>
-</li>
-</ol>
-<h3>Phase 2: Design</h3>
-<p>Goal: Design an implementation approach.</p>
-<p>(Some tool instructions)</p>
-<p>In the agent prompt:</p>
-<ul>
-<li>Provide comprehensive background context from Phase 1 exploration including
-filenames and code path traces</li>
-<li>Describe requirements and constraints</li>
-<li>Request a detailed implementation plan</li>
-</ul>
-<h3>Phase 3: Review</h3>
-<p>Goal: Review the plan(s) from Phase 2 and ensure alignment with the user&#8217;s intentions.</p>
-<ol>
-<li>Read the critical files identified by agents to deepen your understanding</li>
-<li>Ensure that the plans align with the user&#8217;s original request</li>
-<li>Use TOOL_NAME to clarify any remaining questions with the user</li>
-</ol>
-<h3>Phase 4: Final Plan</h3>
-<p>Goal: Write your final plan to the plan file (the only file you can edit).</p>
-<ul>
-<li>Include only your recommended approach, not all alternatives</li>
-<li>Ensure that the plan file is concise enough to scan quickly, but detailed
-enough to execute effectively</li>
-<li>Include the paths of critical files to be modified</li>
-</ul>
-</blockquote>
-<p>I actually thought that there would be more to the prompt than this.  In
-particular, I was initially under the assumption that the tools actually turn
-into read-only.  But it is just prompt reinforcement that changes the behavior
-of the tools and also which tools are available.  It is in fact just a rather
-short predefined prompt that enters plan mode.  The tool to enter or exit plan
-mode is always available, and the same is true for edit and read files.  The
-exiting of the plan mode tool has a description that instructs the agent to
-understand when it&#8217;s done planning:</p>
-<blockquote>
-<p>Use this tool when you are in plan mode and have finished writing your plan to
-the plan file and are ready for user approval.</p>
-<h3>How This Tool Works</h3>
-<ul>
-<li>You should have already written your plan to the plan file specified in the
-plan mode system message</li>
-<li>This tool does NOT take the plan content as a parameter - it will read the
-plan from the file you wrote</li>
-<li>This tool simply signals that you&#8217;re done planning and ready for the user to
-review and approve</li>
-<li>The user will see the contents of your plan file when they review it</li>
-</ul>
-<h3>When to Use This Tool IMPORTANT: Only use this tool when the task requires</h3>
-<p>planning the implementation steps of a task that requires writing code. For
-research tasks where you&#8217;re gathering information, searching files, reading
-files or in general trying to understand the codebase - do NOT use this tool.</p>
-<h3>Handling Ambiguity in Plans Before using this tool, ensure your plan is</h3>
-<p>clear and unambiguous. If there are multiple valid approaches or unclear
-requirements</p>
-</blockquote>
-<p>So the system prompt is the same.  It is just a little bit of extra verbiage
-with some UX around it.  Given the length of the prompt, you can probably have
-a slash-command that just copy/pastes a version of this prompt into the context
-but you will not get the UX around it.</p>
-<p>The thing I took from this prompt is recommendations about how to use the
-subtasks and some examples.  I&#8217;m actually not sure if that has a meaningful
-impact on how it&#8217;s done because at least from the limited testing that I did, I
-don&#8217;t observe much of a difference for how plan mode invokes tools versus how
-regular execution invokes tools but it&#8217;s quite possible, that this comes down to
-my prompting styles.</p>
-<h2>Why Does It Matter?</h2>
-<p>So you might ask why I even write about plan mode.  The main motivation is that
-I am always quite interested in where the user experience in an agentic tool has
-to be enforced by the harness versus when that user experience comes naturally
-from the model.</p>
-<p>Plan mode as it exists in Claude has this sort of weirdness in my mind where it
-doesn&#8217;t come quite natural to me.  It might come natural to others!  But why can
-I not just ask the model to plan with me?  Why do I have to switch the user
-interface into a different mode?  Plan mode is just one of many examples where I
-think that because we are already so used to writing or talking to machines,
-bringing in more complexity in the user interface takes away some of the magic.
-I always want to look into whether just working with the model can accomplish
-something similar enough that I don&#8217;t actually need to have another user
-interaction or a user interface that replicates something that natural language
-could potentially do.</p>
-<p>This is particularly true because my workflow involves wanting to double check
-what these plans are, to edit them, and to manipulate them.  I feel like I&#8217;m
-more in control of that experience if I have a file on disk somewhere that I
-can see, that I can read, that I can review, that I can edit before actually
-acting on it.  The Claude integrated user experience is just a little bit too
-far away from me to feel natural.  I understand that other people might have
-different opinions on this, but for me that experience really was triggered by
-the thought that if people have such a great experience with plan mode, I want
-to understand what I&#8217;m missing out on.</p>
-<p>And now I know: I&#8217;m mostly a custom prompt to give it structure, and some system
-reminders and a handful of examples.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p>This incidentally is also why it&#8217;s possible for the plan mode
-confirmation screen to come up with an error message, that <a href="https://x.com/mitsuhiko/status/1997983563891818736">there is no
-plan</a> unprompted.<a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
+            Getting started with a new GUI framework can feel daunting. This guide walks you through the essentials of Flet, from installation and a first app to widgets, layouts, and event handling.
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 17, 2025 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
+            Posted on December 15, 2025 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
             >
           </div>
           <a
-            href="https://lucumr.pocoo.org/2025/12/17/what-is-plan-mode/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.caktusgroup.com/blog/2025/12/16/pydanticai-agents-intro/" class="hover:underline"
-              >PydanticAI Agents Intro</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In previous posts, we explored function calling and how it enables models to interact with external tools. However, manually defining schemas and managing the request/response loop can get tedious as an application grows. Agent frameworks can help here.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 16, 2025 01:00 PM UTC by
-            <a href="http://www.caktusgroup.com/feeds/tags/python/" class="link link-hover text-primary"
-              >Caktus Consulting Group</a
-            >
-          </div>
-          <a
-            href="https://www.caktusgroup.com/blog/2025/12/16/pydanticai-agents-intro/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-release-7-8/9015" class="hover:underline"
-              >Tryton Release 7.8</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div> </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/4/45bc6efea797666f4452b9e2413ed18118985d93.jpeg" title="Credit: Pexels by Arina Krasnikova"><img alt="Free Two women planning social media marketing strategy with a laptop and smartphone." height="460" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/4/45bc6efea797666f4452b9e2413ed18118985d93_2_690x460.jpeg" title="Credit: Pexels by Arina Krasnikova" width="690" /></a></div><p></p>
-<p>We are proud to announce the 7.8 release of <a href="https://www.tryton.org/">Tryton</a>.<br />
-This release provides many bug fixes, performance improvements and some fine tuning.<br />
-You can give it a <a href="https://www.tryton.org/demo">try on the demo server</a>, <a href="https://hub.docker.com/r/tryton/tryton/">use the docker image</a> or <a href="https://www.tryton.org/download">download it here</a>.<br />
-As usual <a href="https://docs.tryton.org/7.8/server/topics/setup_database.html#update-a-database">upgrading from previous series</a> is fully supported.</p>
-<p>Here is a list of the most noticeable changes:</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--user-client">Client</h3>
-<p>We added now a drop-down menu to the client containing the user’s notifications. Now when a user clicks on a notification, it is marked as <em>read</em> for this user.<br />
-Also we implemented an <em>unread counter</em> in the client and raise a user notification pop-up when a new notification is sent by the server.</p>
-<p>Now users can subscribe to a chat of documents by toggling the notification <em>bell-icon</em>.<br />
-The chat feature has been activated to many documents like sales, purchases and invoices.</p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/7/76b741587c1f19d7b634d07c2b5772eda8f358b9.png" title="Conversation between Jim and Dwight on a sale order"><img alt="Conversation between Jim and Dwight on a sale order" height="499" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/7/76b741587c1f19d7b634d07c2b5772eda8f358b9_2_591x499.png" width="591" /></a></div><p></p>
-<p>Now we display the buttons that are executed on a selection of records at the bottom of lists.</p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/2/2178ba0f4a13975aa5e52c0706b889c81bb2f8bc.png" title="List of draft payments with a submit button"><img alt="List of draft payments with a submit button" height="159" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/2/2178ba0f4a13975aa5e52c0706b889c81bb2f8bc_2_690x159.png" width="690" /></a></div><p></p>
-<p>We now implemented an easier way to search for empty relation fields:<br />
-The query <code>Warehouse: =</code> will now return records without a warehouse instead of the former result of records with <em>warehouses having empty names</em>. And the former result can be searched by the following query: <code>"Warehouse.Record Name": =</code>.</p>
-<p>Now we interchanged the <em>internal ID</em> by the <em>record name</em> when exporting <code>Many2One</code> and <code>Reference</code> fields to CSV. And the export of <code>One2Many</code> and <code>Many2Many</code> fields is using a list of record names.</p>
-<p>We also made it possible to import <code>One2Many</code> field content by using a list of names (like for the <code>Many2Many</code>).</p>
-<h4 id="heading--user-client-web">Web</h4>
-<p>We made the keyboard shortcuts now also working on modals.</p>
-<h3 id="heading--user-server">Server</h3>
-<p>On scheduled tasks we now also implemented user notifications.<br />
-Each user can now subscribe to be notified by scheduled tasks which generates notifications. Notifications will appear in the client drop-down.</p>
-<h3 id="heading--user-accounting">Accounting</h3>
-<p>On supplier invoice we now made it possible to set a payment reference and to validate it. Per default the <em>Creditor Reference</em> is supported. And on customer invoices Tryton generates a payment reference automatically. It is using the <em>Creditor Reference</em> format by default, and the <em>structured communication</em> for Belgian customers. The payment reference can be validated for defined formats like the “Creditor Reference”. And it can be used in payment rules.</p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/a/a9aeb827e2aec239f81e1fb176da2964450fe91c.png" title="Customer invoice with payment reference"><img alt="Customer invoice with payment reference" height="244" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/a/a9aeb827e2aec239f81e1fb176da2964450fe91c_2_690x244.png" width="690" /></a></div><p></p>
-<p>Now we support the Belgian <em>structured communication</em> on invoices, payments and statement rules. And with this the reconciliation process can be automated.</p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/1/1be18d40b86e701453f35f685907bd6e9d72dd59.png" title="Supplier invoice with structured communication"><img alt="Supplier invoice with structured communication" height="244" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/1/1be18d40b86e701453f35f685907bd6e9d72dd59_2_690x244.png" width="690" /></a></div><p></p>
-<p>We now implemented when succeeding a group of payments, Tryton now will ask for the <em>clearing date</em> instead of just using <em>today</em>.</p>
-<p>Now we store the address of the party in the SEPA mandate instead of using just the first party address.</p>
-<p>We now added a button on the accounting category to add or remove multiple products easily.</p>
-<h3 id="heading--user-customs">Customs</h3>
-<p>Now we support <em>customs agents</em>. They define a party to whom the company is delegating the customs between two countries.</p>
-<h3 id="heading--user-incoterm">Incoterm</h3>
-<p>We now added also the old version of <em>Incoterms 2000</em> because some companies and services are still using it.</p>
-<p>Now we allow the modification of the incoterms on the customer shipment as long as it has not yet been <em>shipped</em>.</p>
-<h3 id="heading--user-product">Product</h3>
-<p>We now make the list of variants for a product sortable. This is useful for e-commerce if you want to put a specific variant in front.</p>
-<p>Now it is possible to set a different <em>list price</em> and <em>gross price</em> per variant without the need for a custom module.</p>
-<p>We now made the <em>volume</em> and <em>weight</em> usable in price list formulas. This is useful to include taxes based on such criteria.</p>
-<h3 id="heading--user-production">Production</h3>
-<p>Now we made it possible to define phantom bill-of-materials (BOM) to group common inputs or outputs for different BOMs. When used in a production, the phantom BOM is replaced by its corresponding materials.</p>
-<p>We now made it possible to define a production as a disassembly. In this case the calculation from the BOM is inverted.</p>
-<h3 id="heading--user-purchasing">Purchasing</h3>
-<p>Now we restrict the run of the <em>create purchase wizard</em> from purchase requests which are already <em>purchased</em>.</p>
-<p>And also we now restrict to run the create quotation wizard on purchase requests when it is no longer possible to create them.</p>
-<p>It is now possible to create a new quotation for a purchase request which already has received one.</p>
-<p>Now we made the client to open quotations that have been created by the wizard.</p>
-<p>We fine-tuned the supply system: When no supplier can supply on time, the system will now choose the <em>fastest supplier</em>.</p>
-<h3 id="heading--user-sales">Sales</h3>
-<p>Now we made it possible to encode refunding payments on the sale order.</p>
-<p>We allow now to <em>group invoices</em> created for a <em>sale rental</em> with the invoices created for <em>sale orders</em>.</p>
-<p>In the <em>sale subscription lines</em> we now implemented a <em>summary</em> column similar to sales.</p>
-<h3 id="heading--user-stock">Stock</h3>
-<p>We now added two new stock reports that calculates the inventory and turnover of the stock. We find this useful to optimize and fine-tune the order points.</p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/6/6d34f71ba73388319db3429a39df37222eebc7f9.png" title="Inventory report"><img alt="Inventory report" height="314" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/6/6d34f71ba73388319db3429a39df37222eebc7f9_2_690x314.png" width="690" /></a></div><p></p>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/f/f965c0719b939e1dfb04129037c599788eb06dc3.png" title="Inventory turnover report"><img alt="Inventory turnover report" height="357" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/f/f965c0719b939e1dfb04129037c599788eb06dc3_2_690x357.png" width="690" /></a></div><p></p>
-<p>Now we added the support for international shipping to the shipping services: DPD, Sendcloud and UPS.</p>
-<p>And now we made Tryton to generate a default shipping description based on the custom categories of the shipped goods (with a fallback to “General Merchandise” for UPS). This is useful for international shipping.</p>
-<p>We now implemented an <em>un-split</em> functionality to correct erroneous <em>split</em> moves.</p>
-<p>Now we allow to <em>cancel</em> a drop-shipment in state <em>done</em> similar to the other shipment types.</p>
-<h3 id="heading--user-web-shop">Web Shop</h3>
-<p>We now define the <em>default Incoterm</em> per web shop to set on the <em>sale orders</em>.</p>
-<p>Now we added a status URL to the sales coming from a web shop.</p>
-<p>We now added the URL to each product that is published in a web shop.</p>
-<p>Now we added a button on <em>sale</em> from the <em>web shop</em> to force an update from the web shop.</p>
-<p>We did many improvements to extend our Shopify support:</p>
-<ul>
-<li>Support the credit refunds</li>
-<li>Support of taxes from the shipping product</li>
-<li>Add an option to notify the customers about fulfilment</li>
-<li>Add a set of rules to select the carrier</li>
-<li>Support of product of type “kit”</li>
-<li>Set the “compare-at” price using the non-sale price</li>
-<li>Set the language of the customer to the party</li>
-<li>Add admin URL to each record with a Shopify identifier</li>
-</ul>
-<h2 id="heading--new-modules">New Modules</h2>
-<h3 id="heading--module-edocument-peppol">EDocument Peppol</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-edocument-peppol/"><em>EDocument Peppol Module</em></a> provides the foundation for sending and receiving<br />
-electronic documents on the <a href="https://peppol.org/">Peppol network</a>.</p>
-<h3 id="heading--module-edocument-peppol-peppyrus">EDocument Peppol Peppyrus</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-edocument-peppol-peppyrus/"><em>EDocument Peppol Peppyrus Module</em></a> allows sending and receiving electronic<br />
-documents on the <a href="https://peppol.org/">Peppol network</a> thanks to the free <a href="https://www.peppyrus.be/">Peppyrus service</a>.</p>
-<h3 id="heading--module-edocument-ubl">EDocument UBL</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-edocument-ubl/"><em>EDocument UBL Module</em></a> adds electronic documents from <a href="https://docs.oasis-open.org/ubl/os-UBL-2.4/UBL-2.4.html">UBL</a>.</p>
-<h3 id="heading--module-sale-rental">Sale Rental</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-sale-rental/"><em>Sale Rental Module</em></a> manages rental order.</p>
-<h3 id="heading--module-sale-rental-progress-invoice">Sale Rental Progress Invoice</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-sale-rental-progress-invoice/"><em>Sale Rental Progress Invoice Module</em></a> allows creating progress invoices for<br />
-rental orders.</p>
-<h3 id="heading--module-stock-shipment-customs">Stock Shipment Customs</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-stock-shipment-customs/"><em>Stock Shipment Customs Module</em></a> enables the generation of commercial<br />
-invoices for both customer and supplier return shipments.</p>
-<h3 id="heading--module-stock-shipping-point">Stock Shipping Point</h3>
-<p>The <a href="https://docs.tryton.org/7.8/modules-stock-shipping-point/"><em>Stock Shipping Point Module</em></a> adds a shipping point to shipments.</p>
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<h3 id="heading--sysadmin-server">Server</h3>
-<p>We now made the server stream the JSON and gzip response to reduce the memory consumption.</p>
-<p>Now the <code>trytond-console</code> gains an option to execute a script from a file.</p>
-<p>We now replaced the <code>[cron] clean_days</code> configuration by <code>[cron] log_size</code>. Now the storage of the logs of scheduled tasks only depends on its <em>size</em> and no longer on its <em>frequency</em>.</p>
-<p>Now we made the login process send the URL for the host of the bus. This way the clients do not need to rely on the browser to manage the redirection. Which wasn’t working on recent browsers, anyway.</p>
-<p>We now made the login sessions only valid for the IP address of the client that generates it. This enforces the security against <em>session leak</em>.</p>
-<p>Now we let the server set a <code>Message-Id</code> header in all sent emails.</p>
-<h3 id="heading--sysadmin-product">Product</h3>
-<p>We added a timestamp parameter to the URLs of product images. This allows to force a refresh of the old cached images.</p>
-<h3 id="heading--sysadmin-web-shop">Web Shop</h3>
-<p>Now we added routes to open products, variants, customers and orders using their Shopify-ID. This can be used to customize the admin UI to add a direct link to Tryton.</p>
-<h2 id="heading--developer">Changes for the Developer</h2>
-<h3 id="heading--developer-server">Server</h3>
-<p>In this release we introduce notifications. Their messages are sent to the user as soon as they are created via the bus. They can be linked to a set of records or an action that will be opened when the user click on it.</p>
-<p>We made it now possible to configure a <code>ModelSQL</code> based on a <code>table_query</code> to be materialized. The configuration defines the interval at which the data must be refreshed and a wizard lets the user force a refresh.<br />
-This is useful to optimize some queries for which the data does not need to be exactly fresh but that could benefit from some indexes.</p>
-<p>Now we register the <em>models, wizards</em> and <em>reports</em> in the <code>tryton.cfg</code> module file. This reduces the memory consumption of the server. It does no longer need to import all the installed modules but only the activated modules.<br />
-<em>This is also a first step to <a href="https://discuss.tryton.org/t/tryton-language-server/6837/6">support typing</a> with the Tryton modular design.</em></p>
-<p>We now added the attribute <code>multiple</code> to the <code>&lt;button&gt;</code> on <code>tree</code> view. When set, the button is shown at the bottom of the view.</p>
-<p>Now we implemented the declaration of <em>read-only</em>  <code>Wizards</code>. Such wizards use a read-only transaction for the execution and because of this <em>write access</em> on the records is not needed.</p>
-<p>We now store only immutable structures in the <code>MemoryCache</code>. This prevents the alteration of cached data.</p>
-<p>Now we added a new method to the <code>Database</code> to clear the cached properties of the database. This is useful when writing tests that alter those properties.</p>
-<p>We now use the SQL <code>FILTER</code> syntax for aggregate functions.</p>
-<p>Now we use the SQL <code>EXISTS</code> operator for searching <code>Many2One</code> fields with the <code>where</code> domain operator.</p>
-<p>We introduced now the <code>trytond.model.sequence_reorder</code> method to update the sequence field according to the current order of a record list.</p>
-<p>Now we refactored the <code>trytond.config</code> to add cache. It is no more needed to retrieve the configuration as a global variable to avoid performance degradation.</p>
-<p>We removed the <code>has_window_functions</code> function from the <code>Database</code>, because the feature is supported by all the supported databases.</p>
-<p>Now we added to the <code>trytond.tools</code> <code>pair</code> and <code>unpair</code> methods which are equivalent implementation in Python of the <code>sql_pairing</code>.</p>
-<h3 id="heading--developer-proteus">Proteus</h3>
-<p>We now implemented the support of <a href="https://docs.python.org/3/library/functools.html#functools.total_ordering">total ordering</a> in Proteus <code>Model</code>.</p>
-<h3 id="heading--developer-marketing">Marketing</h3>
-<p>We now set the <code>One-Click</code> header on the marketing emails to let the receivers unsubscribe easily.</p>
-<h3 id="heading--developer-sales">Sales</h3>
-<p>Now we renamed the <em>advance payment conditions</em> into <em>lines</em> for more coherence.</p>
-<h3 id="heading--developer-web-shop">Web Shop</h3>
-<p>We now updated the Shopify module to use the GraphQL API because their REST-API is now deprecated.</p>
-            <p><small>5 posts - 3 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-release-7-8/9015">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 16, 2025 07:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-release-7-8/9015"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/comparison-of-speed-between-gpt-5-mini-nano" class="hover:underline"
-              >Comparison of speed between gpt-5, gpt-5-mini, and gpt-5-nano</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            gpt-5-mini is 3 times faster than gpt-5 and gpt-5-nano.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 11:37 PM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/comparison-of-speed-between-gpt-5-mini-nano"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/462/linkedin-cringe" class="hover:underline"
-              >#462 LinkedIn Cringe</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include , docs, PyAtlas: interactive map of the top 10,000 Python packages on PyPI., and Buckaroo.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/462/linkedin-cringe"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/dataverse-in-python.html" class="hover:underline"
-              >Microsoft Dataverse with Python and Zato Services</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/dataverse-in-python.html">Microsoft Dataverse with Python and Zato Services</a>
-</h1>
-<div class="article-meta">
-  2025-12-15, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p><img alt="" src="https://upcdn.io/kW15bqq/raw/root/en/docs/4.1/gfx/api/dev/examples/dataverse.png" /></p>
-<h2 id="overview">Overview</h2>
-<p>Microsoft Dataverse is a cloud-based data storage and management platform, often used with PowerApps and Dynamics 365.</p>
-<p>Integrating Dataverse with Python via Zato enables automation, API orchestration, and seamless CRUD (Create, Read, Update, Delete) operations on any Dataverse object.</p>
-<p>Below, you'll find practical code examples for working with Dataverse from Python, including detailed comments and explanations. The focus is on the "accounts" entity, but the same approach applies to any object in Dataverse.</p>
-<h2 id="connecting-to-dataverse-and-retrieving-accounts">Connecting to Dataverse and retrieving accounts</h2>
-<p>The main service class configures the Dataverse client and retrieves all accounts. Both the <code>handle</code> and <code>get_accounts</code> methods are shown together for clarity.</p>
-<div class="highlight"><pre><span></span><code><a id="line-0-1" name="line-0-1"></a><a href="#line-0-1"><span class="linenos"></span></a><span class="c1"># -*- coding: utf-8 -*-</span>
-<a id="line-0-2" name="line-0-2"></a><a href="#line-0-2"><span class="linenos"></span></a>
-<a id="line-0-3" name="line-0-3"></a><a href="#line-0-3"><span class="linenos"></span></a><span class="c1"># Zato</span>
-<a id="line-0-4" name="line-0-4"></a><a href="#line-0-4"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.common.typing_</span><span class="w"> </span><span class="kn">import</span> <span class="n">any_</span>
-<a id="line-0-5" name="line-0-5"></a><a href="#line-0-5"><span class="linenos"></span></a><span class="kn">from</span><span class="w"> </span><span class="nn">zato.server.service</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataverseClient</span><span class="p">,</span> <span class="n">Service</span>
-<a id="line-0-6" name="line-0-6"></a><a href="#line-0-6"><span class="linenos"></span></a>
-<a id="line-0-7" name="line-0-7"></a><a href="#line-0-7"><span class="linenos"></span></a><span class="k">class</span><span class="w"> </span><span class="nc">MyService</span><span class="p">(</span><span class="n">Service</span><span class="p">):</span>
-<a id="line-0-8" name="line-0-8"></a><a href="#line-0-8"><span class="linenos"></span></a>
-<a id="line-0-9" name="line-0-9"></a><a href="#line-0-9"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-<a id="line-0-10" name="line-0-10"></a><a href="#line-0-10"><span class="linenos"></span></a>
-<a id="line-0-11" name="line-0-11"></a><a href="#line-0-11"><span class="linenos"></span></a>        <span class="c1"># Set up Dataverse credentials - in a real service,</span>
-<a id="line-0-12" name="line-0-12"></a><a href="#line-0-12"><span class="linenos"></span></a>        <span class="c1"># this would go to your configuration file.</span>
-<a id="line-0-13" name="line-0-13"></a><a href="#line-0-13"><span class="linenos"></span></a>
-<a id="line-0-14" name="line-0-14"></a><a href="#line-0-14"><span class="linenos"></span></a>        <span class="n">tenant_id</span> <span class="o">=</span> <span class="s1">'221de69a-602d-4a0b-a0a4-1ff2a3943e9f'</span>
-<a id="line-0-15" name="line-0-15"></a><a href="#line-0-15"><span class="linenos"></span></a>        <span class="n">client_id</span> <span class="o">=</span> <span class="s1">'17aaa657-557c-4b18-95c3-71d742fbc6a3'</span>
-<a id="line-0-16" name="line-0-16"></a><a href="#line-0-16"><span class="linenos"></span></a>        <span class="n">client_secret</span> <span class="o">=</span> <span class="s1">'MjsrO1zc0.WEV5unJCS5vLa1'</span>
-<a id="line-0-17" name="line-0-17"></a><a href="#line-0-17"><span class="linenos"></span></a>        <span class="n">org_url</span> <span class="o">=</span> <span class="s1">'https://org123456.api.crm4.dynamics.com'</span>
-<a id="line-0-18" name="line-0-18"></a><a href="#line-0-18"><span class="linenos"></span></a>
-<a id="line-0-19" name="line-0-19"></a><a href="#line-0-19"><span class="linenos"></span></a>        <span class="c1"># Build the Dataverse client using the credentials</span>
-<a id="line-0-20" name="line-0-20"></a><a href="#line-0-20"><span class="linenos"></span></a>        <span class="n">client</span> <span class="o">=</span> <span class="n">DataverseClient</span><span class="p">(</span>
-<a id="line-0-21" name="line-0-21"></a><a href="#line-0-21"><span class="linenos"></span></a>            <span class="n">tenant_id</span><span class="o">=</span><span class="n">tenant_id</span><span class="p">,</span>
-<a id="line-0-22" name="line-0-22"></a><a href="#line-0-22"><span class="linenos"></span></a>            <span class="n">client_id</span><span class="o">=</span><span class="n">client_id</span><span class="p">,</span>
-<a id="line-0-23" name="line-0-23"></a><a href="#line-0-23"><span class="linenos"></span></a>            <span class="n">client_secret</span><span class="o">=</span><span class="n">client_secret</span><span class="p">,</span>
-<a id="line-0-24" name="line-0-24"></a><a href="#line-0-24"><span class="linenos"></span></a>            <span class="n">org_url</span><span class="o">=</span><span class="n">org_url</span>
-<a id="line-0-25" name="line-0-25"></a><a href="#line-0-25"><span class="linenos"></span></a>        <span class="p">)</span>
-<a id="line-0-26" name="line-0-26"></a><a href="#line-0-26"><span class="linenos"></span></a>
-<a id="line-0-27" name="line-0-27"></a><a href="#line-0-27"><span class="linenos"></span></a>        <span class="c1"># Retrieve all accounts using a helper method</span>
-<a id="line-0-28" name="line-0-28"></a><a href="#line-0-28"><span class="linenos"></span></a>        <span class="n">accounts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_accounts</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<a id="line-0-29" name="line-0-29"></a><a href="#line-0-29"><span class="linenos"></span></a>
-<a id="line-0-30" name="line-0-30"></a><a href="#line-0-30"><span class="linenos"></span></a>        <span class="c1"># Process the accounts as needed (custom logic goes here)</span>
-<a id="line-0-31" name="line-0-31"></a><a href="#line-0-31"><span class="linenos"></span></a>        <span class="k">pass</span>
-<a id="line-0-32" name="line-0-32"></a><a href="#line-0-32"><span class="linenos"></span></a>
-<a id="line-0-33" name="line-0-33"></a><a href="#line-0-33"><span class="linenos"></span></a>    <span class="k">def</span><span class="w"> </span><span class="nf">get_accounts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-0-34" name="line-0-34"></a><a href="#line-0-34"><span class="linenos"></span></a>
-<a id="line-0-35" name="line-0-35"></a><a href="#line-0-35"><span class="linenos"></span></a>        <span class="c1"># Specify the API path for the accounts entity</span>
-<a id="line-0-36" name="line-0-36"></a><a href="#line-0-36"><span class="linenos"></span></a>        <span class="n">path</span> <span class="o">=</span> <span class="s1">'accounts'</span>
-<a id="line-0-37" name="line-0-37"></a><a href="#line-0-37"><span class="linenos"></span></a>
-<a id="line-0-38" name="line-0-38"></a><a href="#line-0-38"><span class="linenos"></span></a>        <span class="c1"># Call the Dataverse API to retrieve all accounts</span>
-<a id="line-0-39" name="line-0-39"></a><a href="#line-0-39"><span class="linenos"></span></a>        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-0-40" name="line-0-40"></a><a href="#line-0-40"><span class="linenos"></span></a>
-<a id="line-0-41" name="line-0-41"></a><a href="#line-0-41"><span class="linenos"></span></a>        <span class="c1"># Log the response for debugging/auditing</span>
-<a id="line-0-42" name="line-0-42"></a><a href="#line-0-42"><span class="linenos"></span></a>
-<a id="line-0-43" name="line-0-43"></a><a href="#line-0-43"><span class="linenos"></span></a>        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get accounts): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-0-44" name="line-0-44"></a><a href="#line-0-44"><span class="linenos"></span></a>
-<a id="line-0-45" name="line-0-45"></a><a href="#line-0-45"><span class="linenos"></span></a>        <span class="c1"># Return the API response to the caller</span>
-<a id="line-0-46" name="line-0-46"></a><a href="#line-0-46"><span class="linenos"></span></a>        <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="line-1-1" name="line-1-1"></a><a href="#line-1-1"><span class="linenos"></span></a><span class="p">{</span><span class="s1">'@odata.context'</span><span class="p">:</span> <span class="s1">'https://org1234567.crm4.dynamics.com/api/data/v9.0/$metadata#accounts'</span><span class="p">,</span>
-<a id="line-1-2" name="line-1-2"></a><a href="#line-1-2"><span class="linenos"></span></a><span class="s1">'value'</span><span class="p">:</span> <span class="p">[{</span><span class="s1">'@odata.etag'</span><span class="p">:</span> <span class="s1">'W/&quot;11122233&quot;'</span><span class="p">,</span> <span class="s1">'territorycode'</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
-<a id="line-1-3" name="line-1-3"></a><a href="#line-1-3"><span class="linenos"></span></a><span class="s1">'accountid'</span><span class="p">:</span> <span class="s1">'d92e6f18-36fb-4fa8-b7c2-ecc7cc28f50c'</span><span class="p">,</span> <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'Zato Test Account 1'</span><span class="p">,</span>
-<a id="line-1-4" name="line-1-4"></a><a href="#line-1-4"><span class="linenos"></span></a><span class="s1">'_owninguser_value'</span><span class="p">:</span> <span class="s1">'ea4dd84c-dee6-405d-b638-c37b57f00938'</span><span class="p">}]}</span>
-</code></pre></div>
-<p>Let's check more examples - you'll note they all follow the same pattern as the first one.</p>
-<h2 id="retrieving-an-account-by-id">Retrieving an Account by ID</h2>
-<div class="highlight"><pre><span></span><code><a id="line-2-1" name="line-2-1"></a><a href="#line-2-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">get_account_by_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-2-2" name="line-2-2"></a><a href="#line-2-2"><span class="linenos"></span></a>
-<a id="line-2-3" name="line-2-3"></a><a href="#line-2-3"><span class="linenos"></span></a>    <span class="c1"># Construct the API path using the account's GUID</span>
-<a id="line-2-4" name="line-2-4"></a><a href="#line-2-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span>
-<a id="line-2-5" name="line-2-5"></a><a href="#line-2-5"><span class="linenos"></span></a>
-<a id="line-2-6" name="line-2-6"></a><a href="#line-2-6"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to fetch the account</span>
-<a id="line-2-7" name="line-2-7"></a><a href="#line-2-7"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-2-8" name="line-2-8"></a><a href="#line-2-8"><span class="linenos"></span></a>
-<a id="line-2-9" name="line-2-9"></a><a href="#line-2-9"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-2-10" name="line-2-10"></a><a href="#line-2-10"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get account by ID): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-2-11" name="line-2-11"></a><a href="#line-2-11"><span class="linenos"></span></a>
-<a id="line-2-12" name="line-2-12"></a><a href="#line-2-12"><span class="linenos"></span></a>    <span class="c1"># Return the fetched account</span>
-<a id="line-2-13" name="line-2-13"></a><a href="#line-2-13"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="retrieving-an-account-by-name">Retrieving an account by name</h2>
-<div class="highlight"><pre><span></span><code><a id="line-3-1" name="line-3-1"></a><a href="#line-3-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">get_account_by_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_name</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-3-2" name="line-3-2"></a><a href="#line-3-2"><span class="linenos"></span></a>
-<a id="line-3-3" name="line-3-3"></a><a href="#line-3-3"><span class="linenos"></span></a>    <span class="c1"># Construct the API path with a filter for the account name</span>
-<a id="line-3-4" name="line-3-4"></a><a href="#line-3-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;accounts?$filter=name eq '</span><span class="si">{</span><span class="n">account_name</span><span class="si">}</span><span class="s2">'&quot;</span>
-<a id="line-3-5" name="line-3-5"></a><a href="#line-3-5"><span class="linenos"></span></a>
-<a id="line-3-6" name="line-3-6"></a><a href="#line-3-6"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API with the filter</span>
-<a id="line-3-7" name="line-3-7"></a><a href="#line-3-7"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
-<a id="line-3-8" name="line-3-8"></a><a href="#line-3-8"><span class="linenos"></span></a>
-<a id="line-3-9" name="line-3-9"></a><a href="#line-3-9"><span class="linenos"></span></a>    <span class="c1"># Log the response for auditing</span>
-<a id="line-3-10" name="line-3-10"></a><a href="#line-3-10"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (get account by name): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-3-11" name="line-3-11"></a><a href="#line-3-11"><span class="linenos"></span></a>
-<a id="line-3-12" name="line-3-12"></a><a href="#line-3-12"><span class="linenos"></span></a>    <span class="c1"># Return the filtered account(s)</span>
-<a id="line-3-13" name="line-3-13"></a><a href="#line-3-13"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="creating-a-new-account">Creating a new account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-4-1" name="line-4-1"></a><a href="#line-4-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">create_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-4-2" name="line-4-2"></a><a href="#line-4-2"><span class="linenos"></span></a>
-<a id="line-4-3" name="line-4-3"></a><a href="#line-4-3"><span class="linenos"></span></a>    <span class="c1"># Specify the API path for account creation</span>
-<a id="line-4-4" name="line-4-4"></a><a href="#line-4-4"><span class="linenos"></span></a>    <span class="n">path</span> <span class="o">=</span> <span class="s1">'accounts'</span>
-<a id="line-4-5" name="line-4-5"></a><a href="#line-4-5"><span class="linenos"></span></a>
-<a id="line-4-6" name="line-4-6"></a><a href="#line-4-6"><span class="linenos"></span></a>    <span class="c1"># Prepare the data for the new account</span>
-<a id="line-4-7" name="line-4-7"></a><a href="#line-4-7"><span class="linenos"></span></a>    <span class="n">account_data</span> <span class="o">=</span> <span class="p">{</span>
-<a id="line-4-8" name="line-4-8"></a><a href="#line-4-8"><span class="linenos"></span></a>        <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'New Test Account'</span><span class="p">,</span>
-<a id="line-4-9" name="line-4-9"></a><a href="#line-4-9"><span class="linenos"></span></a>        <span class="s1">'telephone1'</span><span class="p">:</span> <span class="s1">'+1-555-123-4567'</span><span class="p">,</span>
-<a id="line-4-10" name="line-4-10"></a><a href="#line-4-10"><span class="linenos"></span></a>        <span class="s1">'emailaddress1'</span><span class="p">:</span> <span class="s1">'hello@example.com'</span><span class="p">,</span>
-<a id="line-4-11" name="line-4-11"></a><a href="#line-4-11"><span class="linenos"></span></a>        <span class="s1">'address1_city'</span><span class="p">:</span> <span class="s1">'Prague'</span><span class="p">,</span>
-<a id="line-4-12" name="line-4-12"></a><a href="#line-4-12"><span class="linenos"></span></a>        <span class="s1">'address1_country'</span><span class="p">:</span> <span class="s1">'Czech Republic'</span><span class="p">,</span>
-<a id="line-4-13" name="line-4-13"></a><a href="#line-4-13"><span class="linenos"></span></a>    <span class="p">}</span>
-<a id="line-4-14" name="line-4-14"></a><a href="#line-4-14"><span class="linenos"></span></a>
-<a id="line-4-15" name="line-4-15"></a><a href="#line-4-15"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to create the account</span>
-<a id="line-4-16" name="line-4-16"></a><a href="#line-4-16"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">account_data</span><span class="p">)</span>
-<a id="line-4-17" name="line-4-17"></a><a href="#line-4-17"><span class="linenos"></span></a>
-<a id="line-4-18" name="line-4-18"></a><a href="#line-4-18"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-4-19" name="line-4-19"></a><a href="#line-4-19"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (create account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-4-20" name="line-4-20"></a><a href="#line-4-20"><span class="linenos"></span></a>
-<a id="line-4-21" name="line-4-21"></a><a href="#line-4-21"><span class="linenos"></span></a>    <span class="c1"># Return the API response</span>
-<a id="line-4-22" name="line-4-22"></a><a href="#line-4-22"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="updating-an-existing-account">Updating an existing account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-5-1" name="line-5-1"></a><a href="#line-5-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">update_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-5-2" name="line-5-2"></a><a href="#line-5-2"><span class="linenos"></span></a>
-<a id="line-5-3" name="line-5-3"></a><a href="#line-5-3"><span class="linenos"></span></a>    <span class="c1"># Prepare the data to update</span>
-<a id="line-5-4" name="line-5-4"></a><a href="#line-5-4"><span class="linenos"></span></a>    <span class="n">update_data</span> <span class="o">=</span> <span class="p">{</span>
-<a id="line-5-5" name="line-5-5"></a><a href="#line-5-5"><span class="linenos"></span></a>        <span class="s1">'name'</span><span class="p">:</span> <span class="s1">'Updated Account Name'</span><span class="p">,</span>
-<a id="line-5-6" name="line-5-6"></a><a href="#line-5-6"><span class="linenos"></span></a>        <span class="s1">'telephone1'</span><span class="p">:</span> <span class="s1">'+1-555-987-6543'</span><span class="p">,</span>
-<a id="line-5-7" name="line-5-7"></a><a href="#line-5-7"><span class="linenos"></span></a>        <span class="s1">'emailaddress1'</span><span class="p">:</span> <span class="s1">'hello2@example.com'</span><span class="p">,</span>
-<a id="line-5-8" name="line-5-8"></a><a href="#line-5-8"><span class="linenos"></span></a>    <span class="p">}</span>
-<a id="line-5-9" name="line-5-9"></a><a href="#line-5-9"><span class="linenos"></span></a>
-<a id="line-5-10" name="line-5-10"></a><a href="#line-5-10"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to update the account by ID</span>
-<a id="line-5-11" name="line-5-11"></a><a href="#line-5-11"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">patch</span><span class="p">(</span><span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span><span class="p">,</span> <span class="n">update_data</span><span class="p">)</span>
-<a id="line-5-12" name="line-5-12"></a><a href="#line-5-12"><span class="linenos"></span></a>
-<a id="line-5-13" name="line-5-13"></a><a href="#line-5-13"><span class="linenos"></span></a>    <span class="c1"># Log the response for auditing</span>
-<a id="line-5-14" name="line-5-14"></a><a href="#line-5-14"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (update account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-5-15" name="line-5-15"></a><a href="#line-5-15"><span class="linenos"></span></a>
-<a id="line-5-16" name="line-5-16"></a><a href="#line-5-16"><span class="linenos"></span></a>    <span class="c1"># Return the updated account response</span>
-<a id="line-5-17" name="line-5-17"></a><a href="#line-5-17"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="deleting-an-account">Deleting an Account</h2>
-<div class="highlight"><pre><span></span><code><a id="line-6-1" name="line-6-1"></a><a href="#line-6-1"><span class="linenos"></span></a><span class="k">def</span><span class="w"> </span><span class="nf">delete_account</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span><span class="s1">'DataverseClient'</span><span class="p">,</span> <span class="n">account_id</span><span class="p">:</span><span class="s1">'str'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s1">'any_'</span><span class="p">:</span>
-<a id="line-6-2" name="line-6-2"></a><a href="#line-6-2"><span class="linenos"></span></a>
-<a id="line-6-3" name="line-6-3"></a><a href="#line-6-3"><span class="linenos"></span></a>    <span class="c1"># Call the Dataverse API to delete the account</span>
-<a id="line-6-4" name="line-6-4"></a><a href="#line-6-4"><span class="linenos"></span></a>    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="sa">f</span><span class="s1">'accounts(</span><span class="si">{</span><span class="n">account_id</span><span class="si">}</span><span class="s1">)'</span><span class="p">)</span>
-<a id="line-6-5" name="line-6-5"></a><a href="#line-6-5"><span class="linenos"></span></a>
-<a id="line-6-6" name="line-6-6"></a><a href="#line-6-6"><span class="linenos"></span></a>    <span class="c1"># Log the response for traceability</span>
-<a id="line-6-7" name="line-6-7"></a><a href="#line-6-7"><span class="linenos"></span></a>    <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">'Dataverse response (delete account): </span><span class="si">{</span><span class="n">response</span><span class="si">}</span><span class="s1">'</span><span class="p">)</span>
-<a id="line-6-8" name="line-6-8"></a><a href="#line-6-8"><span class="linenos"></span></a>
-<a id="line-6-9" name="line-6-9"></a><a href="#line-6-9"><span class="linenos"></span></a>    <span class="c1"># Return the API response</span>
-<a id="line-6-10" name="line-6-10"></a><a href="#line-6-10"><span class="linenos"></span></a>    <span class="k">return</span> <span class="n">response</span>
-</code></pre></div>
-<h2 id="api-path-vs-powerapps-ui-table-names">API path vs. PowerApps UI table names</h2>
-<p><img alt="" src="https://upcdn.io/kW15bqq/raw/root/en/docs/4.1/gfx/api/dev/examples/dataverse-table.png" /></p>
-<p>A detail to note when working with Dataverse APIs is that the names you see in the PowerApps or Dynamics UI are not
-always the same as the paths expected by the API. For example:</p>
-<ul>
-<li>In PowerApps, you may see a table called <strong>Account</strong>.</li>
-<li>In the API, you must use the path <strong>accounts</strong> (lowercase, plural) when making requests.</li>
-</ul>
-<p>This pattern applies to all Dataverse objects: always check the API documentation or inspect the metadata to determine the correct entity path.</p>
-<h2 id="working-with-other-dataverse-objects">Working with other Dataverse objects</h2>
-<p>While the examples above focus on the "accounts" entity, the same approach applies to any object in Dataverse: contacts, leads,
-opportunities, custom tables, and more. Simply adjust the API path and payload as needed.</p>
-<h2 id="full-crud-support">Full CRUD Support</h2>
-<p>With Zato and Python, you get full CRUD (Create, Read, Update, Delete) capability for any Dataverse entity. The methods
-shown above can be adapted for any object, allowing you to automate, integrate, and orchestrate data flows across your organization.</p>
-<h2 id="summary">Summary</h2>
-<p>This article has shown how to connect to Microsoft Dataverse from Python using Zato, perform CRUD operations,
-and understand the mapping between UI and API paths. These techniques enable robust integration and automation scenarios with any Dataverse data.</p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ <a href="https://zato.io/en/tutorials/microsoft/365.html">Microsoft 365 APIs and Python Tutorial</a>
-<br />
-➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/4.1/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 15, 2025 03:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/dataverse-in-python.html"
+            href="https://www.pythonguis.com/tutorials/getting-started-flet/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1287,84 +569,6 @@ often …</p>
           </div>
           <a
             href="https://blog.jetbrains.com/platform/2025/12/meet-the-islands-theme-the-new-default-look-for-jetbrains-ides/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://zato.io/en/blog/automate-microsoft-365-in-python.html" class="hover:underline"
-              >Automate Microsoft 365 like a pro: skip the OAuth headaches</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h1 class="insights-header">
-  <a class="rounded nav-title" href="https://zato.io/en/blog/automate-microsoft-365-in-python.html">Automate Microsoft 365 like a pro: skip the OAuth headaches</a>
-</h1>
-<div class="article-meta">
-  2025-12-08, by Dariusz Suchojad
-<img alt="" class="insights-author" src="https://upcdn.io/kW15bqq/raw/root/static/blog/authors/dsuch.webp" width="35" />
-</div>
-
-<p>Are you tired of fighting with Microsoft 365 APIs and complex authentication flows? This
-<a href="https://zato.io/en/tutorials/microsoft/365.html">practical tutorial</a>
-cuts through the complexity,
-showing you how to build production-ready Python automations for Outlook, Calendar, and SharePoint in just 60 minutes.</p>
-<p>No OAuth2 struggles, no Graph API complexity - just working code you can deploy today.</p>
-<p>What you'll learn in the <a href="https://zato.io/en/tutorials/microsoft/365.html">tutorial</a>:</p>
-<ul>
-<li>Connect to Microsoft 365 APIs with minimal Python code</li>
-<li>Build real email, calendar, and SharePoint automations</li>
-<li>Schedule background tasks without programming</li>
-<li>Access Entra ID (Azure AD) user data effortlessly</li>
-<li>Implement enterprise-grade patterns that solve actual business problems</li>
-</ul>
-<p><br /></p>
-<p><a href="https://zato.io/en/tutorials/microsoft/365.html"><img alt="Automate Microsoft 365 in Python" class="img-responsive docs-article" src="https://upcdn.io/kW15bqq/raw/root/static/blog/images/automate-microsoft-365/automate-microsoft-365-vertical.webp" style="width: 60%;" />
-</a></p>
-<h2 id="more-resources">More resources</h2>
-<p>➤ Python <a href="https://zato.io/en/tutorials/index.html">API integration tutorials</a>
-<br />
-➤ <a href="https://zato.io/articles/network-packet-broker.html">What is a Network Packet Broker? How to automate networks in Python?</a>
-<br />
-➤ <a href="https://zato.io/articles/integration-platform.html">What is an integration platform?</a>
-<br />
-➤ <a href="https://zato.io/articles/python-ipaas.html">Python Integration platform as a Service (iPaaS)</a>
-<br />
-➤ <a href="https://zato.io/en/docs/4.1/intro/esb-soa.html">What is an Enterprise Service Bus (ESB)? What is SOA?</a>
-<br />
-➤ <a href="https://zato.io/articles/open-source-ipaas.html">Open-source iPaaS</a> in Python</p>
-<div class="nav-title footer">
-    <a class="rounded nav-title" href="https://zato.io/en/blog/">More blog posts</a><span class="arrow-footer">➤</span>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on December 08, 2025 03:00 AM UTC by
-            <a href="https://zato.io/blog/rss.xml" class="link link-hover text-primary"
-              >Zato Blog</a
-            >
-          </div>
-          <a
-            href="https://zato.io/en/blog/automate-microsoft-365-in-python.html"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2113,6 +1317,435 @@ cargo run <span class="nt">--release</span>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2025/12/sovereign-tech-agency-and-psf-security.html" class="hover:underline"
+              >Sovereign Tech Agency and PSF Security Partnership</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are thrilled to announce that the <a href="https://www.sovereign.tech/">Sovereign Tech Agency</a> has <a href="https://www.sovereign.tech/tech/python-software-foundation">committed to a €86,000 investment</a> in work to be performed by the Python Software Foundation to improve the security of CPython and the Python Package Index (PyPI). The Sovereign Tech Agency is a public organization in Germany that focuses on increasing the security and resilience of critical open source software that forms the foundation of modern digital technology.</p><div><div>With the Sovereign Tech Fund, they invest globally in open software components that underpin economic competitiveness and the ability to innovate. Improving the security, stability, and reusability of open software components like CPython and PyPI is a win for everyone. This&nbsp; project consists of two components, which we are carrying out in parallel: one focused on CPython and one focused on PyPI.&nbsp;</div></div><div><br /></div><div><div>The CPython component, led by <a href="https://sethmlarson.dev/">PSF Security Developer in Residence Seth Larson</a>, concerns archive-handling vulnerabilities in CPython’s standard library. Following multiple CVEs affecting the tarfile and zipfile modules, systematic fuzz-testing is required to uncover potential regressions or untested cases in extraction filtering. These modules are used by most Python packaging and installation tools, and therefore form a critical part of the software supply chain. The work commissioned through the Sovereign Tech Fund’s investment will develop test cases and seed corpora for these modules, integrate fuzz-testing through the OSS-Fuzz infrastructure, and validate filtering protections against potential bypasses.</div></div><div><br /></div><div><div>The PyPI component, led by <a href="https://www.miketheman.net/">PSF PyPI Safety and Security Engineer Mike Fiedler</a> with support from Director of Infrastructure Ee Durbin, focuses on PyPI account integrity and recovery. Current recovery procedures rely solely on email and two-factor authentication, creating support burdens and limiting automated verification. The Sovereign Tech Fund’s investment commissions work that introduces a mechanism for associating PyPI accounts with verified third-party identities through OAuth 2.0 / OIDC flows, allowing account recovery through trusted external services. These associations will improve both user experience and platform reliability while preserving user privacy and autonomy.</div></div><div><br /></div><div><div>We appreciate the Sovereign Tech Fund for supporting these critical improvements that will make CPython and PyPI more secure for millions of users. If you’d like to learn more about the advances our Developers in Residence are driving or investing in these roles and work, check out our <a href="https://www.python.org/psf/developersinresidence/">Developers in Residence page</a> and reach out out to sponsors@python.org</div></div><div><br /></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 02, 2025 12:00 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2025/12/sovereign-tech-agency-and-psf-security.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.blog.pythonlibrary.org/2025/12/01/ann-vibe-coding-video-games-with-python/" class="hover:underline"
+              >ANN: Vibe Coding Video Games with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I am happy to announce my latest book, Vibe Coding Video Games with Python. Here&#8217;s the announcement from my Kickstarter: Welcome to Vibe Coding Video Games with Python. In this book, you will learn how to use artificial intelligence to create mini-games. You will attempt to recreate the look and feel of various classic video [&#8230;]</p>
+<p>The post <a href="https://www.blog.pythonlibrary.org/2025/12/01/ann-vibe-coding-video-games-with-python/">ANN: Vibe Coding Video Games with Python</a> appeared first on <a href="https://www.blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 01, 2025 04:11 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://www.blog.pythonlibrary.org/2025/12/01/ann-vibe-coding-video-games-with-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.caktusgroup.com/blog/2025/12/01/learning-llm-basics-openai-function-calling/" class="hover:underline"
+              >LLM Basics: OpenAI Function Calling</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In our <a href="https://www.caktusgroup.com/blog/2025/10/28/learning-llm-basics-ollama/">previous post</a>, we explored how to send text to an LLM and receive a text response in return. That is useful for chatbots, but often we need to integrate LLMs with other systems. We may want the model to query a database, call an external API, or perform calculations.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 01, 2025 03:00 PM UTC by
+            <a href="http://www.caktusgroup.com/feeds/tags/python/" class="link link-hover text-primary"
+              >Caktus Consulting Group</a
+            >
+          </div>
+          <a
+            href="https://www.caktusgroup.com/blog/2025/12/01/learning-llm-basics-openai-function-calling/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://zerotomastery.io/blog/python-monthly-newsletter-november-2025/?utm_source=python-rss-feed" class="hover:underline"
+              >[November 2025] Python Monthly Newsletter 🐍</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            72nd issue of Andrei's Python Monthly:  , and much more. Read the full newsletter to get up-to-date with everything you need to know from last month.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on December 01, 2025 10:00 AM UTC by
+            <a href="https://zerotomastery.io/rss/python-rss.xml" class="link link-hover text-primary"
+              >Zero to Mastery</a
+            >
+          </div>
+          <a
+            href="https://zerotomastery.io/blog/python-monthly-newsletter-november-2025/?utm_source=python-rss-feed"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/528/python-apps-with-llm-building-blocks" class="hover:underline"
+              >#528: Python apps with LLM building blocks</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            In this episode, I’m talking with Vincent Warmerdam about treating LLMs as just another API in your Python app, with clear boundaries, small focused endpoints, and good monitoring. We’ll dig into patterns for wrapping these calls, caching and inspecting responses, and deciding where an LLM API actually earns its keep in your architecture.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 30, 2025 08:00 AM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/528/python-apps-with-llm-building-blocks"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://death.andgravity.com/reader-3-20" class="hover:underline"
+              >reader 3.20 released – we're so back</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Hi there!</p>
+<p>I'm happy to announce version 3.20 of <strong><a class="external" href="https://github.com/lemon24/reader">reader</a></strong>, a Python feed reader library.</p>
+<h2 id="what-s-new">What's new?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#what-s-new" title="permalink">#</a></span></h2>
+<p>Here are the highlights since <a class="internal" href="https://death.andgravity.com/reader-3-16">reader 3.16</a>.</p>
+<h3 id="web-app-re-design">Web app re-design<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#web-app-re-design" title="permalink">#</a></span></h3>
+<p>Earlier this year,
+I started a web app <a class="external" href="https://github.com/lemon24/reader/issues/318">re-design</a> based on <a class="external" href="https://htmx.org/">htmx</a> and <a class="external" href="https://getbootstrap.com/">Bootstrap</a>.
+I only had time for the main page,
+but it turned out pretty nice,
+and I've been using it ever since.
+What is <em>new</em> is that I now have free time and some plans;
+<strong>watch this space</strong>.</p>
+<p>Here are some screenshots; it's not much, but it's honest work:</p>
+<div class="columns"><div class="column col-sm-6 col-xs-12">
+
+<figure class="figure">
+<img alt="main page (dark mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-20/entries-v2-dark.png" /><figcaption class="figure-caption text-center text-small">
+main page (dark mode)
+</figcaption>
+</figure>
+
+
+
+</div>
+<div class="column col-sm-6 col-xs-12">
+
+<figure class="figure">
+<img alt="main page – more filters (light mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-20/entries-v2-filters-light.png" /><figcaption class="figure-caption text-center text-small">
+main page – more filters (light mode)
+</figcaption>
+</figure>
+
+
+
+</div>
+</div>
+
+<p><em>htmx? ugh, how original</em></p>
+<p>Unsurprisingly, htmx is perfect for this kind of application.
+As CEO of htmx, I can confirm that all the allegations are true –
+it is indeed a pleasure to use,
+not to mention a huge improvement
+over my home-grown, half-assed JavaScript forms <a class="external" href="https://github.com/lemon24/reader/blob/3.20/src/reader/_app/static/controls.js">framework</a>.</p>
+<p><em>isn't Bootstrap from like 2010 or something? also, how original</em></p>
+<p>I've tried many modern popular CSS frameworks
+(since forgotten, for my own sanity),
+and it turns out tab-navigable form controls are a hard,
+unsolved problem in 2025.
+Thankfully, if you're willing to time travel (to the future, surely!),
+Bootstrap comes with excellent documentation, built-in accessibility,
+and a comprehensive component library.</p>
+<h3 id="entry-deduplication">Entry deduplication<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#entry-deduplication" title="permalink">#</a></span></h3>
+<p>I may have accidentally rewritten the <a class="external" href="https://reader.readthedocs.io/en/latest/plugins.html#reader-entry-dedupe">entry_dedupe</a> plugin. 😅</p>
+<blockquote>
+<p>Sometimes, the id of some or all the entries in a feed changes
+(e.g. from <code>example.com/123</code> to <code>example.com/entry-title</code>),
+causing each entry to appear twice.
+<em>entry_dedupe</em> fixes this
+by copying user attributes to the new entry
+and deleting the old one.</p>
+</blockquote>
+<p>What started as a quick and dirty plugin now has:</p>
+<ul>
+<li>lots of new, <em>data-driven</em> heuristics to find potential duplicates<ul>
+<li>by title (had this one already)</li>
+<li>by link</li>
+<li>by published timestamp</li>
+<li>by title with common prefixes removed</li>
+</ul>
+</li>
+<li>better approximate content matching</li>
+<li>an extensive test suite</li>
+<li>extensive internal documentation (<a class="external" href="https://github.com/lemon24/reader/blob/3.20/src/reader/plugins/entry_dedupe.py#L232-L370">like this</a>)</li>
+</ul>
+<p>That last one is pretty important:
+the old logic was data-driven too,
+but because I didn't document my <em>entire</em> reasoning,
+I wasted more time than I'd like to admit
+on a useless title similarity heuristic.
+It's a trope that you should write code such that others can understand it,
+and &quot;others&quot; includes you six months from now;
+I don't know about six months, but four years will definitely do it.
+(If that sounds like an interesting story and you'd like to hear more,
+<a class="internal" href="https://death.andgravity.com/about#contact">drop me a line</a>.)</p>
+<p>It's not all bad, though –
+a side-effect of better content matching
+is that image <code>alt</code> and <code>title</code> attributes
+are also included in the <a class="external" href="https://reader.readthedocs.io/en/latest/guide.html#fts">full-text search</a> index now,
+so you can search xkcd comics by title text.</p>
+<h3 id="project-infrastructure">Project infrastructure<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#project-infrastructure" title="permalink">#</a></span></h3>
+<p>I've taken some time to modernize the project infrastructure; stuff like:</p>
+<ul>
+<li>Use GitHub Actions to publish releases to PyPI.</li>
+<li>Use dependency groups instead of extras for development dependencies.</li>
+<li>Rewrite <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html">contributor documentation</a> and <a class="external" href="https://github.com/lemon24/reader/blob/3.20/run.sh">run.sh</a> to optimize for readability.</li>
+</ul>
+<p>(I'll admit the <code>uv</code> hype is quite strong, but the vanilla tooling seems fine, for now.)</p>
+<h3 id="read-only-reader">Read-only Reader<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#read-only-reader" title="permalink">#</a></span></h3>
+<p>It's now possible to prevent write operations on a <a class="external" href="https://github.com/lemon24/reader">Reader</a> object
+through the <code>read_only</code> <a class="external" href="https://reader.readthedocs.io/en/latest/api.html#reader.make_reader">make_reader()</a>  argument.
+Thanks to Roman Milko for the pull request!</p>
+<h3 id="python-versions">Python versions<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#python-versions" title="permalink">#</a></span></h3>
+<p><em>reader</em> 3.17 added support for PyPy 3.11.</p>
+<p><em>reader</em> 3.18 dropped support for Python 3.10.</p>
+<p><em>reader</em> 3.19 added support for Python 3.14.</p>
+<hr />
+<p>That's it for now.
+For more details, see the full <a class="external" href="https://reader.readthedocs.io/en/stable/changelog.html#version-3-20">changelog</a>.</p>
+<p><strong>Want to contribute?</strong>
+Check out the <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html">docs</a> and the <a class="external" href="https://reader.readthedocs.io/en/latest/dev.html#roadmap">roadmap</a>.</p>
+<p><strong>Learned something new today?</strong> Share it with others, it really helps! <span class="text-large">
+<span class="share-icons">
+<a class="share-icon pycoders color" href="https://pycoders.com/submissions" target="_blank">PyCoder's Weekly</a>
+<a class="share-icon hacker-news color" href="https://news.ycombinator.%63%6f%6d/submitlink?u=https%3A//death.andgravity.com/reader-3-20&amp;t=reader%203.20%20released%20%E2%80%93%20we%27re%20so%20back">HN</a>
+<a class="share-icon bluesky color" href="https://bsky.%61%70%70/intent/compose?text=reader%203.20%20released%20%E2%80%93%20we%27re%20so%20back%20https%3A//death.andgravity.com/reader-3-20">Bluesky</a>
+<!--
+<a
+    class="share-icon reddit color"
+    href="https://www.reddit.%63%6f%6d/%73%75%62%6d%69%74?url=https%3A//death.andgravity.com/reader-3-20&title=reader%203.20%20released%20%E2%80%93%20we%27re%20so%20back"
+>Reddit</a>
+-->
+<a class="share-icon linkedin color" href="https://www.linkedin.%63%6f%6d/sharing/share-offsite/?url=https%3A//death.andgravity.com/reader-3-20">linkedin</a>
+<a class="share-icon twitter color" href="https://twitter.%63%6f%6d/%73%68%61%72%65?text=reader%203.20%20released%20%E2%80%93%20we%27re%20so%20back&amp;url=https%3A//death.andgravity.com/reader-3-20&amp;via=_andgravity">Twitter</a>
+</span>
+</span></p>
+
+<h2 id="what-is-reader">What is <em>reader</em>?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#what-is-reader" title="permalink">#</a></span></h2>
+<p><strong>reader</strong> takes care
+of the core functionality required by a feed reader,
+so you can focus on what makes <strong>yours</strong> different.</p>
+<p><img alt="reader in action" class="img-responsive" src="https://death.andgravity.com/_file/reader-2-0/reader.png" />
+<em>reader</em> allows you to:</p>
+<ul>
+<li>retrieve, store, and manage <strong>Atom</strong>, <strong>RSS</strong>, and <strong>JSON</strong> feeds</li>
+<li>mark articles as read or important</li>
+<li>add arbitrary tags/metadata to feeds and articles</li>
+<li>filter feeds and articles</li>
+<li>full-text search articles</li>
+<li>get statistics on feed and user activity</li>
+<li>write plugins to extend its functionality</li>
+</ul>
+<p>...all these with:</p>
+<ul>
+<li>a stable, clearly documented API</li>
+<li>excellent test coverage</li>
+<li>fully typed Python</li>
+</ul>
+<p>To find out more, check out the <a class="external" href="https://github.com/lemon24/reader">GitHub repo</a> and the <a class="external" href="https://reader.readthedocs.io/en/stable/">docs</a>,
+or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tutorial.html">tutorial</a> a try.</p>
+<h2 id="why-use-a-feed-reader-library">Why use a feed reader library?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#why-use-a-feed-reader-library" title="permalink">#</a></span></h2>
+<p>Have you been unhappy with existing feed readers and wanted to make your own, but:</p>
+<ul>
+<li>never knew where to start?</li>
+<li>it seemed like too much work?</li>
+<li>you don't like writing backend code?</li>
+</ul>
+<p>Are you already working with <a class="external" href="https://feedparser.readthedocs.io/en/latest/">feedparser</a>, but:</p>
+<ul>
+<li>want an easier way to store, filter, sort and search feeds and entries?</li>
+<li>want to get back type-annotated objects instead of dicts?</li>
+<li>want to restrict or deny file-system access?</li>
+<li>want to change the way feeds are retrieved by using <a class="external" href="https://requests.readthedocs.io">Requests</a>?</li>
+<li>want to also support <a class="external" href="https://jsonfeed.org/">JSON Feed</a>?</li>
+<li>want to support custom information sources?</li>
+</ul>
+<p>... while still supporting all the feed types feedparser does?</p>
+<p>If you answered yes to any of the above, <em>reader</em> can help.</p>
+<h2 id="the-reader-philosophy">The <em>reader</em> philosophy<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#the-reader-philosophy" title="permalink">#</a></span></h2>
+<ul>
+<li><em>reader</em> is a library</li>
+<li><em>reader</em> is for the long term</li>
+<li><em>reader</em> is extensible</li>
+<li><em>reader</em> is stable (within reason)</li>
+<li><em>reader</em> is simple to use; API matters</li>
+<li><em>reader</em> features work well together</li>
+<li><em>reader</em> is tested</li>
+<li><em>reader</em> is documented</li>
+<li><em>reader</em> has minimal dependencies</li>
+</ul>
+<h2 id="why-make-your-own-feed-reader">Why make your own feed reader?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-20#why-make-your-own-feed-reader" title="permalink">#</a></span></h2>
+<p>So you can:</p>
+<ul>
+<li>have full control over your data</li>
+<li>control what features it has or doesn't have</li>
+<li>decide how much you pay for it</li>
+<li>make sure it doesn't get closed while you're still using it</li>
+<li>really, it's <a class="external" href="https://rachelbythebay.com/w/2011/10/26/fred/">easier than you think</a></li>
+</ul>
+<p>Obviously, this may not be your cup of tea, but if it is, <em>reader</em> can help.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 28, 2025 06:00 PM UTC by
+            <a href="https://death.andgravity.com/_feed/index/_tags/python.xml" class="link link-hover text-primary"
+              >death and gravity</a
+            >
+          </div>
+          <a
+            href="https://death.andgravity.com/reader-3-20"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -2124,8 +1757,8 @@ cargo run <span class="nt">--release</span>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7589</a></li>
-    <li><a>Unique Feeds: 386</a></li>
+    <li><a>Total Entries: 7620</a></li>
+    <li><a>Unique Feeds: 389</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
