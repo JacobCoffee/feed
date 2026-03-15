@@ -93,6 +93,120 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/ive-added-human-dot-json-to-my-website?utm_campaign=rss" class="hover:underline"
+              >I’ve added human.json to my website</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://evanhahn.com">Evan Hahn</a> <a href="https://evanhahn.com/human-dot-json/">recently blogged</a> about adding
+support for the “<a href="https://codeberg.org/robida/human.json"><code>human.json</code> protocol</a>” to his website.
+I read the specification and thought this
+seemed like a straightforward protocol
+to implement.
+I've followed along, and added a <a href="https://sethmlarson.dev/human.json"><code>/human.json</code> file to my
+website</a> and <code>rel="human-json"</code> in a <code>&lt;link</code>&gt;
+element to the <code>&lt;head&gt;</code> section of my HTML. Easy!</p>
+
+<!-- more -->
+
+<p>Vouching was a little more involved because I wanted to
+auto-discover who uses <code>human.json</code> from everyone that I follow using RSS.
+Then my <code>vouches</code> can be kept up-to-date as more people implement
+the protocol. The script below is what I ended up with:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="kn">import</span> <span class="nn">pathlib</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">opml</span>
+<span class="kn">import</span> <span class="nn">urllib3</span>
+
+<span class="n">today</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">human_json_path</span> <span class="o">=</span> <span class="n">pathlib</span><span class="o">.</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;app/static/human.json&quot;</span><span class="p">)</span>
+<span class="n">human_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">human_json_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+<span class="n">vouched_urls</span> <span class="o">=</span> <span class="p">{</span><span class="n">vouch</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">vouch</span> <span class="ow">in</span> <span class="n">human_json</span><span class="p">[</span><span class="s2">&quot;vouches&quot;</span><span class="p">]}</span>
+
+<span class="n">doc</span> <span class="o">=</span> <span class="n">opml</span><span class="o">.</span><span class="n">OpmlDocument</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;archive/feeds.opml&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">outline</span> <span class="ow">in</span> <span class="n">doc</span><span class="o">.</span><span class="n">outlines</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">mat</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(https?://[^/]+)(?:/|$)&quot;</span><span class="p">,</span> <span class="n">outline</span><span class="o">.</span><span class="n">html_url</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">mat</span><span class="p">:</span>
+            <span class="k">continue</span>
+        <span class="n">url</span> <span class="o">=</span> <span class="n">mat</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">urllib3</span><span class="o">.</span><span class="n">request</span><span class="p">(</span>
+            <span class="s2">&quot;GET&quot;</span><span class="p">,</span>
+            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">/human.json&quot;</span><span class="p">,</span>
+            <span class="n">headers</span><span class="o">=</span><span class="p">{</span>
+                <span class="c1"># Be a good internet netizen:</span>
+                <span class="c1"># always set a User-Agent with</span>
+                <span class="c1"># your domain and email.</span>
+                <span class="s2">&quot;User-Agent&quot;</span><span class="p">:</span> <span class="s2">&quot;sethmlarson.dev/1.0 (sethmichaellarson@gmail.com)&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;Accept&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">,</span>
+            <span class="p">},</span>
+            <span class="n">retries</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+            <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status</span> <span class="o">&lt;</span> <span class="mi">300</span> <span class="ow">and</span> <span class="s2">&quot;vouches&quot;</span> <span class="ow">in</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()</span> <span class="ow">and</span> <span class="n">url</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">vouched_urls</span><span class="p">:</span>
+            <span class="n">human_json</span><span class="p">[</span><span class="s2">&quot;vouches&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span> <span class="s2">&quot;date&quot;</span><span class="p">:</span> <span class="n">today</span><span class="p">})</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">continue</span>
+
+<span class="n">human_json_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">human_json</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</code></pre>
+</div>
+
+<p>Running this script turned up with two websites that I follow
+already supporting the protocol:</p>
+
+<ul>
+<li>https://evanhahn.com (<a href="https://evanhahn.com/human.json">human.json</a>)</li>
+<li>https://foosel.net (<a href="https://foosel.net/human.json">human.json</a>)</li>
+</ul>
+
+<p>Maybe this post will inspire you to add support to your own website?
+If you do and I follow you via RSS, your website will appear automatically
+after I regenerate my OPML files. If we're mutuals on Mastodon or Bluesky
+give me a ping and I'll add you sooner.</p>
+
+<p>I'm probably not going to use the browser extension myself, but if others
+are using the data from this "network" then that is a win.</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 14, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/ive-added-human-dot-json-to-my-website?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.europython.eu/humans-of-ep-kshitijaa/" class="hover:underline"
               >Humans of EuroPython: Kshitijaa Jaglan</a
             >
@@ -157,6 +271,46 @@
           </div>
           <a
             href="https://talkpython.fm/episodes/show/540/modern-python-monorepo-with-uv-and-prek"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2026/03/launching-pycon-us-2026-schedule.html" class="hover:underline"
+              >Launching the PyCon US 2026 Schedule!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We’re excited to announce the <a href="https://us.pycon.org/2026/schedule/">full schedule for PyCon US 2026</a>!</p><p>For another year, PyCon US received an overwhelming number of incredible proposal submissions, with this year’s final count totaling an impressive 1,015 proposals. We are so excited to have so many people in our community share their work and ideas with us. Thank you to everyone who submitted their proposals!&nbsp;</p><p>With these many proposals received, we could easily have enough speakers to fill the program for multiple Python conferences! We were only able to accept 13% of the many strong proposals, and our volunteer Program Committee has worked hard to create an excellent conference program that covers a wide range of subjects for attendees to enjoy. We’re looking forward to meeting all the presenters and learning from them at <a href="http://us.pycon.org/2026/">PyCon US 2026</a>.</p><div><h3 style="text-align: left;">Meet Our Keynote Speakers</h3><div>We are thrilled to announce our Keynote speakers! Please join us in welcoming Lin Qiao, Pablo Galindo Salgado, amanda casari, and Rachell Calhoun &amp; Tim Schilling, as they help us kick off our main conference days, May 15 - May 17, 2026.&nbsp;</div><div><br /></div><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjiGUEOP4wHBdVtXXvFRWlxAJvqmh7OjYi14uXusYhg10qGS_ADWaRuX-dgEQ8H9O5VuxcBmrXcGMEGwM2uIZSmRYPPQYG82IbBRzLC2v5hOm28w_XNJ_0DLCOZ_z3yagBoI3U_TZcOen5buqzjdPjUM6-IB6YyAVpy7zOQCZa9ZOhHXWhAnAvL/s1600/Keynote-v1.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="360" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjiGUEOP4wHBdVtXXvFRWlxAJvqmh7OjYi14uXusYhg10qGS_ADWaRuX-dgEQ8H9O5VuxcBmrXcGMEGwM2uIZSmRYPPQYG82IbBRzLC2v5hOm28w_XNJ_0DLCOZ_z3yagBoI3U_TZcOen5buqzjdPjUM6-IB6YyAVpy7zOQCZa9ZOhHXWhAnAvL/w640-h360/Keynote-v1.png" width="640" /></a></div><div><br /></div><div>Head to the <a href="https://us.pycon.org/2026/about/keynote-speakers/">Keynotes page</a> to learn more about the amazing individuals who make up this year’s Keynote lineup!</div></div><div><h3 style="text-align: left;">Full Schedule Released</h3><div><a href="http://us.pycon.org/2026/schedule/">Check our updated schedule page </a>to learn more. The schedule has been updated with the dates and timing of our Tutorials, Talk Tracks, Charlas Track, and Sponsor Presentations.</div><div><br /></div><div>Don’t miss our new dedicated talk tracks: <a href="https://us.pycon.org/2026/tracks/AI/">the Future of AI with Python Track </a>on Friday, May 15, and <a href="https://us.pycon.org/2026/tracks/security/">Trailblazing Python Security Track</a> on Saturday, May 16. <a href="https://us.pycon.org/2026/schedule/talks/">Visit the schedule page</a> to explore the exciting lineups for each track!</div><div><br /></div><div><a href="https://us.pycon.org/2026/schedule/posters/list/">Posters</a> will be featured and displayed during all open hours of the Expo Hall on May 15 - May 16, 2026, with presentations by the authors taking place alongside the <a href="https://us.pycon.org/2026/events/job-fair/">Job Fair &amp; Community Showcase</a> on Sunday, May 17, 2026. All together, there will be a wide array of topics that we hope experienced and newer Python users will find engaging.</div><div><br /></div><div>Many thanks again to all of those who submitted proposals this year! The schedule would not be the same without all your hard work.</div><div><br /></div><div>Note that if you’ve attended PyCon US before, you might notice that our scheduling looks slightly different this year. We encourage you to check the schedule ahead of the conference.</div></div><div><h3 style="text-align: left;">Thank You Committees and Reviewers!</h3><div>Thank you to all of our Program Committee members and proposal reviewers who volunteered their time and hard work! Going through over one thousand proposals is no easy task. Without their efforts in helping to launch the PyCon US Call for Proposals, the PyCon US program would not have been possible.</div><div><br /></div><div>Their commitment to managing the process of preparing for CFPs to launch and managing the review process began over 6 months ago. We truly could not have accomplished the final result of launching the schedule today without each of them–we appreciate you!</div></div><div><div><ul style="text-align: left;"><li>Tutorial Committee: Sarah Kuchinsky, Merilys Huhn &amp; Stephen Kiazyk</li><li>Program Committee: Philippe Gagnon</li><li>Charlas Committee: Denny Perez &amp; Cristián Maureira-Fredes</li><li>Poster Committee: Kristen McIntyre</li><li>The Future of AI with Python Track Co-Chairs: Silona Bonewald &amp; Zac Hatfield-Dodds</li><li>Trailblazing Python Security Track Co-Chairs: Juanita Gomez &amp; Seth Larson</li></ul><div><div>In addition, we want to send a huge thank you to the numerous volunteers who reviewed each of the submissions and worked long hours to make sure PyCon US has a great line-up.&nbsp;</div></div></div></div><div><h3 style="text-align: left;">Tutorial, Summit &amp; Event Registration</h3><div>Registration is now open for Tutorials, select Summits &amp; Events, and the PyLadies Auction.</div></div><div><div><ul style="text-align: left;"><li><a href="https://us.pycon.org/2026/schedule/tutorials/">Tutorials</a> - Wednesday, May 13, and Thursday, May 14, 2026 - $150.00 per session. There are 2 time slots per day</li><li><a href="https://us.pycon.org/2026/events/education-summit/">Education Summit</a> - Thursday, May 14, 2026 - no entry fee</li><li><a href="https://us.pycon.org/2026/events/maintainers-summit/">Maintainers Summit</a>&nbsp; - Saturday, May 16, 2026 - no entry fee</li><li><a href="https://us.pycon.org/2026/events/pyladies-auction/">PyLadies Auction</a> - Saturday evening, May 16, 2026 - $50.00 Entry or $100.00 Supporter rates are offered</li><li><a href="https://us.pycon.org/2026/events/pyladies-lunch/">PyLadies Luncheon</a> - May 18, 2026 - no entry fee</li></ul><div><div>Please note that there is no registration for Sponsor Presentations. <a href="https://us.pycon.org/2026/schedule/sponsor-presentations/">Sponsor Presentations</a> are open until all spots are filled, so make sure you check out each event’s schedule to know when to show up and grab your spot!</div></div></div></div><div><br /></div><div><div>Be sure to <a href="https://us.pycon.org/2026/accounts/dashboard/">register for the conference</a> if you have not already done so. Keep in mind that there are limited spaces available for each of the events listed above, with Tutorials and PyLadies Auction being sold out way ahead of the conference each year. So if you’re planning to attend and participate in any of these, be sure to register early!</div></div><div><br /></div><div><div><b><i>N</i></b><i style="font-weight: 700;">OTE:</i> Please be sure to hit “Check out and Pay” when registering for any extra events, including Tutorials and the PyLadies Auction. If you do not complete your invoice and an event sells out, it will be removed from your cart and you will no longer be able to reserve a spot for that session.&nbsp;Please contact <a href="mailto:pycon-reg@python.org">pycon-reg@python.org</a>&nbsp;with any questions.</div></div><div><h3 style="text-align: left;">PyCon US Hotel Block</h3><div>Don’t forget to book your hotel reservations with the <a href="https://us.pycon.org/2026/venue/hotels/">PyCon US hotel block</a> to receive our discounted conference rates while supplies last!&nbsp;</div><div><br /></div><div>If you’re planning to attend PyCon US, please consider booking your stay in the official conference hotel block. When attendees reserve rooms through the block, it helps the conference meet its contractual commitments with the venue and avoid costly penalties, which directly impacts the overall cost of running PyCon US.</div><div><br /></div><div>Strong participation in the hotel block helps PyCon US keep registration prices as low as possible and allows us to continue funding programs that support our community, like PyCon US travel grants. By booking in the hotel block, you’re doing more than securing a convenient place to stay—you’re helping keep PyCon US sustainable and affordable for the entire Python community!</div></div><div><br /></div><div><div>Once you complete your registration for PyCon US 2026, you will be able to book a hotel reservation on your dashboard through our official housing bureau, Orchid Events. This is the only way to get the conference rates, so book now before they sell out!<b> The hotel blocks will start closing on April 20th and close fully on April 24th, 2026</b>. More information can be found on the <a href="https://us.pycon.org/2026/venue/hotels/">Venue and Hotels page</a>.</div></div><div><h3 style="text-align: left;">Conference T-shirts</h3><div>PyCon US 2026 conference, PyLadies, and Charlas t-shirts are now available! You can order t-shirts when you are registering for the conference or add them to an already existing registration using the link on your <a href="https://us.pycon.org/2026/accounts/dashboard/">dashboard</a>. <b>The deadline to order t-shirts is April 14, 2026</b>.</div><div><br /></div><div>A special shoutout and thank you to Georgi K for the hard work and creativity that went into this year’s t-shirt designs!</div></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 13, 2026 08:45 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2026/03/launching-pycon-us-2026-schedule.html"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1282,86 +1436,6 @@ the default. You can switch between providers with <tt class="literal"><span cla
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-sql-libraries/" class="hover:underline"
-              >Quiz: Introduction to Python SQL Libraries</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn to connect Python to databases, run queries, and manage data using SQLite, PostgreSQL, MySQL, and SQL basics.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 09, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/python-sql-libraries/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/pydantic-ai/" class="hover:underline"
-              >Quiz: Pydantic AI: Build Type-Safe LLM Agents in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn the trade-offs of using Pydantic AI in production, including validation retries, structured outputs, tool usage, and token costs.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 09, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/pydantic-ai/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1373,8 +1447,8 @@ the default. You can switch between providers with <tt class="literal"><span cla
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7695</a></li>
-    <li><a>Unique Feeds: 386</a></li>
+    <li><a>Total Entries: 7774</a></li>
+    <li><a>Unique Feeds: 389</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
