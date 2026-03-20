@@ -53,6 +53,255 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://fruch.github.io/python/2026/03/06/maybe-orm-odm-not-dead-yet" class="hover:underline"
+              >Maybe ORM/ODM are not dead? Yet...</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>So, let’s pick up where we left off. A couple of weeks ago, I wrote about how I took a 4-year-old fever dream—an ODM for Cassandra and ScyllaDB called <a href="https://github.com/fruch/coodie">coodie</a>—and let an AI build the whole thing while I sipped my morning coffee.</p>
+
+<p>It was a fun experiment. But then, a funny coincidence happened (or maybe the algorithm just has a sick sense of humor).</p>
+
+<p>Right after I hit publish and started feeling good about my newfound “prompt engineer” status, I was listening to an episode of the <a href="https://pythonbytes.fm">pythonbytes podcast</a> discussing Michael Kennedy’s recent post, <a href="https://blog.michaelckennedy.net">Raw+DC: The ORM pattern of 2026?</a>. The overarching thesis of their discussion? ORMs and ODMs are fundamentally dead. They are a relic of the past, bloated, abstraction-heavy, and ultimately, absolute performance killers.</p>
+
+<p>I actually fired off a Twitter thread in response to it. And honestly, at first, I had to concede. They make a really good point. I spend my days deep in the ScyllaDB trenches, where we fight for every single microsecond. Putting a thick Python abstraction layer on top of a highly optimized driver usually sounds like a brilliant way to turn a sports car into a tractor.</p>
+
+<p>But it got me thinking. How bad was coodie? Was my AI-generated Beanie-wannabe actually a performance disaster waiting to happen?</p>
+
+<h2 id="giving-it-a-test-run">Giving it a test run</h2>
+
+<p>Like any respectable developer looking for an excuse to avoid real work, I decided to put my money where my AI-generated mouth is. Instead of sitting at my desk, I just offloaded the whole task to the Copilot agent from my phone to run some extensive benchmarks.</p>
+
+<p>I didn’t just want to compare coodie to existing solutions like <a href="https://docs.datastax.com/en/developer/python-driver/latest/cqlengine/">cqlengine</a>. I wanted to establish an absolute performance floor. I wanted to test it against the Raw+DC pattern (Python dataclasses + hand-written CQL with prepared statements) to see exactly how much the “ORM tax” was really costing us.</p>
+
+<p>The test spun up a local ScyllaDB node, hammered it with various workloads—inserts, reads, conditional updates, batch operations—and fetched the results back.</p>
+
+<h2 id="the-finally-surprising-results">The finally surprising results</h2>
+
+<p>I had the agent run the script. I fully expected coodie to be heavily penalized. We all accept slower performance in exchange for autocomplete, declarative schemas, and not writing raw CQL strings.</p>
+
+<p>I stared at the results the agent sent back to my screen. Then I told it to clear the cache, restart the Scylla container, and run it again just to be sure.</p>
+
+<p>The results were genuinely surprising, and running them actually highlighted a few spots where we could squeeze out even more performance, leading straight to <a href="https://github.com/fruch/coodie/pull/190">PR #190</a> to apply those lessons learned.</p>
+
+<p>Here is the breakdown of what the agent and I found across the board.</p>
+
+<h3 id="three-way-benchmark-results-scylla-driver">Three-way Benchmark Results (scylla driver)</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Benchmark</th>
+      <th>Raw+DC (µs)</th>
+      <th>coodie (µs)</th>
+      <th>cqlengine (µs)</th>
+      <th>coodie vs Raw+DC</th>
+      <th>coodie vs cqlengine</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>single-insert</td>
+      <td>456</td>
+      <td>485</td>
+      <td>615</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.79× ✅</td>
+    </tr>
+    <tr>
+      <td>insert-if-not-exists</td>
+      <td>1,180</td>
+      <td>1,170</td>
+      <td>1,370</td>
+      <td><strong>~1.00×</strong></td>
+      <td>0.85× ✅</td>
+    </tr>
+    <tr>
+      <td>insert-with-ttl</td>
+      <td>448</td>
+      <td>469</td>
+      <td>640</td>
+      <td><strong>1.05×</strong></td>
+      <td>0.73× ✅</td>
+    </tr>
+    <tr>
+      <td>get-by-pk</td>
+      <td>461</td>
+      <td>520</td>
+      <td>665</td>
+      <td><strong>1.13×</strong></td>
+      <td>0.78× ✅</td>
+    </tr>
+    <tr>
+      <td>filter-secondary-index</td>
+      <td>1,370</td>
+      <td>2,740</td>
+      <td>8,530</td>
+      <td><strong>2.00×</strong> 🟠</td>
+      <td>0.32× ✅</td>
+    </tr>
+    <tr>
+      <td>filter-limit</td>
+      <td>575</td>
+      <td>627</td>
+      <td>1,220</td>
+      <td><strong>1.09×</strong></td>
+      <td>0.51× ✅</td>
+    </tr>
+    <tr>
+      <td>count</td>
+      <td>904</td>
+      <td>1,500</td>
+      <td>1,590</td>
+      <td><strong>1.66×</strong> 🟡</td>
+      <td>0.94× ✅</td>
+    </tr>
+    <tr>
+      <td>partial-update</td>
+      <td>409</td>
+      <td>960</td>
+      <td>542</td>
+      <td><strong>2.35×</strong> 🔴</td>
+      <td>1.77× ❌</td>
+    </tr>
+    <tr>
+      <td>update-if-condition (LWT)</td>
+      <td>1,140</td>
+      <td>1,620</td>
+      <td>1,340</td>
+      <td><strong>1.42×</strong> 🟡</td>
+      <td>1.21× ❌</td>
+    </tr>
+    <tr>
+      <td>single-delete</td>
+      <td>941</td>
+      <td>925</td>
+      <td>1,190</td>
+      <td><strong>~1.00×</strong></td>
+      <td>0.78× ✅</td>
+    </tr>
+    <tr>
+      <td>bulk-delete</td>
+      <td>872</td>
+      <td>921</td>
+      <td>1,200</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.77× ✅</td>
+    </tr>
+    <tr>
+      <td>batch-insert-10</td>
+      <td>596</td>
+      <td>634</td>
+      <td>1,700</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.37× ✅</td>
+    </tr>
+    <tr>
+      <td>batch-insert-100</td>
+      <td>42,800</td>
+      <td>1,960</td>
+      <td>52,900</td>
+      <td><strong>0.05× 🚀</strong></td>
+      <td>0.04× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-write</td>
+      <td>448</td>
+      <td>485</td>
+      <td>679</td>
+      <td><strong>1.08×</strong></td>
+      <td>0.71× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-read</td>
+      <td>478</td>
+      <td>508</td>
+      <td>689</td>
+      <td><strong>1.06×</strong></td>
+      <td>0.74× ✅</td>
+    </tr>
+    <tr>
+      <td>collection-roundtrip</td>
+      <td>939</td>
+      <td>1,060</td>
+      <td>1,380</td>
+      <td><strong>1.13×</strong></td>
+      <td>0.77× ✅</td>
+    </tr>
+    <tr>
+      <td>model-instantiation</td>
+      <td>0.671</td>
+      <td>2.02</td>
+      <td>12.1</td>
+      <td><strong>3.01×</strong> 🔴</td>
+      <td>0.17× ✅</td>
+    </tr>
+    <tr>
+      <td>model-serialization</td>
+      <td>10.1</td>
+      <td>2.05</td>
+      <td>4.56</td>
+      <td><strong>0.20× 🚀</strong></td>
+      <td>0.45× ✅</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="summary-of-findings">Summary of Findings</h2>
+
+<p><strong>Near Parity on the Hot Paths:</strong> For standard reads (get-by-pk), inserts, deletes, and basic limited queries, coodie is operating with a completely negligible overhead compared to writing raw CQL by hand (usually hovering around 5-13% tax). It also outperforms cqlengine across the board on these operations.</p>
+
+<p><strong>Pydantic V2 is a beast:</strong> We need to remember that Pydantic V2 is basically a blazing-fast Rust engine wearing a Python trench coat. The data validation, object instantiation, and serialization happen at the speed of Rust, keeping the overhead minimal from the start. Just look at the serialization and batch performance multipliers!</p>
+
+<p><strong>The AI kept it lean:</strong> The code the LLM generated wasn’t building massive ASTs or doing unnecessary query translations. coodie essentially formats a clean dictionary and hands it straight to the underlying Scylla driver to do its native magic. It gets out of the way.</p>
+
+<p><strong>Lessons Learned (<a href="https://github.com/fruch/coodie/pull/190">PR #190</a>):</strong> Even with great initial numbers, running the full benchmark suite revealed bottlenecks on things like partial-update and count. We realized we were doing redundant data validation during read operations when fetching data we already knew was valid straight from the database. By bypassing the extra validation pass and loading the raw rows more directly into the Pydantic models (using <code class="language-plaintext highlighter-rouge">model_construct()</code> for DB data), we can shave off the remaining overhead.</p>
+
+<h2 id="wrapping-up">Wrapping up</h2>
+
+<p>So, maybe ORM/ODM are not dead? Yet…</p>
+
+<p>If the final overhead of using an ODM on hot paths is a measly 5-13%, but in exchange I get full type-safety, declarative schemas, and zero boilerplate, I am taking the ODM every single time.</p>
+
+<p>It seems my digital sidekick built something that is actually production-ready, and with a little bit of human-driven optimization, it screams.</p>
+
+<p>You can check out the code, star it, or run your own tests over at <a href="https://github.com/fruch/coodie">github.com/fruch/coodie</a>.</p>
+
+<p>PRs are welcome. יאללה, let’s see how fast we can make it.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 06, 2026 12:00 AM UTC by
+            <a href="http://fruch.github.io/feed.python.xml" class="link link-hover text-primary"
+              >Israel Fruchter</a
+            >
+          </div>
+          <a
+            href="http://fruch.github.io/python/2026/03/06/maybe-orm-odm-not-dead-yet"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://efficientcoder.net/python-roadmap/" class="hover:underline"
               >خارطة طريق شاملة لتعلم لغة بايثون من الصفر حتى الاحتراف في 2026</a
             >
@@ -2709,294 +2958,6 @@ and readable as you want.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/deprecate-confusing-apis-like-os-path-commonprefix?utm_campaign=rss" class="hover:underline"
-              >Deprecate confusing APIs like “os.path.commonprefix()”</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The <a href="https://docs.python.org/3/library/os.path.html#os.path.commonprefix"><code>os.path.commonprefix()</code> function</a> has been an API in the Python
-standard library for at least 35 years (since February 1991)
-and in that time has been confusing users and creating security
-issues, even in programs explicitly trying to mitigate vulnerabilities.
-This was caused directly by the API's placement in the <a href="https://docs.python.org/3/library/os.path.html"><code>os.path</code> module</a>
-and further perpetuated by backwards compatibility.</p>
-
-<!-- more -->
-
-<p>Here are my top-level takeaways from investigating this issue:</p>
-
-<ul>
-<li>Weigh surprise and potential for misuse higher than backwards compatibility.
-Deprecate, rename, and remove security-relevant functions that aren't designed to prevent accidental misuse.</li>
-<li>An API's “fitness for purpose” is implied to users through an API's “labeling” (such as: module, name, parameters).
-In the case of <code>commonprefix</code>, being included in <code>os.path</code>
-module implied to users that the function was meant to be used with paths.</li>
-<li>Documentation isn't enough. <code>commonprefix</code> surprising behavior was documented
-since 2002 and this wasn't enough to mitigate future insecure usage two decades
-later.</li>
-<li>Automatic static code analysis and linting tools are likely our best bets
-at cleaning up widespread footguns like this. An <a href="https://github.com/astral-sh/ruff/issues/22981">issue was opened</a> with Ruff,
-a popular code formatter for Python.</li>
-</ul>
-
-<p>I've submitted pull requests that turn the documentation
-note into an <a href="https://github.com/python/cpython/pull/144401">explicit security warning</a> and <a href="https://github.com/python/cpython/pull/144436">deprecate the
-function</a> in Python 3.15.
-I am hoping that this case can be used as evidence in the future
-to more rapidly deprecate and replace functions that are confusing
-or easy to use insecurely on accident.</p>
-
-<blockquote>
-  <p>My work as the Security Developer-in-Residence at the <a href="https://www.python.org/psf-landing/">Python Software Foundation</a> is sponsored
-  by <a href="https://alpha-omega.dev/">Alpha-Omega</a>. Thanks to Alpha-Omega for supporting
-  security in the Python ecosystem.</p>
-</blockquote>
-
-<h2>Discovering the footgun</h2>
-
-<p>Earlier this month I published the advisory for <a href="https://www.cve.org/CVERecord?id=CVE-2026-1703">CVE-2026-1703</a>, a vulnerability in pip that allows
-extremely limited path traversal when unpacking a wheel archive file.
-The root-cause for this vulnerability was a function <a href="https://github.com/pypa/pip/blob/b78d8085d34f67867b5c5e60282ee5d219d8903f/src/pip/_internal/utils/unpacking.py#L79"><code>is_within_directory()</code></a>
-that checked whether a <code>target</code> path was within the extraction <code>directory</code>.
-Previously the function was implemented like so:</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="kn">import</span> <span class="nn">os</span>
-
-<span class="k">def</span> <span class="nf">is_within_directory</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">    Return true if the absolute path of target is within the directory</span>
-<span class="sd">    &quot;&quot;&quot;</span>
-    <span class="n">abs_directory</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span>
-    <span class="n">abs_target</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-
-    <span class="n">prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">commonprefix</span><span class="p">([</span><span class="n">abs_directory</span><span class="p">,</span> <span class="n">abs_target</span><span class="p">])</span>
-    <span class="k">return</span> <span class="n">prefix</span> <span class="o">==</span> <span class="n">abs_directory</span>
-</code></pre>
-</div>
-
-<p>This function was <a href="https://github.com/pypa/pip/pull/6313">added to pip in 2019</a>.
-The function intention is to check whether <code>directory</code> is the prefix
-of <code>target</code>, implying that <code>target</code> is within <code>directory</code>.</p>
-
-<p>However, this is not how <code>os.path.commonprefix()</code> works in practice.
-<code>commonprefix()</code> compares <em>character-by-character</em> (<code>/</code>..<code>a</code>..<code>/</code>..<code>b</code>..),
-not using path segments (<code>/a</code>..<code>/b</code>..). This subtle difference means
-that the function is not safe to use on paths without extra mitigations, like so:</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="k">def</span> <span class="nf">is_within_directory</span><span class="p">(</span><span class="n">directory</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
-    <span class="o">...</span>
-
-    <span class="c1"># By adding a &quot;/&quot; terminator, the character-by-character</span>
-    <span class="c1"># algorithm is now safe to use for directories.</span>
-    <span class="n">abs_directory</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span>
-    <span class="n">abs_target</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-
-    <span class="n">prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">commonprefix</span><span class="p">([</span><span class="n">abs_directory</span><span class="p">,</span> <span class="n">abs_target</span><span class="p">])</span>
-    <span class="k">return</span> <span class="n">prefix</span> <span class="o">==</span> <span class="n">abs_directory</span>
-</code></pre>
-</div>
-
-<h2>Investigating other usages</h2>
-
-<p>Seeing this insecure usage in a critical library like pip signaled to
-me that this confusion was not likely to be isolated. There are almost
-<a href="https://github.com/search?q=os.path.commonprefix+language%3APython&amp;type=code">40K uses of <code>os.path.commonprefix</code> on GitHub</a> alone.
-The git blame
-on <code>os.path.commonprefix</code> in CPython stalls out at the “initial commit” moving CPython
-to git, so we're going to have to start looking at source releases
-to see the full history. I also investigated the socializing around
-the API to document how the function has been misused and misunderstood
-over the years, and in doing so built a case to deprecate and remove
-the function.</p>
-
-<h3>Python 0.9.1 (1991)</h3>
-
-<p>The earliest version of Python source code <a href="https://www.python.org/download/releases/early/">available on the internet</a> that I know of is for version 0.9.1. Wikipedia
-lists this version as being published in February 1991, so ~35 years ago this month.
-Looking in <code>lib/path.py</code> we see the earliest implementation of <code>commonprefix()</code>
-(with tabs instead of spaces):</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="c1"># Return the longest prefix of all list elements.</span>
-<span class="c1">#</span>
-<span class="k">def</span> <span class="nf">commonprefix</span><span class="p">(</span><span class="n">m</span><span class="p">):</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">m</span><span class="p">:</span> <span class="k">return</span> <span class="s1">''</span>
-    <span class="n">prefix</span> <span class="o">=</span> <span class="n">m</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">m</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)):</span>
-            <span class="k">if</span> <span class="n">prefix</span><span class="p">[:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;&gt;</span> <span class="n">item</span><span class="p">[:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]:</span>
-                <span class="n">prefix</span> <span class="o">=</span> <span class="n">prefix</span><span class="p">[:</span><span class="n">i</span><span class="p">]</span>
-                <span class="k">if</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">:</span> <span class="k">return</span> <span class="s1">''</span>
-                <span class="k">break</span>
-    <span class="k">return</span> <span class="n">prefix</span>
-</code></pre>
-</div>
-
-<p>This implementation identical to the <code>commonprefix</code> function in current use, and still within a
-path-themed module. Note that <code>&lt;&gt;</code> is an alias for <code>!=</code>.</p>
-
-<h3>Python 2.0.1 (2000)</h3>
-
-<p>The earliest version of Python source code that's available on
-the contemporary “<a href="https://www.python.org/downloads/source/">Python Source Releases</a>” page is Python 2.0.1.
-In this source release in the <code>Lib/posixpath.py</code> we still see <code>commonprefix()</code>
-unchanged:</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="c1"># Return the longest prefix of all list elements.</span>
-
-<span class="k">def</span> <span class="nf">commonprefix</span><span class="p">(</span><span class="n">m</span><span class="p">):</span>
-    <span class="s2">&quot;Given a list of pathnames, returns the longest common leading component&quot;</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">m</span><span class="p">:</span> <span class="k">return</span> <span class="s1">''</span>
-    <span class="n">prefix</span> <span class="o">=</span> <span class="n">m</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
-    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">m</span><span class="p">:</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">prefix</span><span class="p">)):</span>
-            <span class="k">if</span> <span class="n">prefix</span><span class="p">[:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;&gt;</span> <span class="n">item</span><span class="p">[:</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]:</span>
-                <span class="n">prefix</span> <span class="o">=</span> <span class="n">prefix</span><span class="p">[:</span><span class="n">i</span><span class="p">]</span>
-                <span class="k">if</span> <span class="n">i</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span> <span class="k">return</span> <span class="s1">''</span>
-                <span class="k">break</span>
-    <span class="k">return</span> <span class="n">prefix</span>
-</code></pre>
-</div>
-
-<h3>First report of confusing behavior (2002)</h3>
-
-<p>Armin Rigo <a href="https://mail.python.org/pipermail/python-dev/2002-December/030947.html">emailed the <code>python-dev</code> mailing list</a> in 2002
-reporting their surprise at <code>commonprefix()</code> behavior, specifically
-noting the module:</p>
-
-<blockquote>
-  <p>“I recently discovered that <code>os.path.commonprefix(list-of-strings)</code> returns
-  the longest substring that is an initial segment of all the given strings,
-  and that this has nothing to do with the fact that the strings might be
-  paths.  I wonder why this has been put in <code>os.path</code> and not in the string
-  module in the first place.
-  This location misled me for a long time into thinking that commonprefix()
-  would return the longest common *path*”</p>
-</blockquote>
-
-<p>Michael Hudson replied that they recalled a discussion which “decided that there is no
-use for such a thing, but that changing [the function] might break code for people who
-found a use”. Armin’s reply notes that the location of the function is the source of
-the confusion: “Can't we deprecate the thing and move it elsewhere?”.
-At this point it was decided to document the unexpected behavior
-with this warning:</p>
-
-<blockquote>
-  <p>“Note that this may return invalid paths
-  because it works a character at a time.”</p>
-</blockquote>
-
-<p>This thread also noted that the original intent for the function may
-have been to provide the behavior you get on a terminal after partially
-typing a path and then hitting <code>TAB</code> to auto-complete, but there wasn't
-a definitive answer as to why the function existed in <code>os.path</code>.</p>
-
-<h3>“What’s the point of os.path.commonprefix()?” (2010)</h3>
-
-<p>Ned Batchelder, maintainer of the popular <a href="https://github.com/coveragepy/coveragepy/">coverage.py project</a>, <a href="https://nedbatchelder.com/blog/201003/whats_the_point_of_ospathcommonprefix">published a blog post in 2010</a>
-that noted that “the function is worse than useless, it’s misleading”
-and required <a href="https://github.com/coveragepy/coveragepy/commit/489872c0d84aeff03d164eda5201b495a73e129d">patching a bug out of coverage.py</a> as a result.
-Ned recommended that the documentation warning should explain
-that the function isn't meant to be used on paths and specifically
-that “the function is in the wrong place”.</p>
-
-<h3>SecureDrop path traversal vulnerability (2013)</h3>
-
-<p><a href="https://securedrop.org/">SecureDrop</a>, a system deployed by many media organizations for securely accepting whistleblower submissions,
-was <a href="https://github.com/freedomofpress/securedrop/issues/194">vulnerable to path traversal</a> due to using <code>os.path.commonprefix()</code>
-API incorrectly. This issue was found <a href="https://media.securedrop.org/media/documents/pentest-report_securedrop.pdf">during a security audit</a> by Cure53.
-The confusing behavior and name mismatch wasn't reported upstream to the CPython project.
-As far as I know, this is the first known security issue resulting from <code>commonprefix()</code> unexpected behavior.</p>
-
-<h3>Python 3.5 (2017)</h3>
-
-<p>In 2017 Valentin Lorenz <a href="https://bugs.python.org/issue30267">reported to bugs.python.org</a>
-that <code>commonprefix</code> still doesn't actually process paths the way users expect,
-using characters instead of path segments.
-This report led to the addition of a new function, <code>os.path.commonpath()</code>,
-which found the common path segment prefix. The function <code>os.path.commonprefix()</code> was not deprecated.</p>
-
-<h3>HTTPPasswordMgr security issue (2020, 2022)</h3>
-
-<p><a href="https://bugs.python.org/issue42766">Donát Nagy</a> (2020) and later <a href="https://bugs.python.org/issue46756">Serhiy Storchaka</a> (2022)
-reported an issue in the <code>is_suburi()</code> method for the <code>HTTPPasswordMgr</code> class which used the <code>commonprefix()</code> function
-insecurely. Serhiy noted that at the time, this was <a href="https://bugs.python.org/issue46756">just one of three
-total uses</a> of the <code>os.path.commonprefix()</code> function within the standard library
-and that the use was insecure.</p>
-
-<h3>Trellix campaign to fix CVE-2007-4559 (2022)</h3>
-
-<p><a href="https://www.cve.org/CVERecord?id=CVE-2007-4559">CVE-2007-4559</a> is a vulnerability in the Python tarfile module
-which allowed path traversal during extraction of a malicious tar archive.
-A security company Trellix <a href="https://www.trellix.com/blogs/research/trellix-advanced-research-center-patches-vulnerable-open-source-projects/">launched a campaign</a>
-to mitigate vulnerable
-code on GitHub that uses <code>TarFile.extractall()</code> by first checking all tar members
-for path traversal. Unfortunately, the filtering function uses <code>os.path.commonprefix()</code>
-insecurely, meaning the <em>filtering function itself</em> is also vulnerable path traversal:</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="k">def</span> <span class="nf">is_within_directory</span><span class="p">(</span><span class="n">directory</span><span class="p">,</span> <span class="n">target</span><span class="p">):</span>
-    <span class="n">abs_directory</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span>
-    <span class="n">abs_target</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
-
-    <span class="n">prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">commonprefix</span><span class="p">([</span><span class="n">abs_directory</span><span class="p">,</span> <span class="n">abs_target</span><span class="p">])</span>
-    <span class="k">return</span> <span class="n">prefix</span> <span class="o">==</span> <span class="n">abs_directory</span>
-</code></pre>
-</div>
-
-<p>Recognize this function? This function is almost identical to the one used in pip. As far as I can tell,
-the implementation was copied from pip which was merged in 2019, but not yet
-discovered to be vulnerable.</p>
-
-<p>According to <a href="https://github.com/python/cpython/issues/74453#issuecomment-1500321322">this GitHub comment</a>, over 61,000 pull requests were submited
-with this insecure mitigation for CVE-2007-4559. Searching for the name <code>is_within_directory()</code> in Python files <a href="https://github.com/search?q=is_within_directory+language%3APython&amp;type=code&amp;p=3">turns
-up 2.7K hits</a>. From my own testing none of the <code>os.path.commonprefix()</code> use within top projects on the Python Package Index (PyPI)
-are vulnerable, but projects that use the <code>is_within_directory()</code> function provided by Trellix
-on GitHub should switch to using <code>os.path.commonpath()</code>.</p>
-
-<p>This long history of insecure usage was enough to <a href="https://github.com/python/cpython/pull/144436">finally deprecate the function</a>
-in favor of <code>os.path.commonpath()</code>. I hope this story can be
-evidence that when users report accidentally using functions insecurely that it's
-a signal to fix the confusing labeling by renaming or removing the
-function in favor of an API designed and labeled appropriately.</p>
-<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 27, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/deprecate-confusing-apis-like-os-path-commonprefix?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pythonmorsels.com/lexicographical-ordering/" class="hover:underline"
               >Lexicographical ordering in Python</a
             >
@@ -3152,7 +3113,7 @@ And keep in mind that <strong>every character counts when you're ordering string
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8190</a></li>
+    <li><a>Total Entries: 8226</a></li>
     <li><a>Unique Feeds: 388</a></li>
     
 
