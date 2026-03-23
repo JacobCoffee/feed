@@ -53,6 +53,222 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2026/mar/23/20-year-library/" class="hover:underline"
+              >Rewriting a 20-year-old Python library</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Way back in 2005, lots of people (ordinary people, not just people who work in tech) used to have personal blogs where they wrote about things, rather than using third-party short-form social media sites. I was one of those people (though I wasn’t yet blogging on this specific site, which launched the following year). And back in 2005, and even earlier, people liked to have comment sections on their blogs where readers could leave their thoughts on posts. And that was an absolute magnet for&nbsp;spam.</p>
+<p>There were a few attempts to do something about this. One of them was <a href="https://akismet.com">Akismet</a>, which launched that year and provided a web service you could send a comment (or other user-generated-content) submission to, and get back a classification of spam or not-spam. It turned out to be moderately popular, and is still around&nbsp;today.</p>
+<p>The folks behind Akismet also documented their <span class="caps">API</span> and set up an <span class="caps">API</span> key system so people could write their own clients/plugins for various programming languages and blog engines and content-management systems. And so pretty quickly after the debut of the Akismet service, Michael Foord, <a href="https://ntoll.org/article/my-friend-michael/">who the Python community, and the world, tragically lost at the beginning of 2025</a>, wrote and published <a href="https://pypi.org/project/akismet/">a Python library, which he appropriately&nbsp;called <code>akismet</code>, that acted as an <span class="caps">API</span> client for it</a>.</p>
+<p>He published a total of five releases of his Python Akismet library over the next few years, and people started using it. Including me, because I had several use cases for spam filtering as a service. And for a while, things were good. But then Python 3 was released, and people started getting serious about migrating to it, and Michael, who had been promoted into the Python core team, didn’t have a ton of time to work on it. So I met up with him at a conference in 2015, and offered to maintain the Akismet library, and he graciously accepted the offer, imported a copy of his working tree into <a href="https://github.com/ubernostrum/akismet">a GitHub repository for me</a>, and gave me access to publish new&nbsp;packages.</p>
+<p>In the process of porting the code to support both Python 2 and 3 (as was the fashion at the time), I did some rewriting and refactoring, mostly focused on simplifying the configuration process and the internals. Some configuration mechanisms were deprecated in favor of either explicitly passing in the appropriate values, or else using <a href="https://12factor.net/config">the 12-factor approach of storing configuration in environment variables</a>, and the internal <span class="caps">HTTP</span> request stack, based entirely on the somewhat-cumbersome (at that time) Python standard library, was replaced with a dependency&nbsp;on <code>requests</code>. The result&nbsp;was <code>akismet</code> 1.0, published in&nbsp;2017.</p>
+<p>Over the next six years, I periodically pushed out small releases&nbsp;of <code>akismet</code>, mostly focused on keeping up with upstream Python version support (and finally going Python-3-only, in 2020 when Python 2.7 reached its end of upstream support). But beginning in 2024, I embarked on a more ambitious project which spanned multiple releases and turned into a complete rewrite&nbsp;of <code>akismet</code> which finished a few months ago. So today I’d like to talk about why I chose to do that, how the process went, and what it&nbsp;produced.</p>
+<h2>Why?</h2>
+<p>Although I’m not generally a believer in the concept of software projects being “done” and thus no longer needing active work (in the same sense as “a person isn’t really dead as long as their name is still spoken”, I believe a piece of software isn’t really &#8220;done&#8221; as long as it has at least one user), a major rewrite is still something that needs a justification. In the case&nbsp;of <code>akismet</code>, there were two specific things I wanted to accomplish that led me to this&nbsp;point.</p>
+<p>One was support for a specific feature of the Akismet <span class="caps">API</span>.&nbsp;The <code>akismet</code> Python client’s implementation of the most important <span class="caps">API</span> method—the one that tells you whether Akismet thinks content is spam,&nbsp;called <code>comment-check</code>—had, since the very first version, always returned&nbsp;a <code>bool</code>. Which at first sight makes sense, because the Akismet web service’s response body for that endpoint is plain text and is either the&nbsp;string <code>true</code> (Akismet thinks the content is spam) or the&nbsp;string <code>false</code> (Akismet thinks it isn’t spam). Except actually Akismet supports a <em>third</em> option: &#8220;blatant&#8221; spam, meaning Akismet is so confident in its determination that it thinks you can throw away the content without further review (while a normal “spam” determination might still need a human to look at it and double-check). It signals this by returning&nbsp;the <code>true</code> text response and also setting a custom <span class="caps">HTTP</span> response header&nbsp;(<code>X-Akismet-Pro-Tip: discard</code>). But&nbsp;the <code>akismet</code> Python client couldn’t usefully expose this, since the original <span class="caps">API</span> design of the client chose to have this method return a&nbsp;two-value <code>bool</code> instead of some other type that could handle a three-value situation. And any attempt to fix it would necessarily change the return type, which would be a breaking&nbsp;change.</p>
+<p>The other big motivating factor for a rewrite was the rise of asynchronous Python&nbsp;via <code>async</code> and <code>await</code>, originally introduced in Python 3.5. The async Python ecosystem has grown tremendously, and I wanted to have a version&nbsp;of <code>akismet</code> that could support async/non-blocking <span class="caps">HTTP</span> requests to the Akismet web&nbsp;service.</p>
+<h2>Keep it&nbsp;classy?</h2>
+<p>The first thing I did was spend a bit of time exploring whether I could replace the entire class-based design of the library. Since the very first version back in 2005,&nbsp;the <code>akismet</code> library had always provided its client as a class&nbsp;(named <code>Akismet</code>) with one method for each supported Akismet <span class="caps">HTTP</span> <span class="caps">API</span> method. But it’s always worth asking if a class is actually the right abstraction. Very often it’s not! And while Python is an object-oriented language and allows you to write classes, it doesn’t <em>require</em> you to write them. So I spent a little while sketching out a purely function-based <span class="caps">API</span>.</p>
+<p>One immediate issue with this was how to handle the <span class="caps">API</span> credentials. Akismet requires you to obtain an <span class="caps">API</span> key and to register one or more sites which will use that <span class="caps">API</span> key, and most Akismet web <span class="caps">API</span> operations require that both the <span class="caps">API</span> key and the current site be sent with the request. There’s also&nbsp;a <code>verify-key</code> <span class="caps">API</span> operation which lets you submit a key and site and tells you if they’re valid; if you don’t use this, and accidentally start trying to use the rest of the Akismet <span class="caps">API</span> with an invalid key and/or site, the other Akismet <span class="caps">API</span> operations send back responses with a body&nbsp;of <code>invalid</code>.</p>
+<p>As noted above, the 1.0 release already nudged users&nbsp;of <code>akismet</code> in the direction of putting config in the environment, so reading the key and site from env variables was already well-supported. But some people probably can’t, or won’t want to, use environment variables for configuration. For example: they might have multiple sets of Akismet credentials in a multi-tenant application, and need to explicitly pass different sets of credentials depending on which site they&#8217;re performing checks for. So in any function-based interface, <em>all</em> the functions would not only need to be able to read configuration from the environment (which at least could be factored out into a helper function), they’d also need to explicitly accept credentials as optional arguments. That complicates the argument signatures (which are already somewhat gnarly because of all the optional information you can provide to Akismet to help with spam determinations), and makes the <span class="caps">API</span> start to look&nbsp;cumbersome.</p>
+<p>This was a clue that the function-based approach was probably not the right one:  if a bunch of functions all have to accept extra arguments for a common piece of data they all need, it&#8217;s a sign that they may really want to be a class which just has the necessary data available&nbsp;internally.</p>
+<p>The other big sticking point was how to handle credential verification. It requires an <span class="caps">HTTP</span> request/response to Akismet, so ideally you’d do this once (per set of credentials per process). Say, if you’re using Akismet in a web application, you’d want to check your credentials at process startup, and then just treat them as known-good for the lifetime of the process after that. Which is what the the existing class-based code did: it performed&nbsp;a <code>verify-key</code> on instantiation and then could re-use the verified credentials after that point (or raise an immediate exception if the credentials were missing or invalid). I really like the ergonomics of that, since it makes it much more difficult to create an Akismet client in an invalid/misconfigured state, but it basically requires some sort of shared state. Even if the <span class="caps">API</span> key and site <span class="caps">URL</span> are read from the environment or passed as arguments every time, there needs to be some sort of additional information kept by the client code to indicate they’ve been&nbsp;validated.</p>
+<p>It still would be possible to do this in a function-based interface. It could implicitly verify each new key/site pair on first use, and either keep a full list of ones that had been verified or maybe some sort of <span class="caps">LRU</span> cache of them. Or there could be an explicit function for introducing a new key/site pair and verifying them. But the end result of that is a secretly-stateful module full of functions that rely on (and in some cases act on) the state; at that point the case for it being a class is pretty&nbsp;overwhelming.</p>
+<p>As an aside, I find that spending a bit of time thinking about, or perhaps even writing sample documentation for, how to use a hypothetical <span class="caps">API</span> often uncovers issues like this one. Also, for a lot of people it’s seemingly a lot easier, psychologically, to throw away documentation than to throw away even barely-working&nbsp;code.</p>
+<h2>One class or&nbsp;two?</h2>
+<p>Another idea that I rejected pretty quickly was trying to stick to a&nbsp;single <code>Akismet</code> client class. There is a trend of libraries and frameworks providing both sync and async code paths in the same class, often using a naming scheme which prefixes the async versions of the methods with&nbsp;an <code>a</code> (like <code>method_name()</code> for the sync version&nbsp;and <code>amethod_name()</code> for async), but it wasn’t really compatible with what I wanted to do. As mentioned above, I liked the ergonomics of having the client automatically validate your <span class="caps">API</span> key and site <span class="caps">URL</span>, but doing that in a single class supporting both sync and async has a problem: which code path to use to perform the automatic credential validation? Users who want async wouldn’t be happy about a synchronous/blocking request being automatically issued. And trying to choose the async path by default would introduce issues of how to safely obtain a running event loop (and not just any event loop, but an instance of the particular event loop implementation the end user of the library actually&nbsp;wants).</p>
+<p>So I made the decision to have two client classes, one sync and one async. As a nice bonus, this meant I could do all the work of rewriting in new classes with new names. That would let me mark the&nbsp;old <code>Akismet</code> class as deprecated but not have to immediately remove it or break its <span class="caps">API</span>, giving users&nbsp;of <code>akismet</code> plenty of notice of what was going on and a chance to migrate to the new clients. So I started working on the new client classes, calling&nbsp;them <code>akismet.SyncClient</code> and <code>akismet.AsyncClient</code> to be as boringly clear as possible about what they’re&nbsp;for.</p>
+<h2>How to handle async, part&nbsp;one</h2>
+<p>Unfortunately, the two-class solution didn’t fully solve the issue of how to handle the automatic credential validation. On the&nbsp;old <code>Akismet</code> client class it had been easy, and on the&nbsp;new <code>SyncClient</code> class it would still be easy, because&nbsp;the <code>__init__()</code> method could perform&nbsp;a <code>verify-key</code> operation before returning, and raise an exception if the credentials weren’t found or were&nbsp;invalid.</p>
+<p>But in&nbsp;Python, <code>__init__()</code> cannot be (usefully) async, which posed the tricky question of how to perform automatic credential validation at instantiation time&nbsp;for <code>AsyncClient</code>.</p>
+<p>As I dug into this I considered a few different options, and at one point even thought about going back to the one-class approach just to be able to issue a single <span class="caps">HTTP</span> request at instantiation without needing an event loop. But I&nbsp;wanted <code>AsyncClient</code> to be truly and thoroughly async, so I ended up settling for a compromise solution, implemented in two&nbsp;phases:</p>
+<ol>
+<li>Both <code>SyncClient</code> and <code>AsyncClient</code> were given an alternate constructor method&nbsp;named <code>validated_client()</code>. Alternate constructors <em>can</em> be usefully async, so&nbsp;the <code>AsyncClient</code> version could be implemented as an async method. I documented that if you’re directly constructing a client instance you intend to keep around for a while, this is the preferred constructor since it will perform automatic credential validation for you (direct instantiation&nbsp;via <code>__init__()</code> will not, on either class). And&nbsp;then…</li>
+<li>I implemented the context-manager protocol&nbsp;for <code>SyncClient</code> and the async context-manager protocol&nbsp;for <code>AsyncClient</code>. This allows constructing the sync client in&nbsp;a <code>with</code> statement, or&nbsp;an <code>async with</code> statement&nbsp;for <code>AsyncClient</code>. And&nbsp;since <code>async with</code> is an async execution context, it can issue an async <span class="caps">HTTP</span> request for credential&nbsp;validation.</li>
+</ol>
+<p>So you can get automatic credential validation from either approach, depending on your&nbsp;needs:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">akismet</span>
+
+
+<span class="c1"># Long-lived client object you'll keep around:</span>
+<span class="n">sync_client</span> <span class="o">=</span> <span class="n">akismet</span><span class="o">.</span><span class="n">SyncClient</span><span class="o">.</span><span class="n">validated_client</span><span class="p">()</span>
+<span class="n">async_client</span> <span class="o">=</span> <span class="k">await</span> <span class="n">akismet</span><span class="o">.</span><span class="n">AsyncClient</span><span class="o">.</span><span class="n">validated_client</span><span class="p">()</span>
+
+<span class="c1"># Or for the duration of a &quot;with&quot; block, cleaned up at exit:</span>
+<span class="k">with</span> <span class="n">akismet</span><span class="o">.</span><span class="n">SyncClient</span><span class="p">()</span> <span class="k">as</span> <span class="n">sync_client</span><span class="p">:</span>
+    <span class="c1"># Do things...</span>
+
+<span class="k">async</span> <span class="k">with</span> <span class="n">akismet</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">()</span> <span class="k">as</span> <span class="n">async_client</span><span class="p">:</span>
+    <span class="c1"># Do things...</span>
+</code></pre></div>
+
+<p>Most Python libraries can benefit from these sorts of conveniences, so I&#8217;d recommend investing time into learning how to implement them. If you&#8217;re looking for ideas, Lynn Root&#8217;s <a href="https://roguelynn.com/talks/everyday-apis/">&#8220;The Design of Everyday APIs&#8221;</a> covers a lot of ways to make your own code easier to&nbsp;use.</p>
+<h2>How to handle async, part&nbsp;deux</h2>
+<p>The other thing about writing code that supports both sync and async operations is how to handle the things they have in common. There are a few different ways to do this: you can write one implementation and have the other one call it. Or you can write two full implementations and live with the duplication. Or you can try to separate the I/O and the pure logic as much as possible, and reuse the logic while duplicating only the I/O code (or, since the two implementations aren’t perfect duplicates, writing two I/O implementations which heavily&nbsp;rhyme).</p>
+<p>For <code>akismet</code>, I went with a hybrid of the last two of these approaches. I started out with my two classes each fully implementing everything they needed, including a lot of duplicate code between them (in fact, the first draft was just one class which was then copy/pasted and async-ified to produce the other). Then I gradually extracted the non-I/O bits into a common module they could both import from and use, building up a library of helpers for things like validating arguments, preparing requests, processing the responses, and so&nbsp;on.</p>
+<p>One final object-oriented design decision here (or, I guess, <em>not</em> object-oriented decision): that common code is a set of functions in a module. It’s not a class. It’s not stateful the way the clients themselves are: turning an Akismet web <span class="caps">API</span> response into the desired Python return value, or validating a set of arguments and turning them into the correct request parameters (to pick a couple examples) are literally pure functions, whose outputs are dependent solely on their&nbsp;inputs.</p>
+<p>And the common code also isn’t some sort of abstract base class that the two concrete clients would inherit from.&nbsp;An <code>akismet.SyncClient</code> and&nbsp;an <code>akismet.AsyncClient</code> are <em>not</em> two different subtypes of a parent “Akismet client” class or interface! Because of the different calling conventions of sync and async Python, there is no public parent interface that they share or could be substitutable&nbsp;for.</p>
+<p>The current code&nbsp;of <code>akismet</code> still has some duplication, primarily around error handling since&nbsp;the <code>try</code>/<code>except</code> blocks need to wrap the correct version of their respective I/O operations, and I might be able to achieve some further refactoring to reduce that to the absolute minimum (for example, by splitting out a bunch of&nbsp;duplicated <code>except</code> clauses into a single common pattern-matching implementation now that Python 3.10 is the minimum supported version). But I’m not in a big hurry to do that; the current code is, I think, in a pretty reasonable&nbsp;state.</p>
+<h2>Enumerating the&nbsp;options</h2>
+<p>As I mentioned back at the start of this post,&nbsp;the <code>akismet</code> library historically used a&nbsp;Python <code>bool</code> to indicate the result of a spam-checking operation: either the content was spam&nbsp;(<code>True</code>) or it wasn&#8217;t&nbsp;(<code>False</code>). Which makes a lot of sense at first glance, and also matches the way the Akismet web service behaves: for content it thinks is spam, the <span class="caps">HTTP</span> response has a body consisting of the&nbsp;string <code>true</code>, and for content that it doesn’t think is spam the response body is the&nbsp;string <code>false</code>.</p>
+<p>But for many years now, the Akismet web service has actually supported <em>three</em> possible values, with the third option being &#8220;blatant&#8221; spam, spam so obvious that it can simply be thrown away with no further human review. Akismet signals this by returning&nbsp;the <code>true</code> response body, and then adding a custom <span class="caps">HTTP</span> header to the&nbsp;response: <code>X-Akismet-Pro-Tip</code>, with a value&nbsp;of <code>discard</code>.</p>
+<p>Python has had support for enums (via&nbsp;the <code>enum</code> module in the standard library) since Python 3.4, so that seemed the most natural way to represent the possible results.&nbsp;The <code>enum</code> module lets you use lots of different data types for enum values, but I went with an integer-valued enum&nbsp;(<code>enum.IntEnum</code>) for this, because it lets developers still work with the result as a pseudo-boolean type if they don&#8217;t care about the extra information from the third option (since in&nbsp;Python <code>0</code> is false and all other integers are&nbsp;true).</p>
+<div class="alert alert-info">
+<p><strong>Python historical&nbsp;trivia</strong></p>
+<p>Originally, Python did not have a built-in boolean type, and the typical convention was similar to C, using the&nbsp;integers <code>0</code> and <code>1</code> to indicate&nbsp;false/true.</p>
+<p>Python phased in a real boolean type early in the Python 2 days. First, the Python 2.2 release series (technically, Python 2.2.1) assigned the built-in&nbsp;names <code>False</code> and <code>True</code> to the integer&nbsp;values <code>0</code> and <code>1</code>, and introduced a&nbsp;built-in <code>bool()</code> function which returned the integer truth value of its argument. Then in Python 2.3,&nbsp;the <code>bool</code> type was formally introduced, and was implemented as a subclass&nbsp;of <code>int</code>, constrained to have only two instances. Those instances are bound to the&nbsp;names <code>False</code> and <code>True</code> and have the integer&nbsp;values <code>0</code> and <code>1</code>.</p>
+<p>That&#8217;s how&nbsp;Python&#8217;s <code>bool</code> still works today: it&#8217;s still a subclass&nbsp;of <code>int</code>, and so you can use&nbsp;a <code>bool</code> anywhere&nbsp;an <code>int</code> is called for, and do arithmetic with booleans if you really want to, though this isn&#8217;t really useful except for writing deliberately-obfuscated&nbsp;code.</p>
+<p>For more details on the history and decision process behind&nbsp;Python&#8217;s <code>bool</code> type, check out <a href="https://peps.python.org/pep-0285/"><span class="caps">PEP</span> 285</a> and <a href="https://python-history.blogspot.com/2013/11/the-history-of-bool-true-and-false.html">this blog post from Guido van Rossum</a>.</p>
+</div>
+<p>The only tricky thing here was how to name the third enum member. The first two&nbsp;were <code>HAM</code> and <code>SPAM</code> to match the way Akismet describes them. The third value is described as &#8220;blatant spam&#8221; in some documentation, but is represented by the string &#8220;discard&#8221; in responses,&nbsp;so <code>BLATANT_SPAM</code> and <code>DISCARD</code> both seemed like reasonable options. I ended up&nbsp;choosing <code>DISCARD</code>; it probably doesn&#8217;t matter much, but I like having the name match the actual value of the response&nbsp;header.</p>
+<p>The enum itself is&nbsp;named <code>CheckResponse</code> since it represents the response values of the spam-checking operation (Akismet actually calls&nbsp;it <code>comment-check</code> because that&#8217;s what its original name was, despite the fact Akismet now supports sending other types of content besides&nbsp;comments).</p>
+<h2>Bring your own <span class="caps">HTTP</span>&nbsp;client</h2>
+<p>Back when I put together the 1.0&nbsp;release, <code>akismet</code> adopted&nbsp;the <code>requests</code> library as a dependency, which greatly simplified the process of issuing <span class="caps">HTTP</span> requests to the Akismet web <span class="caps">API</span>. As part of the more recent rewrite, I switched instead to <a href="https://www.python-httpx.org">the Python <span class="caps">HTTPX</span> library</a>, which has an <span class="caps">API</span> broadly compatible&nbsp;with <code>requests</code> but also, importantly, provides both sync and async&nbsp;implementations.</p>
+<p>Async <code>httpx</code> requires the use of a client object (the equivalent of&nbsp;a <code>requests.Session</code>), so the Akismet client classes each internally construct the appropriate type&nbsp;of <code>httpx</code> object: <code>httpx.Client</code> for <code>akismet.SyncClient</code>,&nbsp;and <code>httpx.AsyncClient</code> for <code>akismet.AsyncClient</code>.</p>
+<p>And since the internal usage was switching from directly calling the function-based <span class="caps">API</span>&nbsp;of <code>requests</code> to using <span class="caps">HTTP</span> client objects, it seemed like a good idea to also allow passing in your own <span class="caps">HTTP</span> client object in the constructors of the Akismet client classes. These are annotated&nbsp;as <code>httpx.Client</code>/<code>httpx.AsyncClient</code>, but as a practical matter anything with a compatible <span class="caps">API</span> will&nbsp;work.</p>
+<p>One immediate benefit of this is it&#8217;s easier to accommodate situations like <span class="caps">HTTP</span> proxies, and server environments where all outbound <span class="caps">HTTP</span> requests must go through a particular proxy. You can just create the appropriate type of <span class="caps">HTTP</span> client object with the correct proxy settings, and pass it to the constructor of the Akismet client&nbsp;class:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">akismet</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">httpx</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">your_app.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">settings</span>
+
+<span class="n">akismet_client</span> <span class="o">=</span> <span class="n">akismet</span><span class="o">.</span><span class="n">SyncClient</span><span class="o">.</span><span class="n">validated_client</span><span class="p">(</span>
+    <span class="n">http_client</span><span class="o">=</span><span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">(</span>
+        <span class="n">proxy</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">PROXY_URL</span><span class="p">,</span>
+        <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;User-Agent&quot;</span><span class="p">:</span> <span class="n">akismet</span><span class="o">.</span><span class="n">USER_AGENT</span><span class="p">}</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+
+<p>But an even bigger benefit came a little bit later on, when I started working on improvements&nbsp;to <code>akismet</code><span class="quo">&#8216;</span>s testing&nbsp;story.</p>
+<h2>Testing should be&nbsp;easy</h2>
+<p>Right here, right now, I&#8217;m not going to get into a deep debate about how to define &#8220;unit&#8221; versus &#8220;integration&#8221; tests or which types you should be writing. I&#8217;ll just say that historically, libraries which make <span class="caps">HTTP</span> requests have been some of my least favorite code to test, whether as the author of the library or as a user of it verifying my usage. Far too often this ends up with fragile piles of patched-in mock objects to try to avoid the slowdowns (and other potential side effects and even dangers) of making real requests to a live, remote service during a test&nbsp;run.</p>
+<p>I do think some fully end-to-end tests making real requests are necessary and valuable, but they probably should not be used as part of the main test suite that you run every time you&#8217;re making changes in local&nbsp;development.</p>
+<p>Fortunately, <code>httpx</code> offers a feature that <a href="/weblog/2023/dec/08/mock-python-httpx/">I wrote about a few years ago</a>, which greatly simplifies&nbsp;both <code>akismet</code><span class="quo">&#8216;</span>s own test suite, and your ability to test your usage of it: swappable <span class="caps">HTTP</span> transports which you can drop in to affect <span class="caps">HTTP</span> client behavior, including&nbsp;a <code>MockTransport</code> that doesn&#8217;t make real requests but lets you programmatically supply&nbsp;responses.</p>
+<p>So <code>akismet</code> ships with two testing variants of its <span class="caps">API</span>&nbsp;clients: <code>akismet.TestSyncClient</code> and <code>akismet.TestAsyncClient</code>. They&#8217;re subclasses of the real ones, but they use the ability to swap out <span class="caps">HTTP</span> clients (covered above) to plug in custom <span class="caps">HTTP</span> clients&nbsp;with <code>MockTransport</code> and hard-coded stock responses. This lets you write code&nbsp;like:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">akismet</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AlwaysSpam</span><span class="p">(</span><span class="n">akismet</span><span class="o">.</span><span class="n">TestSyncClient</span><span class="p">):</span>
+    <span class="n">comment_check_response</span> <span class="o">=</span> <span class="n">akismet</span><span class="o">.</span><span class="n">CheckResponse</span><span class="o">.</span><span class="n">SPAM</span>
+</code></pre></div>
+
+<p>and then use it in tests. That test client above will never issue a real <span class="caps">HTTP</span> request, and will always label any content you check with it as spam. You can also set the&nbsp;attribute <code>verify_key_response</code> to <code>False</code> on a test client to have it always fail <span class="caps">API</span> key verification, if you want to test your handling of that&nbsp;situation.</p>
+<p>This means you can test your use&nbsp;of <code>akismet</code> <em>without</em> having to build piles of custom mocks and patch them in to the right places. You can just drop in instances of appropriately-configured test clients, and rely on their&nbsp;behavior.</p>
+<p>If I ever became King of Programming, with the ability to issue enforceable decrees, requiring every network-interacting library to provide this kind of testing-friendly version of its core constructs would be among them. But since I don’t have that power, I do what I can by providing it in my own&nbsp;libraries.</p>
+<h2>(py)Testing should be&nbsp;easy</h2>
+<p>In the Python ecosystem there are two major testing&nbsp;frameworks:</p>
+<ul>
+<li>The <code>unittest</code> module in the Python standard library, which is a direct port to Python of <a href="https://en.wikipedia.org/wiki/XUnit">the xUnit style of test frameworks</a> seen in many other languages (including xUnit style naming conventions, which don’t match typical Python naming&nbsp;conventions).</li>
+<li><a href="https://docs.pytest.org/">The&nbsp;third-party <code>pytest</code> framework</a>, which aims to be a more natively &#8220;Pythonic&#8221; testing framework and encourages function- rather than class-based tests and heavy use of dependency injection (which it calls <a href="https://docs.pytest.org/en/stable/explanation/fixtures.html#about-fixtures">fixtures</a>).</li>
+</ul>
+<p>For a long time I stuck&nbsp;to <code>unittest</code>,&nbsp;or <code>unittest</code>-derived testing tools like the ones that ship with Django. Although I understand and appreciate the particular separation of&nbsp;concerns <code>pytest</code> is going for, I found its fixture system a bit too magical for my taste; I personally prefer dependency injection to use explicit registration so I can know what’s available, versus the implicit&nbsp;way <code>pytest</code> discovers fixtures based on their presence or absence in particularly-named&nbsp;locations.</p>
+<p>But <code>pytest</code> pretty consistently shows up as more popular and more broadly used in surveys of the Python community, and every place I’ve worked for the last decade or so has used it. So I decided to&nbsp;port <code>akismet</code>’s tests&nbsp;to <code>pytest</code>, and in the process decided to write&nbsp;a <code>pytest</code> plugin to help users&nbsp;of <code>akismet</code> with their own&nbsp;tests.</p>
+<p>That meant writing&nbsp;a <code>pytest</code> plugin to automatically provide a set of dependency-injection fixtures. There are four fixtures: two sync and two async, with each flavor getting a fixture to provide a client class object (which lets you test instantiation-time behavior like <span class="caps">API</span> key verification failures), and a fixture to provide an already-constructed client object. Configuration is through a&nbsp;custom <code>pytest</code> <a href="https://docs.pytest.org/en/stable/how-to/mark.html#mark">mark</a>&nbsp;called <code>akismet_client</code>, which accepts arguments specifying the desired behavior. For&nbsp;example:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">akismet</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">akismet_client</span><span class="p">(</span><span class="n">comment_check_response</span><span class="o">=</span><span class="n">akismet</span><span class="o">.</span><span class="n">CheckResponse</span><span class="o">.</span><span class="n">DISCARD</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_akismet_discard_response</span><span class="p">(</span><span class="n">akismet_sync_client</span><span class="p">:</span> <span class="n">akismet</span><span class="o">.</span><span class="n">SyncClient</span><span class="p">):</span>
+    <span class="c1"># Inside this test, akismet_sync_client's comment_check() will always</span>
+    <span class="c1"># return DISCARD.</span>
+
+<span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">akismet_client</span><span class="p">(</span><span class="n">verify_key_response</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_akismet_fails_key_verification</span><span class="p">(</span><span class="n">akismet_sync_class</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">akismet</span><span class="o">.</span><span class="n">SyncClient</span><span class="p">]):</span>
+    <span class="c1"># API key verification will always fail on this class.</span>
+    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="n">akismet</span><span class="o">.</span><span class="n">APIKeyError</span><span class="p">):</span>
+        <span class="n">akismet_sync_class</span><span class="o">.</span><span class="n">validated_client</span><span class="p">()</span>
+</code></pre></div>
+
+<h2>Odds and&nbsp;ends</h2>
+<p>Python has had the ability to add annotations to function and method signatures since 3.0, and more recently gained the ability to annotate attributes as well; originally, no specific use case was mandated for this feature, but everybody used it for type hints, so now that’s the official use case for annotations. I’ve had a lot of concerns about the way type hinting and type checking have been implemented for Python, largely around the fact that idiomatic Python really wants to be a structurally-typed language, or as some people have called it “interfacely-typed”, rather than nominally-typed. Which is to say: in Python you almost never care about the actual exact type name of something, you care about the interfaces (nowadays, called “protocols” in Python typing-speak) it implements. So you don’t care whether something is precisely an instance&nbsp;of <code>list</code>, you care about it being iterable or indexable or&nbsp;whatever.</p>
+<p>On top of which, some design choices made in the development of type-hinted Python have made it (as I understand it) impossible to distribute a single-file module with type hints and have type checkers actually pick them up. Which was a problem&nbsp;for <code>akismet</code>, because traditionally it was a single-file module, installing a file&nbsp;named <code>akismet.py</code> containing all its&nbsp;code.</p>
+<p>But as part of the rewrite I was&nbsp;reorganizing <code>akismet</code> into multiple files, so that objection no longer held, and eventually I went ahead and began&nbsp;running <code>mypy</code> as a type checker as part of the <span class="caps">CI</span> suite&nbsp;for <code>akismet</code>. The type annotations had been added earlier, because I find them useful as inline documentation even if I’m not running a type checker (and the Sphinx documentation tool, which all my projects use, will automatically extract them to document argument signatures for you). I did have to make some changes to work&nbsp;around <code>mypy</code>, though It didn’t find any bugs, but did uncover a few things that were written in ways it couldn’t handle, and maybe I’ll write about those in more detail another&nbsp;time.</p>
+<p>As part of&nbsp;splitting <code>akismet</code> up into multiple files, I also went with an approach I’ve used on a few other projects, of prefixing most file names with an underscore (i.e., the async client is defined in a file&nbsp;named <code>_async_client.py</code>,&nbsp;not <code>async_client.py</code>). By convention, this marks the files in question as “private”, and though Python doesn’t enforce that, many common Python linters will flag it. The things that are meant to be supported public <span class="caps">API</span> are exported via&nbsp;the <code>__all__</code> declaration of&nbsp;the <code>akismet</code> package.</p>
+<p>I also switched the version numbering scheme to <a href="https://calver.org">Calendar Versioning</a>. I don’t generally trust version schemes that try to encode information about <span class="caps">API</span> stability or breaking changes into the version number, but a date-based version number at least tells you how old something is and gives you a general idea of whether it’s still being actively&nbsp;maintained.</p>
+<p>There are also a few dev-only changes: 
+* Local dev environment management and packaging are handled by <a href="https://pdm-project.org/"><span class="caps">PDM</span></a> and its package-build backend. Of the current crop of clean-sheet modern Python packaging tools, <span class="caps">PDM</span> is my personal favorite, so it’s what my personal projects are using.
+* I added&nbsp;a <code>Makefile</code> which can execute a lot of common developer tasks, including setting up the local dev environment with proper dependencies, and running the full <span class="caps">CI</span> suite or subsets of its checks.
+* As mentioned above, the test suite moved&nbsp;from <code>unittest</code> to <code>pytest</code>, using <a href="https://pypi.org/project/anyio/">AnyIO</a>’s plugin for supporting async tests&nbsp;in <code>pytest</code>. There’s a lot of use&nbsp;of <code>pytest</code> parametrization to generate test cases, so the number of test cases grew a lot, but it’s still pretty fast—around half a second for each Python version being tested, on my laptop. The full <span class="caps">CI</span> suite, testing every supported Python version and running a bunch of linters and packaging checks, takes around 30 seconds on my laptop, and about a minute and a half on GitHub <span class="caps">CI</span>.</p>
+<h2>That’s it (for&nbsp;now)</h2>
+<p>In October of last year I&nbsp;released <code>akismet</code> 25.10.0 (and then 25.10.1 to fix a documentation error, because there’s always <em>something</em> wrong with a big release), which completed the rewrite process by finally removing the&nbsp;old <code>Akismet</code> client class. At this point I&nbsp;think <code>akismet</code> is feature-complete unless the Akismet web service itself changes, so although there were more frequent releases over a period of about a year and a half as I did the rewrite, it’s likely the cadence will settle down now to one a year (to handle supporting new Python versions as they come out) unless someone finds a&nbsp;bug.</p>
+<p>Overall, I think the rewrite was an interesting process, because it was pretty drastic (I believe it touched literally every pre-existing line of code, and added a lot of new code), but also… not that drastic? If you were previously&nbsp;using <code>akismet</code> with your configuration in environment variables (as recommended), I think the only change you’d need to make is rewriting imports&nbsp;from <code>akismet.Akismet</code> to <code>akismet.SyncClient</code>. The mechanism for manually passing in configuration changed, but I believe that and the new client class names were the only actual breaking changes in the entire rewrite; everything else was adding features/functionality or reworking the internals in ways that didn’t affect public <span class="caps">API</span>.</p>
+<p>I had hoped to write this up sooner, but I’ve struggled with this post for a while now, because I still have trouble with the fact that Michael’s gone, and every time I sat down to write I was reminded of that. It’s heartbreaking to know I’ll never run into him at a conference again. I’ll miss chatting with him. I’ll miss his energy. I’m thankful for all he gave to the Python community over many years, and I wish I could tell him that one more time. And though it’s a small thing, I hope I’ve managed to honor his work and to repay some of his kindness and his trust in me by being a good steward of his package. I have no idea whether Akismet the service will still be around in another 20 years, or whether I’ll still be around or writing code or maintaining this Python package in that case, but I’d like to think I’ve done my part to make sure it’s on sound footing to last that long, or&nbsp;longer.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 06:37 PM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2026/mar/23/20-year-library/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2026/03/openai-acquires-astral-what-it-means-for-pycharm-users/" class="hover:underline"
+              >OpenAI Acquires Astral: What It Means for PyCharm Users</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            On March 19, OpenAI announced that it would acquire Astral, the company behind uv, Ruff, and ty. The Astral team, led by founder Charlie Marsh, will join OpenAI&#8217;s Codex team. The deal is subject to regulatory approval. First and foremost: congratulations to Charlie Marsh and the entire Astral team. They shipped some of the most [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 04:04 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2026/03/openai-acquires-astral-what-it-means-for-pycharm-users/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/python-note-taking-guide/" class="hover:underline"
               >How to Use Note-Taking to Learn Python</a
             >
@@ -133,8 +349,8 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/relase-0-8-0-of-mt940/9162" class="hover:underline"
-              >Relase 0.8.0 of mt940</a
+            <a href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162" class="hover:underline"
+              >Release 0.8.0 of mt940</a
             >
           </h2>
           
@@ -153,7 +369,7 @@
 </ul>
 <p>mt940 is available on PyPI: <a href="https://pypi.org/project/mt940/0.8.0/">mt940 0.8.0</a>.</p>
             <p><small>1 post - 1 participant</small></p>
-            <p><a href="https://discuss.tryton.org/t/relase-0-8-0-of-mt940/9162">Read full topic</a></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162">Read full topic</a></p>
           </p>
         </div>
 
@@ -166,7 +382,7 @@
             >
           </div>
           <a
-            href="https://discuss.tryton.org/t/relase-0-8-0-of-mt940/9162"
+            href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -283,8 +499,8 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/release-of-relatorio-0-12-0/9159" class="hover:underline"
-              >Release of Relatorio 0.12.0</a
+            <a href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159" class="hover:underline"
+              >Release 0.12.0 of Relatorio</a
             >
           </h2>
           
@@ -302,9 +518,9 @@
 <li>Remove support for Python older than 3.9</li>
 </ul>
 <p>The package is available at <a class="inline-onebox" href="https://pypi.org/project/relatorio/0.12.0/">relatorio · PyPI</a><br />
-The documentation is available at <a href="https://docs.tryton.org/relatorio/0.12.0/">https://docs.tryton.org/relatorio/0.12.0/</a></p>
+The documentation is available at <a class="inline-onebox" href="https://docs.tryton.org/relatorio/0.12.0/">Relatorio — A templating library able to output odt and pdf files</a></p>
             <p><small>1 post - 1 participant</small></p>
-            <p><a href="https://discuss.tryton.org/t/release-of-relatorio-0-12-0/9159">Read full topic</a></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159">Read full topic</a></p>
           </p>
         </div>
 
@@ -317,7 +533,7 @@ The documentation is available at <a href="https://docs.tryton.org/relatorio/0.1
             >
           </div>
           <a
-            href="https://discuss.tryton.org/t/release-of-relatorio-0-12-0/9159"
+            href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1311,87 +1527,6 @@ towards shipping this feature smoothly. 🙏</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/03/16/textual-creating-a-custom-checkbox/" class="hover:underline"
-              >Textual – Creating a Custom Checkbox</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Textual is a great Python user interface package. Textual lets you create a GUI-like interface in your terminal. You can use many different widgets in Textual. However, the widget you will be focusing on in this tutorial is the humble checkbox. Checkboxes are used for Boolean choices. They return a True if checked and a [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/03/16/textual-creating-a-custom-checkbox/">Textual &#8211; Creating a Custom Checkbox</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 16, 2026 07:42 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/03/16/textual-creating-a-custom-checkbox/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/spyder-ide/" class="hover:underline"
-              >Spyder: Your IDE for Data Science Development in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to use the Spyder IDE, a Python code editor built for scientists, engineers, and data analysts working with data-heavy workflows.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 16, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/spyder-ide/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1403,8 +1538,8 @@ towards shipping this feature smoothly. 🙏</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8066</a></li>
-    <li><a>Unique Feeds: 385</a></li>
+    <li><a>Total Entries: 8146</a></li>
+    <li><a>Unique Feeds: 388</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
