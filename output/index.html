@@ -349,6 +349,264 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html" class="hover:underline"
+              >Using Claude to fix PyPy3.11 test failures securely</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I got access to Claude Max for 6 months, as a promotional move Anthropic made
+to Open Source Software contributors. My main OSS impact is as a maintainer for
+NumPy, but I decided to see what claude-code could to for PyPy's failing 3.11
+tests. Most of these failures are edge cases: error messages that differ from
+CPython, or debugging tools that fail in certain cases. I was worried about
+letting an AI agent loose on my development machine. I noticed <a class="reference external" href="https://patrickmccanna.net/a-better-way-to-limit-claude-code-and-other-coding-agents-access-to-secrets/">a post</a> by
+Patrick McCanna (thanks Patrick!) that pointed to using bubblewrap to
+sandbox the agent. So I set it all up and (hopefully securely) pointed
+claude-code at some tests.</p>
+<!-- TEASER_END: Read more to find out how it went -->
+<section id="setting-up">
+<h2>Setting up</h2>
+<p>There were a few steps to make sure I didn't open myself up to obvious gotchas.
+There are stories about agents wiping out data bases, or deleting mail boxes.</p>
+<section id="bubblewrap">
+<h3>Bubblewrap</h3>
+<p>First I needed to see what bubblewrap does. I followed the instructions in the
+blog post to set things up with some minor variations:</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8b5acd06f96d4bb78777ccd10d0c11ac-1" id="rest_code_8b5acd06f96d4bb78777ccd10d0c11ac-1" name="rest_code_8b5acd06f96d4bb78777ccd10d0c11ac-1"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>bubblewrap
+</pre></div>
+<p>I couldn't run <code class="docutils literal">bwrap</code>. After digging around a bit, I found I needed to add
+an exception for appamor on Ubuntu 24.04:</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-1" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-1" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-1"></a>sudo<span class="w"> </span>bash<span class="w"> </span>-c<span class="w"> </span><span class="s1">'cat &gt; /etc/apparmor.d/bwrap &lt;&lt; EOF</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-2" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-2" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-2"></a><span class="s1">abi &lt;abi/4.0&gt;,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-3" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-3" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-3"></a><span class="s1">include &lt;tunables/global&gt;</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-4" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-4" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-4"></a>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-5" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-5" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-5"></a><span class="s1">profile bwrap /usr/bin/bwrap flags=(unconfined) {</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-6" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-6" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-6"></a><span class="s1">  userns,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-7" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-7" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-7"></a><span class="s1">}</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-8" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-8" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-8"></a><span class="s1">EOF'</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f6cb9df28894e73a6aad498528ce74a-9" id="rest_code_7f6cb9df28894e73a6aad498528ce74a-9" name="rest_code_7f6cb9df28894e73a6aad498528ce74a-9"></a>sudo<span class="w"> </span>apparmor_parser<span class="w"> </span>-r<span class="w"> </span>/etc/apparmor.d/bwrap
+</pre></div>
+<p>Then <code class="docutils literal">bwrap</code> would run. It is all locked down by default, so I opened up some
+exceptions. The arguments are pretty self-explanatory. Ubuntu spreads the
+executables around the operating system, so I needed access to various
+directories. I wanted a <code class="docutils literal">/tmp</code> for running pytest. I also wanted the prompt
+to reflect the use of bubblewrap, so changed the <code class="docutils literal">hostname</code>:</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-1" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-1" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-1"></a>cat<span class="w"> </span><span class="s">&lt;&lt; 'EOL' &gt;&gt; ./run_bwrap.sh</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-2" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-2" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-2"></a><span class="s">  function call_bwrap() {</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-3" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-3" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-3"></a><span class="s">    bwrap \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-4" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-4" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-4"></a><span class="s">      --ro-bind /usr /usr \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-5" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-5" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-5"></a><span class="s">      --ro-bind /etc /etc \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-6" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-6" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-6"></a><span class="s">      --ro-bind /run /run \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-7" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-7" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-7"></a><span class="s">      --symlink usr/lib /lib \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-8" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-8" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-8"></a><span class="s">      --symlink usr/lib64 /lib64 \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-9" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-9" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-9"></a><span class="s">      --symlink usr/bin /bin \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-10" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-10" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-10"></a><span class="s">      --proc /proc \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-11" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-11" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-11"></a><span class="s">      --dev /dev \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-12" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-12" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-12"></a><span class="s">      --bind $(pwd) $(pwd) \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-13" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-13" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-13"></a><span class="s">      --chdir $(pwd) \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-14" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-14" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-14"></a><span class="s">      --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-15" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-15" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-15"></a><span class="s">      --die-with-parent \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-16" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-16" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-16"></a><span class="s">      --hostname bwrap \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-17" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-17" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-17"></a><span class="s">      --tmpfs /tmp \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-18" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-18" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-18"></a><span class="s">      /bin/bash "$@"</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-19" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-19" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-19"></a><span class="s">  }</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-20" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-20" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-20"></a><span class="s">EOL</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-21" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-21" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-21"></a>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-22" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-22" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-22"></a><span class="nb">source</span><span class="w"> </span>./run_bwrap.sh
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-23" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-23" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-23"></a>call_bwrap
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-24" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-24" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-24"></a><span class="c1"># now I am in a sandboxed bash shell</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-25" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-25" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-25"></a><span class="c1"># play around, try seeing other directories, getting sudo, or writing outside</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-26" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-26" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-26"></a><span class="c1"># the sandbox</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_37853c9cf9da41a7b6ec9acec4289955-27" id="rest_code_37853c9cf9da41a7b6ec9acec4289955-27" name="rest_code_37853c9cf9da41a7b6ec9acec4289955-27"></a><span class="nb">exit</span>
+</pre></div>
+<p>I did not do <code class="docutils literal"><span class="pre">--unshare-network</span></code> since, after all, I want to use claude and
+that needs network access. I did add rw access to <code class="docutils literal">$(pwd)</code> since I want it to
+edit code in the current directory, that is the whole point.</p>
+</section>
+<section id="basic-claude">
+<h3>Basic claude</h3>
+<p>After trying out bubblewrap and convincing myself it does actually work, I
+installed claude code</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_7f03382fffeb4bd98a1c29b4013a7f48-1" id="rest_code_7f03382fffeb4bd98a1c29b4013a7f48-1" name="rest_code_7f03382fffeb4bd98a1c29b4013a7f48-1"></a>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://claude.ai/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</pre></div>
+<p>Really Anthropic, this is the best way to install claude? No dpkg?</p>
+<p>I ran claude once (unsafely) to get logged in. It opened a webpage, and saved
+the login to the <code class="docutils literal">oathAccount</code> field in <code class="docutils literal"><span class="pre">~/.claude.json</span></code>. Now I changed my
+bash script to this to get claude to run inside the bubblewrap sandbox:</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-1" id="rest_code_52bcf00be4944d04959094f15126d6bd-1" name="rest_code_52bcf00be4944d04959094f15126d6bd-1"></a>cat<span class="w"> </span><span class="s">&lt;&lt; 'EOL' &gt;&gt; ./run_claude.sh</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-2" id="rest_code_52bcf00be4944d04959094f15126d6bd-2" name="rest_code_52bcf00be4944d04959094f15126d6bd-2"></a><span class="s">  claude-safe() {</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-3" id="rest_code_52bcf00be4944d04959094f15126d6bd-3" name="rest_code_52bcf00be4944d04959094f15126d6bd-3"></a><span class="s">    bwrap \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-4" id="rest_code_52bcf00be4944d04959094f15126d6bd-4" name="rest_code_52bcf00be4944d04959094f15126d6bd-4"></a><span class="s">      --ro-bind /usr /usr \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-5" id="rest_code_52bcf00be4944d04959094f15126d6bd-5" name="rest_code_52bcf00be4944d04959094f15126d6bd-5"></a><span class="s">      --ro-bind /etc /etc \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-6" id="rest_code_52bcf00be4944d04959094f15126d6bd-6" name="rest_code_52bcf00be4944d04959094f15126d6bd-6"></a><span class="s">      --ro-bind /run /run \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-7" id="rest_code_52bcf00be4944d04959094f15126d6bd-7" name="rest_code_52bcf00be4944d04959094f15126d6bd-7"></a><span class="s">      --ro-bind "$HOME/.local/share/claude" "$HOME/.local/share/claude" \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-8" id="rest_code_52bcf00be4944d04959094f15126d6bd-8" name="rest_code_52bcf00be4944d04959094f15126d6bd-8"></a><span class="s">      --symlink usr/lib /lib \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-9" id="rest_code_52bcf00be4944d04959094f15126d6bd-9" name="rest_code_52bcf00be4944d04959094f15126d6bd-9"></a><span class="s">      --symlink usr/lib64 /lib64 \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-10" id="rest_code_52bcf00be4944d04959094f15126d6bd-10" name="rest_code_52bcf00be4944d04959094f15126d6bd-10"></a><span class="s">      --symlink usr/bin /bin \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-11" id="rest_code_52bcf00be4944d04959094f15126d6bd-11" name="rest_code_52bcf00be4944d04959094f15126d6bd-11"></a><span class="s">      --symlink "$HOME/.local/share/claude/versions/2.1.81" "$HOME/.local/bin/claude" \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-12" id="rest_code_52bcf00be4944d04959094f15126d6bd-12" name="rest_code_52bcf00be4944d04959094f15126d6bd-12"></a><span class="s">      --proc /proc \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-13" id="rest_code_52bcf00be4944d04959094f15126d6bd-13" name="rest_code_52bcf00be4944d04959094f15126d6bd-13"></a><span class="s">      --dev /dev \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-14" id="rest_code_52bcf00be4944d04959094f15126d6bd-14" name="rest_code_52bcf00be4944d04959094f15126d6bd-14"></a><span class="s">      --bind $(pwd) $(pwd) \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-15" id="rest_code_52bcf00be4944d04959094f15126d6bd-15" name="rest_code_52bcf00be4944d04959094f15126d6bd-15"></a><span class="s">      --bind "$HOME/.claude" "$HOME/.claude" \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-16" id="rest_code_52bcf00be4944d04959094f15126d6bd-16" name="rest_code_52bcf00be4944d04959094f15126d6bd-16"></a><span class="s">      --bind "$HOME/.claude.json" "$HOME/.claude.json" \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-17" id="rest_code_52bcf00be4944d04959094f15126d6bd-17" name="rest_code_52bcf00be4944d04959094f15126d6bd-17"></a><span class="s">      --chdir $(pwd) \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-18" id="rest_code_52bcf00be4944d04959094f15126d6bd-18" name="rest_code_52bcf00be4944d04959094f15126d6bd-18"></a><span class="s">      --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-19" id="rest_code_52bcf00be4944d04959094f15126d6bd-19" name="rest_code_52bcf00be4944d04959094f15126d6bd-19"></a><span class="s">      --die-with-parent \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-20" id="rest_code_52bcf00be4944d04959094f15126d6bd-20" name="rest_code_52bcf00be4944d04959094f15126d6bd-20"></a><span class="s">      --hostname bwrap \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-21" id="rest_code_52bcf00be4944d04959094f15126d6bd-21" name="rest_code_52bcf00be4944d04959094f15126d6bd-21"></a><span class="s">      --tmpfs /tmp \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-22" id="rest_code_52bcf00be4944d04959094f15126d6bd-22" name="rest_code_52bcf00be4944d04959094f15126d6bd-22"></a><span class="s">      --setenv PATH "$HOME/.local/bin:$PATH" \</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-23" id="rest_code_52bcf00be4944d04959094f15126d6bd-23" name="rest_code_52bcf00be4944d04959094f15126d6bd-23"></a><span class="s">      claude "$@"</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-24" id="rest_code_52bcf00be4944d04959094f15126d6bd-24" name="rest_code_52bcf00be4944d04959094f15126d6bd-24"></a><span class="s">  }</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-25" id="rest_code_52bcf00be4944d04959094f15126d6bd-25" name="rest_code_52bcf00be4944d04959094f15126d6bd-25"></a><span class="s">EOL</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-26" id="rest_code_52bcf00be4944d04959094f15126d6bd-26" name="rest_code_52bcf00be4944d04959094f15126d6bd-26"></a>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-27" id="rest_code_52bcf00be4944d04959094f15126d6bd-27" name="rest_code_52bcf00be4944d04959094f15126d6bd-27"></a><span class="nb">source</span><span class="w"> </span>./run_claude.sh
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_52bcf00be4944d04959094f15126d6bd-28" id="rest_code_52bcf00be4944d04959094f15126d6bd-28" name="rest_code_52bcf00be4944d04959094f15126d6bd-28"></a>claude-safe
+</pre></div>
+<p>Now I can use claude. Note it needs some more directories in order to run. This
+script hard-codes the version, in the future YMMV. I want it to be able to look
+at github, and also my local checkout of cpython so it can examine differences.
+I created a read-only token by clicking on my avatar in the upper right corner
+of a github we page, then going to Settings → Developer settings → Personal
+access tokens → Fine-grained tokens → Generate new token. Since pypy is in the
+pypy org, I used "Repository owner: pypy", "Repository access: pypy (only)" and
+"Permissions: Contents". Then I made doubly sure the token permissions were
+read-only. And checked again. Then I copied the token to the bash script. I
+also added a <code class="docutils literal"><span class="pre">ro-bind</span></code> to the cpython checkout, so I could tell claude code
+where to look for CPython implementations of missing PyPy functionality.</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_0e9c5fc253934d56b6584b778a888a1d-1" id="rest_code_0e9c5fc253934d56b6584b778a888a1d-1" name="rest_code_0e9c5fc253934d56b6584b778a888a1d-1"></a>--ro-bind<span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/oss/cpython"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$HOME</span><span class="s2">/oss/cpython"</span><span class="w"> </span><span class="se">\</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_0e9c5fc253934d56b6584b778a888a1d-2" id="rest_code_0e9c5fc253934d56b6584b778a888a1d-2" name="rest_code_0e9c5fc253934d56b6584b778a888a1d-2"></a>--setenv<span class="w"> </span>GH_TOKEN<span class="w"> </span><span class="s2">"hah, sharing my token would not have been smart"</span><span class="w"> </span><span class="se">\</span>
+</pre></div>
+</section>
+<section id="claude-sandbox">
+<h3>Claude /sandbox</h3>
+<p>Claude comes with its own sandbox, configured by using the <code class="docutils literal">/sandbox</code> command.
+I chose the defaults, which prevents malicious code in the repo from accessing
+the file system and the network. I was missing some packages to get this to
+work. Claude would hang until I installed them, and I needed to kill it with
+<code class="docutils literal">kill</code>.</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_778d2d6e03ba42229e7642f7ae878c6d-1" id="rest_code_778d2d6e03ba42229e7642f7ae878c6d-1" name="rest_code_778d2d6e03ba42229e7642f7ae878c6d-1"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>socat
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_778d2d6e03ba42229e7642f7ae878c6d-2" id="rest_code_778d2d6e03ba42229e7642f7ae878c6d-2" name="rest_code_778d2d6e03ba42229e7642f7ae878c6d-2"></a>sudo<span class="w"> </span>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>@anthropic-ai/sandbox-runtime
+</pre></div>
+</section>
+<section id="final-touches">
+<h3>Final touches</h3>
+<p>One last thing that I discovered later: I needed to give claude access to some
+grepping and git tools. While git should be locked down externally so it
+cannot push to the repo, I do want claude to look at other issues and pull
+requests in read-only mode. So I added a local <code class="docutils literal">.claude/settings.json</code> file
+inside the repo (see below for which directory to do this):</p>
+<div class="code"><pre class="code json"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-1" id="rest_code_8cc0a491fa404a50942bca8107ffe741-1" name="rest_code_8cc0a491fa404a50942bca8107ffe741-1"></a><span class="p">{</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-2" id="rest_code_8cc0a491fa404a50942bca8107ffe741-2" name="rest_code_8cc0a491fa404a50942bca8107ffe741-2"></a><span class="w">  </span><span class="nt">"permissions"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-3" id="rest_code_8cc0a491fa404a50942bca8107ffe741-3" name="rest_code_8cc0a491fa404a50942bca8107ffe741-3"></a><span class="w">    </span><span class="nt">"allow"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-4" id="rest_code_8cc0a491fa404a50942bca8107ffe741-4" name="rest_code_8cc0a491fa404a50942bca8107ffe741-4"></a><span class="w">      </span><span class="s2">"Bash(sed*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-5" id="rest_code_8cc0a491fa404a50942bca8107ffe741-5" name="rest_code_8cc0a491fa404a50942bca8107ffe741-5"></a><span class="w">      </span><span class="s2">"Bash(grep*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-6" id="rest_code_8cc0a491fa404a50942bca8107ffe741-6" name="rest_code_8cc0a491fa404a50942bca8107ffe741-6"></a><span class="w">      </span><span class="s2">"Bash(cat*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-7" id="rest_code_8cc0a491fa404a50942bca8107ffe741-7" name="rest_code_8cc0a491fa404a50942bca8107ffe741-7"></a><span class="w">      </span><span class="s2">"Bash(find*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-8" id="rest_code_8cc0a491fa404a50942bca8107ffe741-8" name="rest_code_8cc0a491fa404a50942bca8107ffe741-8"></a><span class="w">      </span><span class="s2">"Bash(rg*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-9" id="rest_code_8cc0a491fa404a50942bca8107ffe741-9" name="rest_code_8cc0a491fa404a50942bca8107ffe741-9"></a><span class="w">      </span><span class="s2">"Bash(python*)"</span><span class="p">,</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-10" id="rest_code_8cc0a491fa404a50942bca8107ffe741-10" name="rest_code_8cc0a491fa404a50942bca8107ffe741-10"></a><span class="w">      </span><span class="s2">"Bash(pytest*)"</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-11" id="rest_code_8cc0a491fa404a50942bca8107ffe741-11" name="rest_code_8cc0a491fa404a50942bca8107ffe741-11"></a><span class="w">    </span><span class="p">]</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-12" id="rest_code_8cc0a491fa404a50942bca8107ffe741-12" name="rest_code_8cc0a491fa404a50942bca8107ffe741-12"></a><span class="w">  </span><span class="p">}</span>
+<a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_8cc0a491fa404a50942bca8107ffe741-13" id="rest_code_8cc0a491fa404a50942bca8107ffe741-13" name="rest_code_8cc0a491fa404a50942bca8107ffe741-13"></a><span class="p">}</span>
+</pre></div>
+<p>Then I made git ignore it, even when doing a <code class="docutils literal">git clean</code>, in a local (not part
+of the repo) configuration</p>
+<div class="code"><pre class="code bash"><a href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html#rest_code_44d80f52f2e24cb7a51053b97aaf8e5f-1" id="rest_code_44d80f52f2e24cb7a51053b97aaf8e5f-1" name="rest_code_44d80f52f2e24cb7a51053b97aaf8e5f-1"></a><span class="nb">echo</span><span class="w"> </span>-n<span class="w"> </span>.claude<span class="w"> </span>&gt;&gt;<span class="w"> </span>~/.config/git/ignore
+</pre></div>
+</section>
+<section id="what-about-git-push">
+<h3>What about <code class="docutils literal">git push</code>?</h3>
+<p>I don't want claude messing around with the upstream repo, only read access. But
+I did not actively prevent <code class="docutils literal">git push</code>. So instead of using my actual pypy
+repo, I cloned it to a separate directory and did not add a remote pointing to
+github.com.</p>
+</section>
+</section>
+<section id="fixing-tests-easy">
+<h2>Fixing tests - easy</h2>
+<p>Now that everything is set up (I hope I remembered everything), I could start
+asking questions. The technique I chose was to feed claude the whole test
+failure from the buildbot. So starting from the <a class="reference external" href="https://buildbot.pypy.org/summary?branch=py3.11">buildbot py3.11 summary</a>,
+click on one of the <code class="docutils literal">F</code> links and copy-paste all that into the claude prompt.
+It didn't take long for claude to come up with solutions for the long-standing
+<a class="reference external" href="https://github.com/pypy/pypy/commit/9e8e121b545dbea3f26ca436ae8a797617904306#diff-ab042b3dd16bf22b7e3d8595f182ad39d3823d76b414da7debe96081a884d16bR64-R330">ctype error missing exception</a> which turned out to be due to an missing error
+trap when already handling an error.</p>
+<p>Also a <a class="reference external" href="https://github.com/pypy/pypy/commit/9e8e121b545dbea3f26ca436ae8a797617904306#diff-ab042b3dd16bf22b7e3d8595f182ad39d3823d76b414da7debe96081a884d16bR64-R53">CTYPES_MAX_ARGCOUNT check</a> was
+missing. At first, claude wanted to change the ctypes code from CPython's stdlib,
+and so I had to make it clear that claude was not to touch the files in
+<code class="docutils literal"><span class="pre">lib-python</span></code>. They are copied verbatim from CPython and should not be
+modified without really good reasons.</p>
+<p>The <a class="reference external" href="https://github.com/pypy/pypy/commit/39ca7a1def272742e8aafd2a649ed4f8fed7038d">fix to raise</a> <code class="docutils literal">TypeError</code> rather
+than <code class="docutils literal">Attribute Error</code> for deleting ctype object's <code class="docutils literal">value</code> was maybe a little
+trickier: claude needed to create its own <code class="docutils literal">property</code> class and use it in
+assignments.</p>
+<p>The <a class="reference external" href="https://github.com/pypy/pypy/commit/e0e401699c20a92d8db657879183c68ea44246b4">fix for a failing test</a> for a correct <code class="docutils literal">repr</code> of a ctypes array was a
+little more involved.  Claude needed to figure out that <code class="docutils literal">newmemoryview</code> was
+raising an exception, dive into the RPython implementation and fix the problem,
+and then also fix a pure-python <code class="docutils literal">__buffer__</code> shape edge case error.</p>
+<p>There were more, but you get the idea. With a little bit of coaching, and by showing
+claude where the CPython implementation was, more tests are now passing.</p>
+</section>
+<section id="fixing-tests-harder">
+<h2>Fixing tests - harder</h2>
+<p>PyPy has a HPy backend. There were some test failures that were
+easy to fix (a handle not being closed, an annotation warning). But the big one
+was a problem with the context tracking before and after ffi function calls. In
+debug mode there is a check that the ffi call is done using the correct HPy
+context. It turns out to be tricky to hang on to a reference to a context in
+RPython since the context RPython object is pre-built. The solution, which took
+quite a few tokens and translation cycles to work out, was to assign the
+context on the C level, and have a getter to fish it out in RPython.</p>
+<section id="conclusion">
+<h3>Conclusion</h3>
+<p>I started this journey not more than 24 hours ago, after some successful
+sessions using claude to refactor some web sites off hosting platforms and make
+them static pages. I was impressed enough to try coding with it from the
+terminal. It helps that I was given a generous budget to use Anthropic's tool.</p>
+<p>Claude seems capable of understanding the layers of PyPy: from the pure python
+stdlib to RPython and into the small amount of C code. I even asked it to
+examine a <a class="reference external" href="https://github.com/pypy/pypy/issues/5398">segfault</a> in the recently released PyPy7.3.21, and it seems to have
+found the general area where there was a latent bug in the JIT.</p>
+<p>Like any tool, agentic programming must be used carefully to make sure it
+cannot do damage. I hope I closed the most obvious foot-guns, if you have other
+ideas of things I should do to protect myself while using an agent like this, I
+would love to hear about them.</p>
+</section>
+</section>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 10:27 AM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2026/03/using-claude-to-fix-pypy311-test-failures-securely.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162" class="hover:underline"
               >Release 0.8.0 of mt940</a
             >
@@ -534,6 +792,167 @@ The documentation is available at <a class="inline-onebox" href="https://docs.tr
           </div>
           <a
             href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai" class="hover:underline"
+              >#474 Astral to join OpenAI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <strong>Topics covered in this episode:</strong><br />
+
+<ul>
+	<li><strong><a href="https://starlette.dev/release-notes/#100rc1-february-23-2026">Starlette 1.0.0</a></strong></li>
+<li><strong><a href="https://astral.sh/blog/openai?featured_on=pythonbytes">Astral to join OpenAI</a></strong></li>
+<li><strong>uv audit</strong></li>
+<li><strong><a href="https://mkennedy.codes/posts/fire-and-forget-or-never-with-python-s-asyncio/?featured_on=pythonbytes">Fire and forget (or never) with Python’s asyncio</a></strong></li>
+<li><strong>Extras</strong></li>
+<li><strong>Joke</strong></li>
+
+</ul><a href="https://www.youtube.com/watch?v=k8BJzKSMwvQ" style="font-weight: bold;">Watch on YouTube</a><br />
+
+<p><strong>About the show</strong></p>
+
+<p>Sponsored by us! Support our work through:</p>
+
+<ul>
+<li>Our <a href="https://training.talkpython.fm/?featured_on=pythonbytes"><strong>courses at Talk Python Training</strong></a></li>
+<li><a href="https://courses.pythontest.com/p/the-complete-pytest-course?featured_on=pythonbytes"><strong>The Complete pytest Course</strong></a></li>
+<li><a href="https://www.patreon.com/pythonbytes"><strong>Patreon Supporters</strong></a>
+<strong>Connect with the hosts</strong></li>
+<li>Michael: <a href="https://fosstodon.org/@mkennedy">@mkennedy@fosstodon.org</a> / <a href="https://bsky.app/profile/mkennedy.codes?featured_on=pythonbytes">@mkennedy.codes</a> (bsky)</li>
+<li>Brian: <a href="https://fosstodon.org/@brianokken">@brianokken@fosstodon.org</a> / <a href="https://bsky.app/profile/brianokken.bsky.social?featured_on=pythonbytes">@brianokken.bsky.social</a></li>
+<li>Show: <a href="https://fosstodon.org/@pythonbytes">@pythonbytes@fosstodon.org</a> / <a href="https://bsky.app/profile/pythonbytes.fm">@pythonbytes.fm</a> (bsky)
+Join us on YouTube at <a href="https://pythonbytes.fm/stream/live"><strong>pythonbytes.fm/live</strong></a> to be part of the audience. Usually <strong>Monday</strong> at 11am PT. Older video versions available there too.
+Finally, if you want an artisanal, hand-crafted digest of every week of the show notes in email form? Add your name and email to <a href="https://pythonbytes.fm/friends-of-the-show">our friends of the show list</a>, we'll never share it.</li>
+</ul>
+
+<p><strong>Brian #1: <a href="https://starlette.dev/release-notes/#100rc1-february-23-2026">Starlette 1.0.0</a></strong></p>
+
+<ul>
+<li>As a reminder, Starlette is the foundation for FastAPI</li>
+<li><a href="https://marcelotryle.com/blog/2026/03/22/starlette-10-is-here/?featured_on=pythonbytes">Starlette 1.0 is here!</a> - fun blog post from Marcello Trylesinski</li>
+<li>“The changes in 1.0 were limited to removing old deprecated code that had been on the way out for years, along with a few bug fixes. From now on we'll follow SemVer strictly.”</li>
+<li>Fun comment in the “What’s next?” section:
+<ul>
+<li>“Oh, and Sebastián, Starlette is now out of your way to release FastAPI 1.0. 😉”</li>
+</ul></li>
+<li>Related: <a href="https://simonwillison.net/2026/Mar/22/starlette/?featured_on=pythonbytes">Experimenting with Starlette 1.0 with Claude skills</a>
+<ul>
+<li>Simon Willison</li>
+<li>example of the new lifespan mechanism, very pytest fixture-like
+<div class="codehilite">
+<pre><span></span><code><span class="nd">@contextlib</span><span class="o">.</span><span class="n">asynccontextmanager</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">):</span>
+<span class="k">async</span> <span class="k">with</span> <span class="n">some_async_resource</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Run at startup!&quot;</span><span class="p">)</span>
+    <span class="k">yield</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Run on shutdown!&quot;</span><span class="p">)</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">Starlette</span><span class="p">(</span>
+<span class="n">routes</span><span class="o">=</span><span class="n">routes</span><span class="p">,</span>
+<span class="n">lifespan</span><span class="o">=</span><span class="n">lifespan</span>
+<span class="p">)</span>
+</code></pre>
+</div></li>
+</ul></li>
+</ul>
+
+<p><strong>Michael #2: <a href="https://astral.sh/blog/openai?featured_on=pythonbytes">Astral to join OpenAI</a></strong></p>
+
+<ul>
+<li>via John Hagen, thanks</li>
+<li>Astral has agreed to join <a href="https://openai.com/?featured_on=pythonbytes"><strong>OpenAI</strong></a> as part of the <a href="https://chatgpt.com/codex?featured_on=pythonbytes"><strong>Codex</strong></a> team</li>
+<li>Congrats Charlie and team</li>
+<li>Seems like <a href="https://github.com/astral-sh/ruff?featured_on=pythonbytes">**Ruff</a>** and <a href="https://github.com/astral-sh/uv?featured_on=pythonbytes"><strong>uv</a></strong> play an important roll.</li>
+<li>Perhaps <a href="https://github.com/astral-sh/ty?featured_on=pythonbytes"><strong>ty</strong></a> holds the most value to directly boost Codex (understanding codebases for the AI)</li>
+<li>All that said, these were open source so there is way more to the motivations than just using the tools.</li>
+<li>After joining the Codex team, we'll continue building our open source tools.</li>
+<li><a href="https://simonwillison.net/2026/Mar/19/openai-acquiring-astral/?featured_on=pythonbytes">Simon Willison has thoughts</a></li>
+<li><a href="http://discuss.python.org?featured_on=pythonbytes">d</a><a href="https://discuss.python.org/t/openai-to-acquire-astral/106605?featured_on=pythonbytes">iscuss.python.org also has thoughts</a></li>
+<li>The <a href="https://arstechnica.com/ai/2026/03/openai-is-acquiring-open-source-python-tool-maker-astral/?featured_on=pythonbytes">Ars Technica article</a> has interesting comments too</li>
+<li>It’s probably the death <a href="https://astral.sh/pyx?featured_on=pythonbytes">pyx</a>
+<ul>
+<li>Simon points out “pyx is notably absent from both the Astral and OpenAI announcement posts.”</li>
+</ul></li>
+</ul>
+
+<p><strong>Brian #3: uv audit</strong></p>
+
+<ul>
+<li>Submitted by Owen Lemont</li>
+<li>Pieces of <code>uv audit</code> have been trickling in. <a href="https://github.com/astral-sh/uv/releases?featured_on=pythonbytes">uv 0.10.12 exposes it to the cli help</a></li>
+<li>Here’s the <a href="https://github.com/astral-sh/uv/issues/18506?featured_on=pythonbytes">roadmap for uv audit</a></li>
+<li>I tried it out on a package and found a security issue with a dependency
+<ul>
+<li>not of the project, but of the testing dependencies</li>
+<li>but only if using Python &lt; 3.10, even though I’m using 3.14</li>
+</ul></li>
+<li>Kinda cool</li>
+<li>Looks like it generates a uv.lock file, which includes dependencies for all project supported versions of Python and systems, which is a very thorough way to check for vulnerabilities.</li>
+<li>But also, maybe some pointers on how to fix the problem would be good. No <code>--fix</code> yet.</li>
+</ul>
+
+<p><strong>Michael #4: <a href="https://mkennedy.codes/posts/fire-and-forget-or-never-with-python-s-asyncio/?featured_on=pythonbytes">Fire and forget (or never) with Python’s asyncio</a></strong></p>
+
+<ul>
+<li>Python’s <code>asyncio.create_task()</code> can silently garbage collect your fire-and-forget tasks starting in Python 3.12</li>
+<li>Formerly fine async code can now stop working, so heads up</li>
+<li>The fix? Use a set to upgrade to a strong ref and a callback to remove it</li>
+<li>Is there a chance of task-based memory leaks? Yeah, maybe.</li>
+</ul>
+
+<p><strong>Extras</strong></p>
+
+<p>Brian:</p>
+
+<ul>
+<li><a href="https://terriblesoftware.org/2026/03/03/nobody-gets-promoted-for-simplicity/?featured_on=pythonbytes">Nobody Gets Promoted for Simplicity</a> - interesting read and unfortunate truth in too many places.</li>
+<li><a href="https://github.com/okken/pytest-check?featured_on=pythonbytes">pytest-check</a> - All built-in check helper functions in this list also accept an optional <code>xfail</code> reason.
+<ul>
+<li>example: <code>check.equal(actual, expected, xfail="known issue #123")</code></li>
+<li>Allows some checks to still cause a failure to happen because you no longer have to mark the whole test as xfail
+Michael:</li>
+</ul></li>
+<li><a href="https://x.com/rachpradhan/status/2034191434182738096?featured_on=pythonbytes">TurboAPI</a> - FastAPI + Pydantic compatible framework in Zig (see <a href="https://x.com/rachpradhan/status/2035928730242371716?featured_on=pythonbytes">follow up</a>)</li>
+<li><a href="https://docs.pylonsproject.org/projects/pyramid/en/2.1-branch/whatsnew-2.1.html?featured_on=pythonbytes">Pyramid 2.1</a> is out (yes really! :) first release in 3 years)</li>
+<li><a href="https://vivaldi.com/blog/vivaldi-on-desktop-7-9/?featured_on=pythonbytes">Vivaldi 7.9 adds</a> minimalist hide mode.</li>
+<li>Migrated <a href="http://pythonbytes.fm">pythonbytes.fm</a> and <a href="http://talkpython.fm?featured_on=pythonbytes">talkpython.fm</a> to <a href="https://mkennedy.codes/posts/raw-dc-the-orm-pattern-of-2026/?featured_on=pythonbytes">Raw+DC design pattern</a></li>
+<li><a href="https://mkennedy.codes/posts/use-chameleon-templates-in-the-robyn-web-framework/?featured_on=pythonbytes">Robyn + Chameleon package</a></li>
+</ul>
+
+<p><strong>Joke: We now have <a href="https://translate.kagi.com?featured_on=pythonbytes">translation services</a></strong></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1393,140 +1812,6 @@ towards shipping this feature smoothly. 🙏</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/linked-lists-python/" class="hover:underline"
-              >Quiz: Linked Lists in Python: An Introduction</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn Python linked lists, deques, and circular & doubly linked structures with practical examples and efficient operations.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 17, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/linked-lists-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2026/03/attend-pycon-us-for-a-day-of-trailblazing-python-security.html" class="hover:underline"
-              >Attend PyCon US for a day of Trailblazing Python Security!</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p class="part in-view"><a href="https://us.pycon.org/2026/" rel="noopener" target="_blank"><span>PyCon US</span></a><span> is coming to Long Beach, California in 2026. This year for the first time ever there is a </span><strong><span><a href="https://us.pycon.org/2026/tracks/security/">day-long talk track devoted to the latest in Python security</a></span></strong><span>. This new talk track is titled “<a href="https://us.pycon.org/2026/tracks/security/">Trailblazing Python Security</a>”, and we have 11 Python security experts covering all angles of security from Actions to Zero-Trust including Software Bill-of-Materials, phishing, FedRAMP, Rust, and more.</span></p><p class="part in-view"><span>Our goal with the <a href="https://us.pycon.org/2026/tracks/security/">Trailblazing Python Security track</a> is to create a space where developers, security practitioners, and open source contributors can learn from one another and discuss the problems and solutions for securing Python software and infrastructure.</span></p><p class="part in-view"><span>Whether you're developing web applications, infrastructure, security, working with data, or just getting started with Python: there's something for everyone to learn about how to securely build with Python.</span></p><p class="part in-view"><span>We hope to see you at PyCon US 2026 in Long Beach to learn from experts and shape the future of Python security landscape.</span></p><p class="part in-view"><span>If your organization wants to support security in the Python ecosystem, we are </span><a href="https://us.pycon.org/2026/sponsorship/why-sponsor/" rel="noopener" target="_blank"><span>accepting sponsors</span></a><span> for the inaugural security talk track at PyCon US. Send an email to </span><a href="mailto:sponsors@python.org" rel="noopener" target="_blank"><span>sponsors@python.org</span></a><span> for more information.</span></p><h2 style="text-align: left;">Schedule at a Distance&nbsp;</h2><p>The Trailblazing Python Security talk track will occur on <a href="https://us.pycon.org/2026/schedule/talks/#May16"><b>Saturday, May 16th</b> during the PyCon US main conference</a> in <b>Room 103ABC</b>. The talk track runs the full length of the main talk schedule for the day, <b>starting after the morning keynote at 10:30AM and running until 5:30PM</b>. Below is the schedule at a distance including topics and speakers:</p><p>
-  
-<table>
-<thead>
-<tr>
-<th>Time</th>
-<th>Talk</th>
-<th>Speaker(s)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td>10:30AM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/34/">FastAPI Security Patterns: OAuth 2.0, JWTs, and API Keys Done Right</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/36/">Ian Mwangi</a></td>
-</tr>
-<tr>
-<td>11:15AM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/74/">Anatomy of a Phishing Campaign</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/77/">Mike Fiedler</a></td>
-</tr>
-<tr>
-<td>12:00PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/140/">Zero Trust in 200ms: Implementing Identity-Per-Transaction with Python and Serverless</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/148/">Tristan McKinnon</a></td>
-</tr>
-<tr>
-<td>1:45PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/1/">Rust for CPython: Making Python Safer and More Robust for Everyone</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/1/">Emma Smith</a></td>
-</tr>
-<tr>
-<td>2:30PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/116/">Asleep at the Wheel: Getting your SBOMs to pay attention to Python Builds</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/124/">Sanchit Sahay</a>, <a href="https://us.pycon.org/2026/speaker/profile/125/">Abhishek Reddypalle</a></td>
-</tr>
-<tr>
-<td>3:15PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/104/">Post-Incident Runtime SBOM Generation from Python Memory</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/109/">Hala Ali</a>, <a href="https://us.pycon.org/2026/speaker/profile/110/">Andrew Case</a></td>
-</tr>
-<tr>
-<td>4:15PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/117/">GitHub Actions Security in Python Packages</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/126/">Andrew Nesbitt</a></td>
-</tr>
-<tr>
-<td>5:00PM</td>
-<td><a href="https://us.pycon.org/2026/schedule/presentation/79/">Breaking Bad (Packages): Why Traditional Vulnerability Tracking Fails Supply Chain Attacks</a></td>
-<td><a href="https://us.pycon.org/2026/speaker/profile/82/">Shelby Cunningham</a>, <a href="https://us.pycon.org/2026/speaker/profile/83/">Madison Ficorilli</a></td>
-</tr>
-</tbody>
-</table></p>
-
-<p>The complete PyCon US 2026 schedule is available online or on the PyCon US mobile app. You can use the mobile app build your schedule by selecting which talks you are interested in attending. Or better yet, come to Room 103ABC and hang out with us all day!</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 16, 2026 07:58 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2026/03/attend-pycon-us-for-a-day-of-trailblazing-python-security.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1538,12 +1823,12 @@ towards shipping this feature smoothly. 🙏</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8146</a></li>
-    <li><a>Unique Feeds: 388</a></li>
+    <li><a>Total Entries: 8144</a></li>
+    <li><a>Unique Feeds: 387</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (540)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (473)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (216)</a></li><li><a href="http://blog.pythonanywhere.com/feed/">Kay Hayen (199)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (540)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (474)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (199)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
