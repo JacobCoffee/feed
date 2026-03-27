@@ -53,6 +53,164 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://fruch.github.io/python/2026/02/24/coodie-ai-pydantic-odm" class="hover:underline"
+              >Coodie: A 4-year-old idea brought to life by AI (and some coffee)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>So, let’s rewind a bit. About four years ago, I was looking at <a href="https://github.com/roman-right/beanie">Beanie</a> — this really nifty, Pydantic-based ODM for MongoDB. And as someone who spends an unhealthy amount of time deep in the trenches of ScyllaDB and Cassandra, I had a thought: “Where is <em>my</em> Beanie? I want a hoodie, but for Cassandra.” And thus, the name was born: <strong>coodie</strong> = <strong>c</strong>assandra + beanie (h<strong>oodie</strong>). Catchy, right?</p>
+
+<p>Like any respectable developer, I rushed to GitHub, created the repository <a href="https://github.com/fruch/coodie">fruch/coodie</a>, maybe wrote a highly ambitious <code class="language-plaintext highlighter-rouge">README.md</code>, set up a <code class="language-plaintext highlighter-rouge">pyproject.toml</code>, and then… absolutely nothing. Crickets. Life happened. I had CI pipelines to fix, Scylla drivers to maintain, conferences like PyConIL and EuroPython to attend, and live-tweeting to do. coodie just sat there, gathering digital dust, a glorious monument to my good intentions and severe lack of free time.</p>
+
+<h2 id="fast-forward-to-today-the-ai-era">Fast forward to today. The AI era.</h2>
+
+<p>We are living in a weird timeline where LLMs are everywhere, threatening to take our jobs while simultaneously failing to center a div. People are talking about AI coding assistants non-stop. I myself was quite happy with my usual workflow, but I figured — why not take my 4-year-old fever dream for a walk in the park and feed it to the machine?</p>
+
+<p>I threw the basic concept at an AI. I gave it some ground rules: it has to use Pydantic v2, it needs to be backed by <a href="https://github.com/scylladb/python-driver">scylla-driver</a>, and it needs to feel as magical as Beanie.</p>
+
+<p>And holy crap. It actually worked.</p>
+
+<p>I spent four years procrastinating on this, and a glorified autocomplete bot basically bootstrapped the whole thing while I was sipping my morning coffee. I’m not sure if I should be proud of my newfound status as a “prompt engineer,” or slightly terrified that my open-source street cred is now partially owned by a matrix of weights and biases.</p>
+
+<h2 id="the-sweet-setup-we-have-now">The sweet setup we have now</h2>
+
+<p>Despite the AI doing the heavy lifting, the architecture actually makes a lot of sense. Here is what coodie brings to the table:</p>
+
+<ul>
+  <li><strong>Pydantic v2 all the way</strong>: Define your documents with full type-checking support.</li>
+  <li><strong>Declarative schemas</strong>: You just annotate fields with <code class="language-plaintext highlighter-rouge">PrimaryKey</code>, <code class="language-plaintext highlighter-rouge">ClusteringKey</code>, <code class="language-plaintext highlighter-rouge">Indexed</code>, or <code class="language-plaintext highlighter-rouge">Counter</code>.</li>
+  <li><strong>Automatic table management</strong>: You call <code class="language-plaintext highlighter-rouge">sync_table()</code> and it creates or evolves the table idempotently. No more writing raw CQL just to add a column.</li>
+  <li><strong>Sync and Async APIs</strong>: Because why choose? You can use <code class="language-plaintext highlighter-rouge">coodie.aio</code> if you are riding the asyncio train, or <code class="language-plaintext highlighter-rouge">coodie.sync</code> if you want blocking code.</li>
+  <li><strong>Chainable QuerySets</strong>: Doing <code class="language-plaintext highlighter-rouge">await Product.find(brand="Acme").limit(10).all()</code> just feels right.</li>
+</ul>
+
+<p>Here is a quick taste of what the AI and I managed to cook up:</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<span class="kn">from</span> <span class="nn">uuid</span> <span class="kn">import</span> <span class="n">UUID</span><span class="p">,</span> <span class="n">uuid4</span>
+<span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">Field</span>
+<span class="kn">from</span> <span class="nn">coodie</span> <span class="kn">import</span> <span class="n">Document</span><span class="p">,</span> <span class="n">init_coodie</span><span class="p">,</span> <span class="n">PrimaryKey</span>
+
+<span class="k">class</span> <span class="nc">Product</span><span class="p">(</span><span class="n">Document</span><span class="p">):</span>
+    <span class="nb">id</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="n">UUID</span><span class="p">,</span> <span class="n">PrimaryKey</span><span class="p">()]</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">uuid4</span><span class="p">)</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">price</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+    <span class="k">class</span> <span class="nc">Settings</span><span class="p">:</span>
+        <span class="n">keyspace</span> <span class="o">=</span> <span class="s">"my_ks"</span>
+</code></pre></div></div>
+
+<p>And then querying it is a breeze:</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># async
+</span><span class="n">products</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="k">await</span> <span class="n">Product</span><span class="p">.</span><span class="n">find</span><span class="p">()</span>
+    <span class="p">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">brand</span><span class="o">=</span><span class="s">"Acme"</span><span class="p">)</span>
+    <span class="p">.</span><span class="n">order_by</span><span class="p">(</span><span class="s">"price"</span><span class="p">)</span>
+    <span class="p">.</span><span class="n">limit</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+    <span class="p">.</span><span class="nb">all</span><span class="p">()</span>
+<span class="p">)</span>
+</code></pre></div></div>
+
+<h2 id="wrapping-up">Wrapping up</h2>
+
+<p>The AI works out of the box with almost zero friction. It’s very impressive, and honestly, a bit surreal to see an idea you abandoned years ago suddenly have a passing CI suite, complete with tests and GitHub Actions (which are still very tidy to look at, by the way).</p>
+
+<p>You can check out the code, star it, or fork it over at <a href="https://github.com/fruch/coodie">github.com/fruch/coodie</a>.</p>
+
+<p>PRs are welcome. Preferably written by humans, but honestly… I guess I can’t really enforce that anymore, can I? יאללה, let’s see how it goes.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 24, 2026 12:00 AM UTC by
+            <a href="http://fruch.github.io/feed.python.xml" class="link link-hover text-primary"
+              >Israel Fruchter</a
+            >
+          </div>
+          <a
+            href="https://fruch.github.io/python/2026/02/24/coodie-ai-pydantic-odm"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonspeed.com/articles/speed-unit-tests/" class="hover:underline"
+              >Unit testing your code's performance, part 2: Catching speed changes</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In a previous post I talked about unit testing for speed, and in particular <a href="https://pythonspeed.com/articles/big-o-tests/">testing for big-O scalability</a>.
+The next step is catching cases where you’ve changed not the scalability, but the direct efficiency of your code.</p>
+
+<p>If your first thought is “how this is different from running benchmarks?”, well, good point!
+An excellent starting point for performance is implementing a benchmark that runs automatically in CI, on every single pull request.
+If you haven’t got that, you probably want to go do that first.</p>
+
+<p>Once you have implemented CI benchmarks, they will typically run when you submit a pull request or the equivalent.
+And if you’re doing performance work, that’s hopefully just a formality, as you likely have been benchmarking your code locally as you work.</p>
+
+<p>But what happens when you or a colleague are working on features or bugfixes, and accidentally modify a performance-critical code path?
+You make changes, run the tests locally, run a linter, open a pull request… and <em>now</em> the benchmark runs, and tells you that your code has made things slower.
+This is annoying, because now you have to go back and figure out which specific change was the cause.</p>
+
+<p>So what you really want is to get some sense of whether performance changed much earlier in the process, giving you immediate feedback when you’re running tests locally.
+Since a reliable benchmark environment is hard, switching to a test might allow for an early warning.</p>
+
+
+   <a href="https://pythonspeed.com/articles/speed-unit-tests/">Read more...</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 24, 2026 12:00 AM UTC by
+            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
+              >Python⇒Speed</a
+            >
+          </div>
+          <a
+            href="https://pythonspeed.com/articles/speed-unit-tests/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://anarc.at/blog/2026-02-23-dst-warning/" class="hover:underline"
               >PSA: North america changes time forward soon, Europe next</a
             >
@@ -2432,182 +2590,6 @@ The second argument defaults to <code>None</code>:</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/284/" class="hover:underline"
-              >The Real Python Podcast – Episode #284: Running Local LLMs With Ollama and Connecting With Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Would you like to learn how to work with LLMs locally on your own computer? How do you integrate your Python projects with a local model? Christopher Trudeau is back on the show this week with another batch of PyCoder's Weekly articles and projects.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 13, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/284/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2026/2/13/the-final-bottleneck/" class="hover:underline"
-              >The Final Bottleneck</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Historically, writing code was slower than reviewing code.</p>
-<p>It might not have felt that way, because code reviews sat in queues until
-someone got around to picking it up.  But if you compare the
-actual acts themselves, creation was usually the more expensive part.  In teams
-where people both wrote and reviewed code, it never felt like &#8220;we should
-probably program slower.&#8221;</p>
-<p>So when more and more people tell me they no longer know what code is in their
-own codebase, I feel like something is very wrong here and it&#8217;s time to
-reflect.</p>
-<h2>You Are Here</h2>
-<p>Software engineers often believe that <a href="/2020/1/1/async-pressure/">if we make the bathtub
-bigger</a>, overflow disappears.  It doesn&#8217;t.
-<a href="https://en.wikipedia.org/wiki/OpenClaw">OpenClaw</a> right now has north of 2,500
-pull requests open.  That&#8217;s a big bathtub.</p>
-<p>Anyone who has worked with queues knows this: if input grows faster than
-throughput, you have an accumulating failure.  At that point, backpressure and
-load shedding are the only things that retain a system that can still operate.</p>
-<p>If you have ever been in a Starbucks overwhelmed by mobile orders, you know the
-feeling.  The in-store experience breaks down.  You no longer know how many
-orders are ahead of you.  There is no clear line, no reliable wait estimate, and
-often no real cancellation path unless you escalate and make noise.</p>
-<p>That is what many AI-adjacent open source projects feel like right now.  And
-increasingly, that is what a lot of internal company projects feel like in
-&#8220;AI-first&#8221; engineering teams, and that&#8217;s not sustainable.  You can&#8217;t triage, you
-can&#8217;t review, and many of the PRs cannot be merged after a certain point because
-they are too far out of date. And the creator might have lost the motivation to
-actually get it merged.</p>
-<p>There is huge excitement about newfound delivery speed, but in private
-conversations, I keep hearing the same second sentence: people are also confused
-about how to keep up with the pace they themselves created.</p>
-<h2>We Have Been Here Before</h2>
-<p>Humanity has been here before.  Many times over.  We already talk about the
-Luddites a lot in the context of AI, but it&#8217;s interesting to see what led up to
-it.  Mark Cartwright wrote a great <a href="https://www.worldhistory.org/article/2183/the-textile-industry-in-the-british-industrial-rev/">article about the textile
-industry</a>
-in Britain during the industrial revolution.  At its core was a simple idea:
-whenever a bottleneck was removed, innovation happened downstream from that.
-Weaving sped up? Yarn became the constraint. Faster spinning? Fibre needed to be
-improved to support the new speeds until finally the demand for cotton went up
-and that had to be automated too.  We saw the same thing in shipping that led
-to modern automated ports and containerization.</p>
-<p>As software engineers we have been here too.  Assembly did not scale to larger
-engineering teams, and we had to invent higher level languages.  A lot of what
-programming languages and software development frameworks did was allow us
-to write code faster and to scale to larger code bases.  What it did not do up
-to this point was take away the core skill of engineering.</p>
-<p>While it&#8217;s definitely easier to write C than assembly, many of the core problems
-are the same.  Memory latency still matters, physics are still our ultimate
-bottleneck, algorithmic complexity still makes or breaks software at scale.</p>
-<h2>Giving Up?</h2>
-<p>When one part of the pipeline becomes dramatically faster, you need to throttle
-input.  <a href="https://pi.dev/">Pi</a> is a great example of this.  PRs are auto closed
-unless people are trusted.  It takes <a href="https://x.com/badlogicgames/status/2021164603506368693">OSS
-vacations</a>.  That&#8217;s one
-option: you just throttle the inflow.  You push against your newfound powers
-until you can handle them.</p>
-<h2>Or Giving In</h2>
-<p>But what if the speed continues to increase?  What downstream of writing code do
-we have to speed up?  Sure, the pull request review clearly turns into the
-bottleneck.  But it cannot really be automated.  If the machine writes the code,
-the machine better review the code at the same time.  So what ultimately comes
-up for human review would already have passed the most critical possible review
-of the most capable machine.  What else is in the way?  If we continue with the
-fundamental belief that machines cannot be accountable, then humans need to be
-able to understand the output of the machine.  And the machine will ship
-relentlessly.  Support tickets of customers will go straight to machines to
-implement improvements and fixes, for other machines to review, for humans to
-rubber stamp in the morning.</p>
-<p>A lot of this sounds both unappealing and reminiscent of the textile industry.
-The individual weaver no longer carried responsibility for a bad piece of cloth.
-If it was bad, it became the responsibility of the factory as a whole and it was
-just replaced outright.  As we&#8217;re entering the phase of single-use plastic
-software, we might be moving the whole layer of responsibility elsewhere.</p>
-<h2>I Am The Bottleneck</h2>
-<p>But to me it still feels different.  Maybe that&#8217;s because my lowly brain can&#8217;t
-comprehend the change we are going through, and future generations will just
-laugh about our challenges.  It feels different to me, because what I see taking
-place in some Open Source projects, in some companies and teams feels deeply
-wrong and unsustainable.  Even Steve Yegge himself now <a href="https://steve-yegge.medium.com/the-ai-vampire-eda6e4f07163">casts
-doubts</a> about the
-sustainability of the ever-increasing pace of code creation.</p>
-<p>So what if we need to give in?  What if we need to pave the way for this new
-type of engineering to become the standard?  What affordances will we have to
-create to make it work?  I for one do not know.  I&#8217;m looking at this with
-fascination and bewilderment and trying to make sense of it.</p>
-<p>Because it is not the final bottleneck.  We will find ways to take
-responsibility for what we ship, because society will demand it.  Non-sentient
-machines will never be able to carry responsibility, and it looks like we will
-need to deal with this problem before machines achieve this status.
-Regardless of how <a href="https://en.wikipedia.org/wiki/Moltbook">bizarre they appear to
-act</a> already.</p>
-<p><a href="https://x.com/thorstenball/status/2022310010391302259">I too am the bottleneck
-now</a>.  But you know what?
-Two years ago, I too was the bottleneck.  I was the bottleneck all along.  The
-machine did not really change that.  And for as long as I carry responsibilities
-and am accountable, this will remain true.  If we manage to push accountability
-upwards, it might change, but so far, how that would happen is not clear.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 13, 2026 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2026/2/13/the-final-bottleneck/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2619,8 +2601,8 @@ upwards, it might change, but so far, how that would happen is not clear.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8112</a></li>
-    <li><a>Unique Feeds: 382</a></li>
+    <li><a>Total Entries: 8201</a></li>
+    <li><a>Unique Feeds: 387</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
