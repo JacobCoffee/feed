@@ -53,6 +53,460 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/" class="hover:underline"
+              >Block sizes from OSM data</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>My city has big blocks. One close to mine is around 6km of circumference. I wanted to make a map that show the sizes of
+the blocks. What I have is a rendering DB for my area. Let's see what I can do.</p>
+<p>An obvious solution would be to use any routing database, which would convert squiggly segments into edges of a graph. I
+feebly tried that, but no routing system I know is packaged for Debian, and one of them asked me to compile it. I could
+compile it, but I was lazy that way.</p>
+<p>So the plan is this: take the whole street network<sup id="fnref:1"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fn:1">1</a></sup>  and recursively remove the dead end streets. The recursion part 
+is because there are areas where there are whole branches of dead end streets, so if in one pass a street A might look 
+not dead because it connects to another B, but B is removed, the next pass should remove A too. So, for each street, 
+take each end, and see how many other segments it's connected to; if 0, it's a dead end and we
+should remove it. Keep going until no new streets were removed.</p>
+<p>One problem is how the data is represented. In a rendering database, streets do not exist, just segments with a 
+consistent tagging, so streets can be split if, for instance, max speed changes, or there's a bridge. But one thing 
+they're not split on is where another street joins them (which would be reflected in a routing db, lazy me! :)</p>
+<p>This does not matter when searching for connected streets to a point, but a segment might have parts that are a dead end,
+and parts that are not, because they're connected to other streets(segments) that are connected too. So now, for each end,
+take the point, and if it's not connected, removed the point and try again. The full algo:</p>
+<ul>
+<li>Find all the segments</li>
+<li>While no segment has been removed<ul>
+<li>For each segment<ul>
+<li>For each end<ul>
+<li>While the end is not connected<ul>
+<li>Remove the end from the segment</li>
+</ul>
+</li>
+<li>If not enough nodes left, remove the segment</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<p>Looks like an infinite problem! The city I'm interested in has 16k segments, and this looks worse than O(N²)! But we 
+<em>can</em> do some shortcuts. One of the expensive operations is "the end is connected" or "find all the other segments that
+include this point". Luckily, a rendering DB has a geographic index, and we can do trics like looking for segments only 
+around the area of the segment you're looking at, so reducing the amount of comparisons by a lot: less that 10 instead of
+16k! And of course, you should not consider segments you already removed.</p>
+<p>To be honest, I thought this would take way more effort and code. Yes, I changed the algo thrice, but all in all it took 
+me like 6h to get it as it is. Now, it is not perfect. It does not detect some artifacts (mostly cycles connected to a 
+single segment), but is good enough for me for now. Not bad for &lt;200 lines of Python and SQL :)</p>
+<div class="code"><pre class="code literal-block"><span class="ch">#! /usr/bin/env python3</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">psycopg2</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">shapely</span><span class="w"> </span><span class="kn">import</span> <span class="n">from_wkb</span><span class="p">,</span> <span class="n">set_srid</span><span class="p">,</span> <span class="n">LineString</span><span class="p">,</span> <span class="n">Point</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s1">'Fetching all segments, takes a while.'</span><span class="p">)</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">dbname</span><span class="o">=</span><span class="s1">'europe'</span><span class="p">)</span>
+    <span class="n">cur</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="sa">f</span><span class="s2">"""</span>
+<span class="s2">        WITH marseille AS (</span>
+<span class="s2">            SELECT way</span>
+<span class="s2">            FROM planet_osm_polygon</span>
+<span class="s2">            WHERE osm_id = -76469</span>
+<span class="s2">        )</span>
+<span class="s2">        SELECT line.osm_id, line.way</span>
+<span class="s2">        FROM</span>
+<span class="s2">            planet_osm_line AS line,</span>
+<span class="s2">            marseille</span>
+<span class="s2">        WHERE</span>
+<span class="s2">            line.way &amp;&amp; marseille.way AND</span>
+<span class="s2">            line.highway IN (</span>
+<span class="s2">                'primary',</span>
+<span class="s2">                'primary_link',</span>
+<span class="s2">                'secondary',</span>
+<span class="s2">                'secondary_link',</span>
+<span class="s2">                'tertiary',</span>
+<span class="s2">                'tertiary_link',</span>
+<span class="s2">                'residential',</span>
+<span class="s2">                'unclassified',</span>
+<span class="s2">                'living_street',</span>
+<span class="s2">                'road'</span>
+<span class="s2">            ) AND</span>
+<span class="s2">            (line.access IS NULL OR line.access = 'yes')</span>
+<span class="s2">            </span><span class="si">{</span><span class="w"> </span><span class="sa">f</span><span class="s2">" LIMIT </span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">''</span><span class="w"> </span><span class="si">}</span><span class="s2">;</span>
+<span class="s2">    """</span><span class="p">)</span>
+
+    <span class="n">segments</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">segments_removed</span> <span class="o">=</span> <span class="nb">set</span><span class="p">([</span><span class="mi">666</span><span class="p">])</span>  <span class="c1"># fake osm_id so line.osm_id NOT IN %s AND works (empty sets are syntax errors)</span>
+
+    <span class="c1"># first pass: collect all segments</span>
+    <span class="k">for</span> <span class="n">data</span> <span class="ow">in</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">():</span>
+        <span class="n">osm_id</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">segment</span> <span class="o">=</span> <span class="n">from_wkb</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+        <span class="n">segments</span><span class="p">[</span><span class="n">osm_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">segment</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span><span class="si">}</span><span class="s2"> segments."</span><span class="p">)</span>
+
+    <span class="c1"># second pass: eliminate segments for which we can find an unconnected end</span>
+    <span class="n">pass_number</span> <span class="o">=</span> <span class="mi">1</span>
+
+    <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"PASS </span><span class="si">{</span><span class="n">pass_number</span><span class="si">:</span><span class="s2">2d</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">total_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">total_changed</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">to_remove</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">osm_id</span><span class="p">,</span> <span class="n">segment</span> <span class="ow">in</span> <span class="n">segments</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">changed</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">removed</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">connections</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="k">for</span> <span class="n">direction</span> <span class="ow">in</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">coords</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">point</span> <span class="o">=</span> <span class="n">Point</span><span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">coords</span><span class="p">[</span><span class="n">direction</span><span class="p">])</span>
+
+                    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">                        WITH segment AS (</span>
+<span class="s2">                            SELECT way</span>
+<span class="s2">                            FROM planet_osm_line</span>
+<span class="s2">                            WHERE osm_id = </span><span class="si">%s</span>
+<span class="s2">                        )</span>
+<span class="s2">                        SELECT</span>
+<span class="s2">                            line.osm_id,</span>
+<span class="s2">                            line.name</span>
+<span class="s2">                        FROM planet_osm_line AS line, segment</span>
+<span class="s2">                        WHERE</span>
+<span class="s2">                            line.way &amp;&amp; ST_Buffer(ST_Envelope(segment.way), 10) AND</span>
+<span class="s2">                            line.osm_id != </span><span class="si">%s</span><span class="s2"> AND</span>
+<span class="s2">                            line.osm_id NOT IN </span><span class="si">%s</span><span class="s2"> AND</span>
+<span class="s2">                            line.highway IN (</span>
+<span class="s2">                                'trunk',</span>
+<span class="s2">                                'trunk_link',</span>
+<span class="s2">                                'primary',</span>
+<span class="s2">                                'primary_link',</span>
+<span class="s2">                                'secondary',</span>
+<span class="s2">                                'secondary_link',</span>
+<span class="s2">                                'tertiary',</span>
+<span class="s2">                                'tertiary_link',</span>
+<span class="s2">                                'residential',</span>
+<span class="s2">                                'unclassified',</span>
+<span class="s2">                                'living_street',</span>
+<span class="s2">                                'road'</span>
+<span class="s2">                            ) AND</span>
+<span class="s2">                            (access IS NULL OR access = 'yes') AND</span>
+<span class="s2">                            ST_Intersects(line.way, ST_GeomFromWKB(</span><span class="si">%s</span><span class="s2">, 3857));</span>
+<span class="s2">                    """</span><span class="p">,</span> <span class="p">(</span><span class="n">osm_id</span><span class="p">,</span> <span class="n">osm_id</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">(</span><span class="n">segments_removed</span><span class="p">),</span> <span class="n">point</span><span class="o">.</span><span class="n">wkb</span><span class="p">))</span>
+
+                    <span class="n">data</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+
+                    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">coords</span><span class="p">)</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+                            <span class="c1"># removing one point removes the segment</span>
+                            <span class="n">removed</span> <span class="o">=</span> <span class="kc">True</span>
+                            <span class="n">to_remove</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">osm_id</span><span class="p">)</span>
+                            <span class="k">break</span>
+
+                        <span class="c1"># remove the point</span>
+                        <span class="k">if</span> <span class="n">direction</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                            <span class="n">segment</span> <span class="o">=</span> <span class="n">LineString</span><span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">coords</span><span class="p">[</span><span class="mi">1</span><span class="p">:])</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">segment</span> <span class="o">=</span> <span class="n">LineString</span><span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">coords</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+
+                        <span class="n">changed</span> <span class="o">=</span> <span class="kc">True</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">connections</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+                        <span class="k">break</span>
+
+            <span class="k">if</span> <span class="n">changed</span><span class="p">:</span>
+                <span class="n">segments</span><span class="p">[</span><span class="n">osm_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">segment</span>
+                <span class="n">total_changed</span> <span class="o">+=</span> <span class="mi">1</span>
+
+            <span class="n">total_count</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">match</span> <span class="n">total_count</span> <span class="o">%</span> <span class="mi">10</span><span class="p">,</span> <span class="n">changed</span><span class="p">,</span> <span class="n">removed</span><span class="p">:</span>
+                <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">'*'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="kc">True</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">'_'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">case</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span> <span class="k">_</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">'|'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">case</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span> <span class="k">_</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">','</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+                <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="s1">'.'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">total_count</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">()</span>
+
+        <span class="n">segments_removed</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">to_remove</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">', '</span><span class="o">.</span><span class="n">join</span><span class="p">([</span> <span class="nb">str</span><span class="p">(</span><span class="nb">id</span><span class="p">)</span> <span class="k">for</span> <span class="nb">id</span> <span class="ow">in</span> <span class="n">to_remove</span> <span class="p">]))</span>
+
+        <span class="k">for</span> <span class="n">osm_id</span> <span class="ow">in</span> <span class="n">to_remove</span><span class="p">:</span>
+            <span class="k">del</span> <span class="n">segments</span><span class="p">[</span><span class="n">osm_id</span><span class="p">]</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">total_changed</span><span class="si">}</span><span class="s2"> changed, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">to_remove</span><span class="p">)</span><span class="si">}</span><span class="s2"> removed, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">segments</span><span class="p">)</span><span class="si">}</span><span class="s2"> left."</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">()</span>
+
+        <span class="c1"># if only some segments were changed, the topology does not change, so we save one pass</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">to_remove</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">break</span>
+
+        <span class="n">pass_number</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"Saving segments..."</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">segment</span> <span class="ow">in</span> <span class="n">segments</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"""</span>
+<span class="s2">            INSERT INTO streets (way)</span>
+<span class="s2">            VALUES (ST_GeomFromWKB(</span><span class="si">%s</span><span class="s2">, 3857))</span>
+<span class="s2">        """</span><span class="p">,</span> <span class="p">(</span><span class="n">segment</span><span class="o">.</span><span class="n">wkb</span><span class="p">,</span> <span class="p">))</span>
+
+    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"Cutting..."</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">index</span><span class="p">,</span> <span class="n">segment</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">segments</span><span class="o">.</span><span class="n">values</span><span class="p">()):</span>
+        <span class="n">buffered</span> <span class="o">=</span> <span class="n">segment</span><span class="o">.</span><span class="n">buffer</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">marseille</span> <span class="o">=</span> <span class="n">difference</span><span class="p">(</span><span class="n">marseille</span><span class="p">,</span> <span class="n">buffered</span><span class="p">)</span>
+
+        <span class="k">match</span> <span class="p">(</span><span class="n">index</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="mi">10</span><span class="p">:</span>
+            <span class="k">case</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s1">'|'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">case</span> <span class="mi">5</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s1">','</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s1">'.'</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s1">''</span><span class="p">,</span> <span class="n">flush</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">index</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="mi">100</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">()</span>
+
+    <span class="nb">print</span><span class="p">()</span>
+
+    <span class="n">out</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s1">'blocks.geojson'</span><span class="p">,</span> <span class="s1">'w+'</span><span class="p">)</span>
+    <span class="c1"># GeoJSONstream, one GeoJSON object per line</span>
+    <span class="c1"># GDAL/QGIS won't accept </span>
+    <span class="k">for</span> <span class="n">polygon</span> <span class="ow">in</span> <span class="n">marseille</span><span class="o">.</span><span class="n">geoms</span><span class="p">:</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">mapping</span><span class="p">(</span><span class="n">polygon</span><span class="p">))</span><span class="si">}</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+
+
+<span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+<p>Runtime takes a while because someone correctly micromapped a 350m dead end road due to diffrences in road side parking, 
+14 segments/passes in total; otherwise 8 would have suffised. I could have added a heuristic where, when a pass
+removed just a few segments, the next pass would only search among the segments close to those. Technically I could do 
+this from the first pass.</p>
+<p>One thing that surprised me whas this: QGIS can read GeoJSON files, but if they're going to be a colleciton of things, 
+better be a GeoJSONseq, that is a file with a GeoJSON object per line. But since these files do not include info about 
+the EPSG, you have to set it by hand on QGIS. now, this would be fine if QGIS would ask about it when loading the
+layer, but instead two things happen: it confuses the EPSG, but would still correctly zoom to the layer assuming that 
+the layer has the same projection as the project. Thanks to <code>uglyhack#qgis@libera.chat</code>.</p>
+<p>Several caveats:</p>
+<p>I didn't include motorways or tunks in the block computation, because they create a complication in the definition
+of block, specially with bridges over or tunnels under other roads, of which there are a lot here. I know
+at least 3 bridges that still break the graph; there are few enough that I can ignore them.</p>
+<p>The city has big blocks of industrial areas. Service roads are not included, and in any case most are dead ends.</p>
+<p>The biggest areas are actually not urban, including a big chunk of a National Park in the two big red areas to the 
+South<sup id="fnref:3"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fn:3">2</a></sup> and the ports and the sea nearby<sup id="fnref:4"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fn:4">3</a></sup>. Extracting a real urban area is possible, but harder.</p>
+<p>On top I also drew three things, roads (grey, white, blue), rivers (thick blue) and train tracks (black), to give a 
+better idea of the complexity of the city. This time it includes motorways, trunks, service and private roads. The 
+latter also give an idea of how much is in private hands (white). The thin blue lines are the streets thad define the 
+blocks, and the grey are public but dead ends.</p>
+<p><img alt="" src="https://www.grulic.org.ar/~mdione/glob/images/Marseille_blocks.png" /></p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>I'm focused on a traffic issue: the city is not navigable by car, leading to lots of traffic in the few streets 
+  available, leading to lots of noise from impatient drivers. <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fnref:1" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+<li id="fn:3">
+<p>The map is rotated 108° so I could zoom in as much as possible, so South is rougly to the left. <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fnref:3" title="Jump back to footnote 2 in the text">↩</a></p>
+</li>
+<li id="fn:4">
+<p>See where all the ferry lines go to; that's the Vieux Port (Old Port), and the new, industrial one is in the same 
+  area to the North/right. <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/#fnref:4" title="Jump back to footnote 3 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 14, 2026 11:16 AM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/block-sizes-from-osm-data/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/ive-added-human-dot-json-to-my-website?utm_campaign=rss" class="hover:underline"
+              >I’ve added human.json to my website</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://evanhahn.com">Evan Hahn</a> <a href="https://evanhahn.com/human-dot-json/">recently blogged</a> about adding
+support for the “<a href="https://codeberg.org/robida/human.json"><code>human.json</code> protocol</a>” to his website.
+I read the specification and thought this
+seemed like a straightforward protocol
+to implement.
+I've followed along, and added a <a href="https://sethmlarson.dev/human.json"><code>/human.json</code> file to my
+website</a> and <code>rel="human-json"</code> in a <code>&lt;link</code>&gt;
+element to the <code>&lt;head&gt;</code> section of my HTML. Easy!</p>
+
+<!-- more -->
+
+<p>Vouching was a little more involved because I wanted to
+auto-discover who uses <code>human.json</code> from everyone that I follow using RSS.
+Then my <code>vouches</code> can be kept up-to-date as more people implement
+the protocol. I updated the script to parse the <code>&lt;link&gt;</code> element
+properly using <a href="https://pypi.org/project/beautifulsoup4/">BeautifulSoup</a> (thanks Evan!). The script below is what I ended up with:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="kn">import</span> <span class="nn">contextlib</span>
+<span class="kn">import</span> <span class="nn">pathlib</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">urllib</span>
+<span class="kn">import</span> <span class="nn">opml</span>
+<span class="kn">import</span> <span class="nn">urllib3</span>
+<span class="kn">import</span> <span class="nn">bs4</span>
+
+<span class="n">http</span> <span class="o">=</span> <span class="n">urllib3</span><span class="o">.</span><span class="n">PoolManager</span><span class="p">(</span>
+    <span class="n">headers</span><span class="o">=</span><span class="p">{</span>
+        <span class="c1"># Be a good internet netizen:</span>
+        <span class="c1"># always set a User-Agent with</span>
+        <span class="c1"># your domain and email.</span>
+        <span class="s2">&quot;User-Agent&quot;</span><span class="p">:</span> <span class="s2">&quot;sethmlarson.dev/1.0 (sethmichaellarson@gmail.com)&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Accept&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">,</span>
+    <span class="p">},</span>
+    <span class="n">retries</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">today</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">human_json_path</span> <span class="o">=</span> <span class="n">pathlib</span><span class="o">.</span><span class="n">Path</span><span class="p">(</span><span class="s2">&quot;app/static/human.json&quot;</span><span class="p">)</span>
+<span class="n">human_json</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">human_json_path</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+<span class="n">vouched_urls</span> <span class="o">=</span> <span class="p">{</span><span class="n">vouch</span><span class="p">[</span><span class="s2">&quot;url&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">vouch</span> <span class="ow">in</span> <span class="n">human_json</span><span class="p">[</span><span class="s2">&quot;vouches&quot;</span><span class="p">]}</span>
+
+<span class="n">doc</span> <span class="o">=</span> <span class="n">opml</span><span class="o">.</span><span class="n">OpmlDocument</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">&quot;archive/feeds.opml&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">outline</span> <span class="ow">in</span> <span class="n">doc</span><span class="o">.</span><span class="n">outlines</span><span class="p">:</span>
+    <span class="n">mat</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(https?://[^/]+)(?:/|$)&quot;</span><span class="p">,</span> <span class="n">outline</span><span class="o">.</span><span class="n">html_url</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">mat</span><span class="p">:</span>
+        <span class="k">continue</span>
+    <span class="n">base_url</span> <span class="o">=</span> <span class="n">mat</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">urls_to_try</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base_url</span><span class="si">}</span><span class="s2">/human.json&quot;</span><span class="p">]</span>
+
+    <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">suppress</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+        <span class="c1"># Find &lt;link rel=&quot;human-json&quot; ...&gt;</span>
+        <span class="n">resp</span> <span class="o">=</span> <span class="n">http</span><span class="o">.</span><span class="n">request</span><span class="p">(</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="n">base_url</span><span class="p">)</span>
+        <span class="n">html</span> <span class="o">=</span> <span class="n">bs4</span><span class="o">.</span><span class="n">BeautifulSoup</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="s2">&quot;html.parser&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">el</span> <span class="ow">in</span> <span class="n">html</span><span class="o">.</span><span class="n">find_all</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">&quot;link&quot;</span><span class="p">,</span> <span class="n">attrs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;rel&quot;</span><span class="p">:</span> <span class="s2">&quot;human-json&quot;</span><span class="p">},</span> <span class="n">recursive</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">):</span>
+            <span class="k">if</span> <span class="n">href</span> <span class="o">:=</span> <span class="n">el</span><span class="o">.</span><span class="n">attrs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;href&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">):</span>
+                <span class="n">urls_to_try</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">urllib</span><span class="o">.</span><span class="n">parse</span><span class="o">.</span><span class="n">urljoin</span><span class="p">(</span><span class="n">base_url</span><span class="p">,</span> <span class="n">href</span><span class="p">))</span>
+
+    <span class="c1"># Try all candidate URLs.</span>
+    <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls_to_try</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">contextlib</span><span class="o">.</span><span class="n">suppress</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+            <span class="n">resp</span> <span class="o">=</span> <span class="n">http</span><span class="o">.</span><span class="n">request</span><span class="p">(</span><span class="s2">&quot;GET&quot;</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status</span> <span class="o">&lt;</span> <span class="mi">300</span> <span class="ow">and</span> <span class="nb">set</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">())</span> <span class="o">==</span> <span class="p">{</span><span class="s2">&quot;version&quot;</span><span class="p">,</span> <span class="s2">&quot;vouches&quot;</span><span class="p">,</span> <span class="s2">&quot;url&quot;</span><span class="p">}:</span>
+                <span class="c1"># Use the URL that the domain specifies, not</span>
+                <span class="c1"># our own. This helps with canonicalization,</span>
+                <span class="c1"># (ie do we use 'www.example.com' or 'example.com'?)</span>
+                <span class="n">human_json_url</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">&quot;url&quot;</span><span class="p">]</span>
+                <span class="k">if</span> <span class="n">human_json_url</span> <span class="ow">in</span> <span class="n">vouched_urls</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">vouched_urls</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">human_json_url</span><span class="p">)</span>
+                <span class="n">human_json</span><span class="p">[</span><span class="s2">&quot;vouches&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">human_json_url</span><span class="p">,</span> <span class="s2">&quot;vouched_at&quot;</span><span class="p">:</span> <span class="n">today</span><span class="p">})</span>
+                <span class="k">continue</span>
+
+<span class="n">human_json_path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">human_json</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</code></pre>
+</div>
+
+<p>Running this script turned up with two websites that I follow
+already supporting the protocol:</p>
+
+<ul>
+<li><a href="https://evanhahn.com">https://evanhahn.com</a> (<a href="https://evanhahn.com/human.json">human.json</a>)</li>
+<li><a href="https://foosel.net">https://foosel.net</a> (<a href="https://foosel.net/human.json">human.json</a>)</li>
+</ul>
+
+<p>Maybe this post will inspire you to add support to your own website?
+If you do and I follow you via RSS, your website will appear automatically
+after I regenerate my OPML files. If we're mutuals on Mastodon or Bluesky
+give me a ping and I'll add you sooner.</p>
+
+<p>I'm probably not going to use the browser extension myself, but if others
+are using the data from this "network" then that is a win.</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 14, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/ive-added-human-dot-json-to-my-website?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.europython.eu/humans-of-ep-kshitijaa/" class="hover:underline"
               >Humans of EuroPython: Kshitijaa Jaglan</a
             >
@@ -1452,250 +1906,6 @@ try it right now.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/logger.error-or-logger.exception" class="hover:underline"
-              >logger.error or logger.exception in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Consider this Python code:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">try</span>:
-    <span class="hljs-number">1</span> / <span class="hljs-number">0</span>
-<span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> e:
-    logger.error(<span class="hljs-string">&quot;An error occurred while dividing by zero.: %s&quot;</span>, e)
-</code></pre>
-
-<p>The output of this is:</p>
-<pre><code class="hljs">
-An error occurred while dividing by zero.: division by zero
-</code></pre>
-
-<p>No traceback. Perhaps you don't care because you don't need it.<br />
-I see code like this quite often and it's curious that you even use <code>logger.error</code> if it's not a problem. And it's curious that you include the stringified exception into the logger message.</p>
-<p>Another common pattern I see is use of <code>exc_info=True</code> like this:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">try</span>:
-    <span class="hljs-number">1</span> / <span class="hljs-number">0</span>
-<span class="hljs-keyword">except</span> Exception:
-    logger.error(<span class="hljs-string">&quot;An error occurred while dividing by zero.&quot;</span>, exc_info=<span class="hljs-literal">True</span>)
-</code></pre>
-
-<p>Its output is:</p>
-<pre><code class="hljs">
-An error occurred while dividing by zero.
-Traceback (most recent call last):
-  File &quot;/Users/peterbengtsson/dummy.py&quot;, line 23, in &lt;module&gt;
-    1 / 0
-    ~~^~~
-ZeroDivisionError: division by zero
-</code></pre>
-
-<p>Ok, now you get the traceback and the error value (<code>division by zero</code> in this case).</p>
-<p>But a more convenient function is <code>logger.exception</code> which looks like this:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">try</span>:
-    <span class="hljs-number">1</span> / <span class="hljs-number">0</span>
-<span class="hljs-keyword">except</span> Exception:
-    logger.exception(<span class="hljs-string">&quot;An error occurred while dividing by zero.&quot;</span>)
-</code></pre>
-
-<p>Its output is:</p>
-<pre><code class="hljs">
-An error occurred while dividing by zero.
-Traceback (most recent call last):
-  File &quot;/Users/peterbengtsson/dummy.py&quot;, line 9, in &lt;module&gt;
-    1 / 0
-    ~~^~~
-ZeroDivisionError: division by zero
-</code></pre>
-
-<p>So it's sugar for <code>logger.error</code>.</p>
-<p>Also, a common logging config is something like this:</p>
-<pre>import logging
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    format=&quot;%(asctime)s - %(levelname)s - %(name)s - %(message)s&quot;, level=logging.ERROR
-)</pre>
-
-<p>So if you use <code>logger.exception</code> what will it print? In short, the same as if you used <code>logger.error</code>. For example, with the <code>logger.exception("An error occurred while dividing by zero.")</code> line above:</p>
-<pre><code class="hljs">
-2026-03-06 10:45:23,570 - ERROR - __main__ - An error occurred while dividing by zero.
-Traceback (most recent call last):
-  File &quot;/Users/peterbengtsson/dummy.py&quot;, line 12, in &lt;module&gt;
-    1 / 0
-    ~~^~~
-ZeroDivisionError: division by zero
-</code></pre>
-
-<h3 id="bonus-add_note"><a class="toclink" href="#bonus-add_note">Bonus - <code>add_note</code></a></h3>
-<p>You can, if it's applicable, inject some more information about the exception. Consider:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">try</span>:
-    n / <span class="hljs-number">0</span>
-<span class="hljs-keyword">except</span> Exception <span class="hljs-keyword">as</span> exception:
-    exception.add_note(<span class="hljs-string">f&quot;The numerator was <span class="hljs-subst">{n}</span>.&quot;</span>)
-    logger.exception(<span class="hljs-string">&quot;An error occurred while dividing by zero.&quot;</span>)
-</code></pre>
-
-<p>The net output of this is:</p>
-<pre><code class="hljs">
-2026-03-06 10:48:34,279 - ERROR - __main__ - An error occurred while dividing by zero.
-Traceback (most recent call last):
-  File &quot;/Users/peterbengtsson/dummy.py&quot;, line 13, in &lt;module&gt;
-    1 / 0
-    ~~^~~
-ZeroDivisionError: division by zero
-The numerator was 123.
-</code></pre>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 06, 2026 03:27 PM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/logger.error-or-logger.exception"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://anarc.at/blog/2026-03-05-wallabako-retirement/" class="hover:underline"
-              >Wallabako retirement and Readeck adoption</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Today I have made the tough decision of retiring the <a href="https://gitlab.com/anarcat/wallabako/">Wallabako</a>
-project. I have rolled out a final (and trivial) 1.8.0 release which
-fixes the uninstall procedure and rolls out a bunch of dependency
-updates.</p>
-
-<h1 id="why">Why?</h1>
-
-<p>The main reason why I'm retiring Wallabako is that I have completely
-stopped using it. It's not the first time: for a while, I wasn't
-reading Wallabag articles on my Kobo anymore. But I had started
-working on it again <a href="https://anarc.at/blog/2022-05-06-wallabako-1.4.0-released/">about four years ago</a>. Wallabako itself is
-about to turn 10 years old.</p>
-
-<p>This time, I stopped using Wallabako because there's simply something
-better out there. I have switched away from <a href="https://wallabag.org/">Wallabag</a> to
-<a href="https://readeck.org/">Readeck</a>!</p>
-
-<p>And I'm also tired of maintaining "modern" software. Most of the
-recent commits on Wallabako are from <a href="https://gitlab.com/renovate-bot-anarcat">renovate-bot</a>. This feels futile
-and pointless. I guess it <em>must</em> be done at some point, but it also
-feels we went wrong somewhere there. Maybe <a href="https://filippo.io/">Filippo Valsorda</a> is
-right and one should <a href="https://words.filippo.io/dependabot/">turn dependabot off</a>.</p>
-
-<p>I did consider porting Wallabako to Readeck for a while, but there's a
-<a href="https://github.com/iceyear/readeck.koplugin">perfectly fine Koreader plugin</a> that I've been pretty happy to
-use. I was worried it would be slow (because the Wallabag plugin <em>is</em>
-slow), but it turns out that Readeck is fast enough that this doesn't
-matter.</p>
-
-<h1 id="moving-from-wallabag-to-readeck">Moving from Wallabag to Readeck</h1>
-
-<p>Readeck is pretty fantastic: it's fast, it's lightweight, everything
-Just Works. All sorts of concerns I had with Wallabag are just gone:
-<a href="https://github.com/wallabag/wallabag/issues/2800">questionable authentication</a>, <a href="https://github.com/wallabag/wallabag/issues/2859">questionable API</a>, <a href="https://github.com/wallabag/wallabag/issues/6532">weird
-bugs</a>, mostly gone. I am still looking for <a href="https://github.com/wallabag/wallabag/issues/1197">multiple tags
-filtering</a> but I have a much better feeling about Readeck than
-Wallabag: it's written in Golang and under active development.</p>
-
-<p>In any case, I don't want to throw shade at the Wallabag folks
-either. They did <a href="https://github.com/wallabag/wallabag/issues?q=involves%3Aanarcat">solve most of the issues I raised with them</a> and
-even accepted <a href="https://github.com/wallabag/wallabag/pull/7849">my pull request</a>. They have helped me collect
-thousands of articles for a long time! It's just time to move on.</p>
-
-<p>The migration from Wallabag was impressively simple. The importer is
-well-tuned, fast, and just works. I wrote about the import in <a href="https://codeberg.org/readeck/readeck/issues/1119">this
-issue</a>, but it took about 20 minutes to import essentially all
-articles, and another 5 hours to refresh all the contents.</p>
-
-<p>There are minor issues with Readeck which I have filed (after asking!):</p>
-
-<ul>
-<li><a href="https://codeberg.org/gollyhatch/eckard/issues/19">add justified view for articles</a> (Android app)</li>
-<li><a href="https://codeberg.org/gollyhatch/eckard/issues/20">more metadata in article display</a> (Android app)</li>
-<li><a href="https://codeberg.org/readeck/readeck/issues/1126">show the number of articles in the label browser</a></li>
-<li><a href="https://codeberg.org/readeck/readeck/issues/73#issuecomment-11025251">ignore duplicates</a> (Readeck will happily add duplicates, whereas
-Wallabag at least <em>tries</em> to deduplicate articles -- but often fails)</li>
-</ul>
-
-
-<p>But overall I'm happy and impressed with the result.</p>
-
-<p>I'm also both happy and sad at letting go of my first (and only,
-so far) Golang project. I loved writing in Go: it's a clean language,
-fast to learn, and a beauty to write parallel code in (at the cost of
-a rather obscure runtime).</p>
-
-<p>It would have been <em>much</em> harder to write this in Python, but my
-experience in Golang helped me think about how to write more parallel
-code in Python, which is kind of cool.</p>
-
-<p>The <a href="https://gitlab.com/anarcat/wallabako/">GitLab project</a> will remain publicly accessible, but archived,
-for the foreseeable future. If you're interested in taking over
-stewardship for this project, <a href="https://anarc.at/contact/">contact me</a>.</p>
-
-<p>Thanks Wallabag folks, it was a great ride!</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 06, 2026 03:05 AM UTC by
-            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
-              >Anarcat</a
-            >
-          </div>
-          <a
-            href="https://anarc.at/blog/2026-03-05-wallabako-retirement/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -1707,8 +1917,8 @@ stewardship for this project, <a href="https://anarc.at/contact/">contact me</a>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8116</a></li>
-    <li><a>Unique Feeds: 388</a></li>
+    <li><a>Total Entries: 8083</a></li>
+    <li><a>Unique Feeds: 387</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
