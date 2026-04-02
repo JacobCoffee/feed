@@ -53,6 +53,158 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss" class="hover:underline"
+              >Relative “Dependency Cooldowns” in pip v26.0 with crontab</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <blockquote>
+  <p><strong>WARNING:</strong> Most of this blog post is
+    a hack, everyone should probably just
+    wait for relative dependency cooldowns to come
+    to a future version of pip.</p>
+</blockquote>
+
+<!-- more -->
+
+<p>pip v26.0 <a href="https://ichard26.github.io/blog/2026/01/whats-new-in-pip-26.0/#excluding-distributions-by-upload-time">added support for the <code>--uploaded-prior-to</code> option</a>.
+This new option enables implementing “<a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns">dependency cooldowns</a>”, a technique
+described by <a href="https://yossarian.net">William Woodruff</a>, that provides simple but effective
+protections for the <a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns#fn:filippo:~:text=Approx%2E%20Window%20of%20Opportunity">relatively short attack-window time</a>
+of malware published to public software repositories. This brings the
+reaction time to malware back within the realm of humans, who sometimes need to
+execute manual triage processes to take down malware from PyPI.</p>
+
+<!-- more -->
+
+<p>So if you set <code>--uploaded-prior-to</code> to 7 days before this post
+was published, February 25th, you'd do so like this:</p>
+
+<pre><code>python -m pip install \
+  --uploaded-prior-to=2026-02-25 \
+  urllib3
+</code></pre>
+
+<p>But this is only an absolute date, and we have to remember
+to set the option on each call to <code>pip install</code>? That seems like
+a lot of work!</p>
+
+<p>Dependency cooldowns work best when the policy can be set in a
+<a href="https://nesbitt.io/2026/03/04/package-managers-need-to-cool-down.html">global configuration file to a relative value</a>
+like “7 days”.  The “window” of acceptable packages is then automatically updating over time
+without needing to set a new absolute value constantly. “Set-and-forget”-style.</p>
+
+<p>uv allows <a href="https://docs.astral.sh/uv/guides/scripts/#improving-reproducibility">setting a relative value</a> via <code>--exclude-newer</code>,
+but pip <a href="https://github.com/pypa/pip/issues/13674">doesn't support relative ranges yet</a>. I mostly use pip and still wanted to test this feature today, so I
+created a little hack to update my user <code>pip.conf</code> configuration file
+on a regular basis instead. Here's what my <code>pip.conf</code> file looks like:</p>
+
+<pre><code>[install]
+uploaded-prior-to = 2026-02-25
+</code></pre>
+
+<p>And below is the entire Python script doing the updating. Quick reminder that
+I only tested this on my own system, your mileage
+may vary, do not use in production.</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
+<span class="c1"># License: MIT</span>
+
+<span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="c1"># Parse the command line options.</span>
+    <span class="n">pip_conf</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
+    <span class="n">days</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
+
+    <span class="c1"># Load the existing pip.conf file.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not find pip.conf file at: </span><span class="si">{</span><span class="n">pip_conf</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">1</span>
+
+    <span class="c1"># Update the existing uploaded-prior-to value.</span>
+    <span class="n">uploaded_prior_to_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+        <span class="sa">r</span><span class="s2">&quot;^uploaded-prior-to\s*=\s*2[0-9]</span><span class="si">{3}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Could not find uploaded-prior-to option in pip.conf under [install]&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="mi">1</span>
+    <span class="n">new_uploaded_prior_to</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span> <span class="o">-</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="n">days</span><span class="p">)</span>
+    <span class="p">)</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s2">&quot;uploaded-prior-to = </span><span class="si">{</span><span class="n">new_uploaded_prior_to</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">pip_conf_data</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Write the new uploaded-prior-to</span>
+    <span class="c1"># value to pip.conf</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">0</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre>
+</div>
+
+<p>The script takes two parameters, your <code>pip.conf</code> file you want
+to update (typically <code>~/.config/pip/pip.conf</code> on Linux) and
+an integer number of days. I used 14 in my cron example below.</p>
+
+<p>Simple right? I installed and <code>chmod u+X</code>-ed the script in my <code>/usr/local/bin</code> directory
+and then added to my crontab using <code>crontab -u (USERNAME) -e</code>:</p>
+
+<pre><code>0 * * * * (/usr/local/bin/pip-dependency-cooldown /home/sethmlarson/.config/pip/pip.conf 14)  2&gt;&amp;1 | logger -t pip-dependency-cooldown
+</code></pre>
+
+<p>This pattern will run the script once per hour and update the value
+of <code>uploaded-prior-to</code> to the new day. Now I only receive packages that
+were published 14 or more days ago by default when running <code>pip install</code> without any other options.</p>
+
+<p>Stay tuned for more about dependency cooldowns for Python installers
+once pip supports relative values.</p>
+<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 04, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.djangoproject.com/weblog/2026/mar/03/security-releases/" class="hover:underline"
               >Django security releases issued: 6.0.3, 5.2.12, and 4.2.29</a
             >
@@ -1248,6 +1400,64 @@ Once you’ve submitted your proposal or patch, give reviewers time to respond. 
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonspeed.com/articles/speed-unit-tests/" class="hover:underline"
+              >Unit testing your code's performance, part 2: Catching speed changes</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>In a previous post I talked about unit testing for speed, and in particular <a href="https://pythonspeed.com/articles/big-o-tests/">testing for big-O scalability</a>.
+The next step is catching cases where you’ve changed not the scalability, but the direct efficiency of your code.</p>
+
+<p>If your first thought is “how this is different from running benchmarks?”, well, good point!
+An excellent starting point for performance is implementing a benchmark that runs automatically in CI, on every single pull request.
+If you haven’t got that, you probably want to go do that first.</p>
+
+<p>Once you have implemented CI benchmarks, they will typically run when you submit a pull request or the equivalent.
+And if you’re doing performance work, that’s hopefully just a formality, as you likely have been benchmarking your code locally as you work.</p>
+
+<p>But what happens when you or a colleague are working on features or bugfixes, and accidentally modify a performance-critical code path?
+You make changes, run the tests locally, run a linter, open a pull request… and <em>now</em> the benchmark runs, and tells you that your code has made things slower.
+This is annoying, because now you have to go back and figure out which specific change was the cause.</p>
+
+<p>So what you really want is to get some sense of whether performance changed much earlier in the process, giving you immediate feedback when you’re running tests locally.
+Since a reliable benchmark environment is hard, switching to a test might allow for an early warning.</p>
+
+
+   <a href="https://pythonspeed.com/articles/speed-unit-tests/">Read more...</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 24, 2026 12:00 AM UTC by
+            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
+              >Python⇒Speed</a
+            >
+          </div>
+          <a
+            href="https://pythonspeed.com/articles/speed-unit-tests/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://anarc.at/blog/2026-02-23-dst-warning/" class="hover:underline"
               >PSA: North america changes time forward soon, Europe next</a
             >
@@ -1924,250 +2134,6 @@ But because we have access and control over a big part of the infrastructure tha
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://efficientcoder.net/what-is-stack-data-structure/" class="hover:underline"
-              >شرح بنية البيانات Stack: مفهوم كومة الصحون في البرمجة</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>تخيل أن لديك مجموعة من الصحون وأنت تقوم بترتيبها.</p>
-
-<p>تضع صحنًا أزرق، ثم أخضر، ثم أصفر، وأخيرًا برتقالي وأحمر.</p>
-
-<p>عندما تريد أخذ صحن، أي واحد ستختار؟</p>
-
-<p>هل ستسحب الصحن الأزرق من الأسفل وتخاطر بكسر كل الصحون؟</p>
-
-<p>أم ستسحب الصحن الأصفر من المنتصف؟</p>
-
-<p>بالتأكيد لا.</p>
-
-<p>الطريقة المنطقية هي أن تسحب الصحن <strong>الأحمر</strong> من الأعلى.</p>
-
-<p>بعدها، إذا احتجت صحنًا آخر، ستسحب الصحن <strong>البرتقالي</strong>.</p>
-
-<p>ما فعلته للتو هو تطبيق المبدأ الأساسي لبنية البيانات التي نسميها <strong>الستاك (Stack)</strong>.</p>
-
-<h3 id="مبدأ-آخر-من-يدخل-أول-من-يخرج-lifo">مبدأ “آخر من يدخل، أول من يخرج” (LIFO)</h3>
-
-<p>آخر صحن وضعته (الأحمر) هو أول صحن قمت بسحبه.</p>
-
-<p>هذا المبدأ يُعرف في عالم البرمجة باسم <strong>“آخر من يدخل، أول من يخرج”</strong> أو <strong>LIFO (Last-In, First-Out)</strong>.</p>
-
-<p>الستاك هو ببساطة هيكل بيانات يتبع هذا المبدأ البسيط والفعال.</p>
-
-<blockquote class="alert-tip">
-  <p>[!TIP]
-لتتذكر الستاك دائمًا، فكر في <strong>كومة الصحون</strong>. آخر عنصر تضيفه هو أول عنصر تسحبه.</p>
-</blockquote>
-
-<pre class="mermaid-visual"><code class="language-mermaid">graph TD
-    subgraph "إضافة عناصر (Push/Append)"
-        A[البداية] --&gt; B(إضافة صحن 1);
-        B --&gt; C(إضافة صحن 2);
-        C --&gt; D(إضافة صحن 3);
-    end
-
-    subgraph "الكومة (Stack)"
-        S3[صحن 3 (أعلى)]
-        S2[صحن 2]
-        S1[صحن 1 (أسفل)]
-        S3 --&gt; S2 --&gt; S1;
-    end
-
-    subgraph "إزالة عناصر (Pop)"
-        P1(سحب صحن 3) --&gt; P2(سحب صحن 2);
-        P2 --&gt; P3(سحب صحن 1);
-    end
-
-    D --&gt; S3;
-    S3 --&gt; P1;
-</code></pre>
-
-<h3 id="الستاك-مقابل-الكيو-queue">الستاك مقابل الكيو (Queue)</h3>
-
-<p>هناك بنية بيانات أخرى تعمل عكس الستاك تمامًا، وهي <strong>الكيو (Queue)</strong>.</p>
-
-<p>لتوضيح الفرق، تخيل <strong>طابورًا في مخبز</strong>.</p>
-
-<p>أول شخص يصل إلى الطابور هو أول شخص يحصل على الخبز ويغادر.</p>
-
-<p>وآخر شخص يصل هو آخر من يغادر.</p>
-
-<p>هذا المبدأ يُعرف باسم <strong>“أول من يدخل، أول من يخرج”</strong> أو <strong>FIFO (First-In, First-Out)</strong>.</p>
-
-<p>باختصار:</p>
-<ul>
-  <li><strong>الستاك (Stack):</strong> كومة صحون (LIFO).</li>
-  <li><strong>الكيو (Queue):</strong> طابور المخبز (FIFO).</li>
-</ul>
-
-<h3 id="أين-نستخدم-الستاك">أين نستخدم الستاك؟</h3>
-
-<p>الستاك ليس مجرد مفهوم نظري، بل له استخدامات عملية ومهمة في البرمجة، وترجمته الحرفية هي “الكومة”.</p>
-
-<p>هو طريقة رائعة لتنظيم البيانات.</p>
-
-<ul>
-  <li><strong>عمليات التراجع (Undo):</strong> مثل الضغط على <code class="highlighter-rouge">Ctrl+Z</code> في برامج التحرير. كل إجراء هو عنصر يُضاف للستاك، والتراجع هو سحب آخر إجراء.</li>
-  <li><strong>التحقق من الأقواس:</strong> في الأكواد البرمجية، يُستخدم الستاك للتأكد من أن كل قوس مفتوح <code class="highlighter-rouge">(</code> يقابله قوس مغلق <code class="highlighter-rouge">)</code>.</li>
-  <li><strong>سجل التصفح (Browser History):</strong> الصفحات التي تزورها تُخزن في ستاك. عندما تضغط على زر “الرجوع”، فأنت تعود إلى آخر صفحة دخلتها (آخر عنصر أُضيف).</li>
-</ul>
-
-<h3 id="مثال-عملي-الستاك-في-بايثون">مثال عملي: الستاك في بايثون</h3>
-
-<p>لنرى كيف يمكننا محاكاة الستاك باستخدام قائمة (List) بسيطة في بايثون.</p>
-
-<p>الستاك ليس أمرًا أو دالة مدمجة باسم <code class="highlighter-rouge">stack</code>، بل هو <strong>طريقة لتنظيم البيانات</strong>.</p>
-
-<p>سنستخدم قائمة فارغة ونطبق عليها مبدأ LIFO.</p>
-
-<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># لنقم بإنشاء قائمة فارغة لتمثل الستاك
-# يمكن أن نسميها أي شيء، لكن "stack" يوضح الفكرة
-</span><span class="n">stack</span> <span class="o">=</span> <span class="p">[]</span>
-
-<span class="c1"># الآن، لنضف بعض العناصر (الصحون) إلى الستاك
-# نستخدم دالة .append() لإضافة عنصر إلى نهاية القائمة
-</span><span class="k">print</span><span class="p">(</span><span class="s">"إضافة العناصر..."</span><span class="p">)</span>
-<span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1"># الصحن الأول
-</span><span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="c1"># الصحن الثاني
-</span><span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span> <span class="c1"># الصحن الثالث (في الأعلى الآن)
-</span>
-<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك بعد إضافة العناصر: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
-
-<span class="c1"># الآن، لنسحب عنصرًا من الستاك
-# نستخدم دالة .pop() بدون تحديد فهرس
-# ستقوم بسحب آخر عنصر تمت إضافته
-</span><span class="k">print</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">سحب العناصر..."</span><span class="p">)</span>
-<span class="n">first_out</span> <span class="o">=</span> <span class="n">stack</span><span class="p">.</span><span class="n">pop</span><span class="p">()</span>
-<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"أول عنصر تم سحبه: </span><span class="si">{</span><span class="n">first_out</span><span class="si">}</span><span class="s">"</span><span class="p">)</span> <span class="c1"># يجب أن يكون 3
-</span><span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك الآن: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
-
-<span class="c1"># لنسحب مرة أخرى
-</span><span class="n">second_out</span> <span class="o">=</span> <span class="n">stack</span><span class="p">.</span><span class="n">pop</span><span class="p">()</span>
-<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"ثاني عنصر تم سحبه: </span><span class="si">{</span><span class="n">second_out</span><span class="si">}</span><span class="s">"</span><span class="p">)</span> <span class="c1"># يجب أن يكون 2
-</span><span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك في النهاية: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
-</code></pre></div></div>
-
-<h3 id="شرح-الكود-خطوة-بخطوة">شرح الكود خطوة بخطوة</h3>
-
-<p><code class="highlighter-rouge">stack = []</code></p>
-
-<p>هنا ننشئ <strong>قائمة فارغة</strong>. هذه القائمة ستكون بمثابة الستاك الخاص بنا.</p>
-
-<p><code class="highlighter-rouge">stack.append(1)</code></p>
-
-<p>نستخدم الدالة <code class="highlighter-rouge">**append**</code> (إلحاق) لإضافة العنصر <code class="highlighter-rouge">1</code> إلى القائمة.</p>
-
-<p><code class="highlighter-rouge">stack.append(2)</code></p>
-
-<p>ثم نضيف العنصر <code class="highlighter-rouge">2</code>.</p>
-
-<p><code class="highlighter-rouge">stack.append(3)</code></p>
-
-<p>وأخيرًا نضيف العنصر <code class="highlighter-rouge">3</code>.</p>
-
-<p>الآن، القائمة تحتوي على <code class="highlighter-rouge">[1, 2, 3]</code>. العنصر <code class="highlighter-rouge">3</code> هو آخر عنصر دخل، وهو في “أعلى” الستاك.</p>
-
-<p><code class="highlighter-rouge">stack.pop()</code></p>
-
-<p>هنا يأتي دور السحر.</p>
-
-<p>الدالة <code class="highlighter-rouge">**pop**</code> عندما تُستخدم بدون تحديد رقم (فهرس)، تقوم <strong>بإزالة وإرجاع آخر عنصر</strong> في القائمة.</p>
-
-<p>لذلك، في المرة الأولى، ستسحب الرقم <code class="highlighter-rouge">3</code>.</p>
-
-<p>بعد السحب، تصبح القائمة <code class="highlighter-rouge">[1, 2]</code>.</p>
-
-<p>عندما نستدعي <code class="highlighter-rouge">pop</code> مرة أخرى، ستسحب الرقم <code class="highlighter-rouge">2</code>.</p>
-
-<blockquote class="alert-warning">
-  <p>[!WARNING]
-لو استخدمنا <code class="highlighter-rouge">pop(0)</code>، لكان سيسحب أول عنصر (الرقم 1)، وهذا يتبع مبدأ الكيو (FIFO)، وليس الستاك. عدم تحديد الفهرس هو مفتاح عمل الستاك باستخدام القوائم.</p>
-</blockquote>
-
-<h3 id="خلاصة">خلاصة</h3>
-
-<p>ببساطة، الستاك هو هيكل بيانات يعتمد على مبدأ <strong>LIFO</strong>.</p>
-
-<p>تذكر دائمًا مثال <strong>كومة الصحون</strong>.</p>
-
-<p>آخر ما تضعه هو أول ما تأخذه.</p>
-
-<p>هذا المفهوم البسيط قوي للغاية وستجده في العديد من جوانب البرمجة وتطوير البرمجيات.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 20, 2026 12:00 AM UTC by
-            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
-              >Ahmed Bouchefra</a
-            >
-          </div>
-          <a
-            href="https://efficientcoder.net/what-is-stack-data-structure/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.paulox.net/2026/02/20/django-orm-standalone-database-inspectdb-query/" class="hover:underline"
-              >Django ORM Standalone⁽¹⁾: Querying an existing database</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A practical step-by-step guide to using Django <span class="caps">ORM</span> in standalone mode to connect to and query an existing database using&nbsp;inspectdb.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 19, 2026 11:00 PM UTC by
-            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
-              >Paolo Melchiorre</a
-            >
-          </div>
-          <a
-            href="https://www.paulox.net/2026/02/20/django-orm-standalone-database-inspectdb-query/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2179,8 +2145,8 @@ But because we have access and control over a big part of the infrastructure tha
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8010</a></li>
-    <li><a>Unique Feeds: 382</a></li>
+    <li><a>Total Entries: 8177</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
