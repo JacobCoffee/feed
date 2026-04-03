@@ -53,647 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss" class="hover:underline"
-              >Relative “Dependency Cooldowns” in pip v26.0 with crontab</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <blockquote>
-  <p><strong>WARNING:</strong> Most of this blog post is
-    a hack, everyone should probably just
-    wait for relative dependency cooldowns to come
-    to a future version of pip.</p>
-</blockquote>
-
-<!-- more -->
-
-<p>pip v26.0 <a href="https://ichard26.github.io/blog/2026/01/whats-new-in-pip-26.0/#excluding-distributions-by-upload-time">added support for the <code>--uploaded-prior-to</code> option</a>.
-This new option enables implementing “<a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns">dependency cooldowns</a>”, a technique
-described by <a href="https://yossarian.net">William Woodruff</a>, that provides simple but effective
-protections for the <a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns#fn:filippo:~:text=Approx%2E%20Window%20of%20Opportunity">relatively short attack-window time</a>
-of malware published to public software repositories. This brings the
-reaction time to malware back within the realm of humans, who sometimes need to
-execute manual triage processes to take down malware from PyPI.</p>
-
-<!-- more -->
-
-<p>So if you set <code>--uploaded-prior-to</code> to 7 days before this post
-was published, February 25th, you'd do so like this:</p>
-
-<pre><code>python -m pip install \
-  --uploaded-prior-to=2026-02-25 \
-  urllib3
-</code></pre>
-
-<p>But this is only an absolute date, and we have to remember
-to set the option on each call to <code>pip install</code>? That seems like
-a lot of work!</p>
-
-<p>Dependency cooldowns work best when the policy can be set in a
-<a href="https://nesbitt.io/2026/03/04/package-managers-need-to-cool-down.html">global configuration file to a relative value</a>
-like “7 days”.  The “window” of acceptable packages is then automatically updating over time
-without needing to set a new absolute value constantly. “Set-and-forget”-style.</p>
-
-<p>uv allows <a href="https://docs.astral.sh/uv/guides/scripts/#improving-reproducibility">setting a relative value</a> via <code>--exclude-newer</code>,
-but pip <a href="https://github.com/pypa/pip/issues/13674">doesn't support relative ranges yet</a>. I mostly use pip and still wanted to test this feature today, so I
-created a little hack to update my user <code>pip.conf</code> configuration file
-on a regular basis instead. Here's what my <code>pip.conf</code> file looks like:</p>
-
-<pre><code>[install]
-uploaded-prior-to = 2026-02-25
-</code></pre>
-
-<p>And below is the entire Python script doing the updating. Quick reminder that
-I only tested this on my own system, your mileage
-may vary, do not use in production.</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
-<span class="c1"># License: MIT</span>
-
-<span class="kn">import</span> <span class="nn">datetime</span>
-<span class="kn">import</span> <span class="nn">sys</span>
-<span class="kn">import</span> <span class="nn">os</span>
-<span class="kn">import</span> <span class="nn">re</span>
-
-<span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="c1"># Parse the command line options.</span>
-    <span class="n">pip_conf</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
-    <span class="n">days</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
-
-    <span class="c1"># Load the existing pip.conf file.</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
-    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not find pip.conf file at: </span><span class="si">{</span><span class="n">pip_conf</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="mi">1</span>
-
-    <span class="c1"># Update the existing uploaded-prior-to value.</span>
-    <span class="n">uploaded_prior_to_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
-        <span class="sa">r</span><span class="s2">&quot;^uploaded-prior-to\s*=\s*2[0-9]</span><span class="si">{3}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span>
-    <span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">):</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Could not find uploaded-prior-to option in pip.conf under [install]&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="mi">1</span>
-    <span class="n">new_uploaded_prior_to</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span> <span class="o">-</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="n">days</span><span class="p">)</span>
-    <span class="p">)</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;uploaded-prior-to = </span><span class="si">{</span><span class="n">new_uploaded_prior_to</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">pip_conf_data</span>
-    <span class="p">)</span>
-
-    <span class="c1"># Write the new uploaded-prior-to</span>
-    <span class="c1"># value to pip.conf</span>
-    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">)</span>
-    <span class="k">return</span> <span class="mi">0</span>
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
-</code></pre>
-</div>
-
-<p>The script takes two parameters, your <code>pip.conf</code> file you want
-to update (typically <code>~/.config/pip/pip.conf</code> on Linux) and
-an integer number of days. I used 14 in my cron example below.</p>
-
-<p>Simple right? I installed and <code>chmod u+X</code>-ed the script in my <code>/usr/local/bin</code> directory
-and then added to my crontab using <code>crontab -u (USERNAME) -e</code>:</p>
-
-<pre><code>0 * * * * (/usr/local/bin/pip-dependency-cooldown /home/sethmlarson/.config/pip/pip.conf 14)  2&gt;&amp;1 | logger -t pip-dependency-cooldown
-</code></pre>
-
-<p>This pattern will run the script once per hour and update the value
-of <code>uploaded-prior-to</code> to the new day. Now I only receive packages that
-were published 14 or more days ago by default when running <code>pip install</code> without any other options.</p>
-
-<p>Stay tuned for more about dependency cooldowns for Python installers
-once pip supports relative values.</p>
-<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 04, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/mar/03/security-releases/" class="hover:underline"
-              >Django security releases issued: 6.0.3, 5.2.12, and 4.2.29</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In accordance with <a class="reference external" href="https://docs.djangoproject.com/en/stable/internals/security/">our security release policy</a>, the Django team
-is issuing releases for
-<a class="reference external" href="https://docs.djangoproject.com/en/stable/releases/6.0.3/">Django 6.0.3</a>,
-<a class="reference external" href="https://docs.djangoproject.com/en/stable/releases/5.2.12/">Django 5.2.12</a>, and
-<a class="reference external" href="https://docs.djangoproject.com/en/stable/releases/4.2.29/">Django 4.2.29</a>.
-These releases address the security issues detailed below. We encourage all
-users of Django to upgrade as soon as possible.</p>
-<div class="section" id="s-cve-2026-25673-potential-denial-of-service-vulnerability-in-urlfield-via-unicode-normalization-on-windows">
-<h3>CVE-2026-25673: Potential denial-of-service vulnerability in <tt class="docutils literal">URLField</tt> via Unicode normalization on Windows</h3>
-<p>The <tt class="docutils literal">django.forms.URLField</tt> form field's <tt class="docutils literal">to_python()</tt> method used
-<tt class="docutils literal">urllib.parse.urlsplit()</tt> to determine whether to prepend a URL scheme to
-the submitted value. On Windows, <tt class="docutils literal">urlsplit()</tt> performs
-NFKC normalization (<tt class="docutils literal">unicodedata.normalize</tt>), which can be
-disproportionately slow for large inputs containing certain characters.</p>
-<p><tt class="docutils literal">URLField.to_python()</tt> now uses a simplified scheme detection, avoiding
-Unicode normalization entirely and deferring URL validation to the appropriate
-layers. As a result, while leading and trailing whitespace is still stripped by
-default, characters such as newlines, tabs, and other control characters within
-the value are no longer handled by <tt class="docutils literal">URLField.to_python()</tt>. When using the
-default <tt class="docutils literal">URLValidator</tt>, these values will continue to raise <tt class="docutils literal">ValidationError</tt>
-during validation, but if you rely on custom validators, ensure they do not
-depend on the previous behavior of <tt class="docutils literal">URLField.to_python()</tt>.</p>
-<p>This issue has severity &quot;moderate&quot; according to the Django Security Policy.</p>
-<p>Thanks to Seokchan Yoon for the report.</p>
-</div>
-<div class="section" id="s-cve-2026-25674-potential-incorrect-permissions-on-newly-created-file-system-objects">
-<h3>CVE-2026-25674: Potential incorrect permissions on newly created file system objects</h3>
-<p>Django's file-system storage and file-based cache backends used the process
-<tt class="docutils literal">umask</tt> to control permissions when creating directories. In multi-threaded
-environments, one thread's temporary umask change can affect other threads'
-file and directory creation, resulting in file system objects being created
-with unintended permissions.</p>
-<p>Django now applies the requested permissions via <tt class="docutils literal">os.chmod()</tt> after
-<tt class="docutils literal">os.mkdir()</tt>, removing the dependency on the process-wide umask.</p>
-<p>This issue has severity &quot;low&quot; according to the Django Security Policy.</p>
-<p>Thanks to Tarek Nakkouch for the report.</p>
-</div>
-<div class="section" id="s-affected-supported-versions">
-<h3>Affected supported versions</h3>
-<ul class="simple">
-<li>Django main</li>
-<li>Django 6.0</li>
-<li>Django 5.2</li>
-<li>Django 4.2</li>
-</ul>
-</div>
-<div class="section" id="s-resolution">
-<h3>Resolution</h3>
-<p>Patches to resolve the issue have been applied to Django's
-main, 6.0, 5.2, and 4.2 branches.
-The patches may be obtained from the following changesets.</p>
-<div class="section" id="s-cve-2026-25673-potential-denial-of-service-vulnerability-in-urlfield-via-unicode-normalization-on-windows-1">
-<h4>CVE-2026-25673: Potential denial-of-service vulnerability in <tt class="docutils literal">URLField</tt> via Unicode normalization on Windows</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/951ffb3832cd83ba672c1e3deae2bda128eb9cca">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/b1444d9acf43db9de96e0da2b4737ad56af0eb76">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/4d3c184686626d224d9a87451410ecf802b41f7c">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/b3e8ec8cc310489fe80174b14b11edb970d682ea">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-cve-2026-25674-potential-incorrect-permissions-on-newly-created-file-system-objects-1">
-<h4>CVE-2026-25674: Potential incorrect permissions on newly created file system objects</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/019e44f67a8dace67b786e2818938c8691132988">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/264d5c70ef3281a8869cb2ad45a3a52d5adbe790">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/b07ed2a1e445efde54fc64cb8c37e0f4f7fe53e5">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/54b50bf7d6dcbf02d4c01f853627cc9299d4934d">4.2 branch</a></li>
-</ul>
-</div>
-</div>
-<div class="section" id="s-the-following-releases-have-been-issued">
-<h3>The following releases have been issued</h3>
-<ul class="simple">
-<li>Django 6.0.3 (<a class="reference external" href="https://www.djangoproject.com/download/6.0.3/tarball/">download Django 6.0.3</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/6.0.3/checksum/">6.0.3 checksums</a>)</li>
-<li>Django 5.2.12 (<a class="reference external" href="https://www.djangoproject.com/download/5.2.12/tarball/">download Django 5.2.12</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/5.2.12/checksum/">5.2.12 checksums</a>)</li>
-<li>Django 4.2.29 (<a class="reference external" href="https://www.djangoproject.com/download/4.2.29/tarball/">download Django 4.2.29</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/4.2.29/checksum/">4.2.29 checksums</a>)</li>
-</ul>
-<p>The PGP key ID used for this release is Natalia Bidart: <a class="reference external" href="https://github.com/nessita.gpg">2EE82A8D9470983E</a></p>
-</div>
-<div class="section" id="s-general-notes-regarding-security-reporting">
-<h3>General notes regarding security reporting</h3>
-<p>As always, we ask that potential security issues be reported via private email
-to <tt class="docutils literal">security&#64;djangoproject.com</tt>, and not via Django's Trac instance, nor via
-the Django Forum. Please see <a class="reference external" href="https://www.djangoproject.com/security/">our security policies</a> for further information.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 03, 2026 02:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/mar/03/security-releases/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/init-py/" class="hover:underline"
-              >What Does Python's __init__.py Do?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how Python's __init__.py declares packages, initializes variables, simplifies imports, and controls what gets exported.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 03, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/init-py/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/when-are-classes-used/" class="hover:underline"
-              >When to make a class in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>While you don't often need to make your own classes in Python, they can sometimes make your code reusable and easier to read.</p>
-
-
-<div>
-  
-    <a href="https://www.pythonmorsels.com/when-are-classes-used/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2128583271-ee4c537824962cb8f1e06869b94a6b0dfbea70705a0101448a8638da82a34f9d-d_1920x1080%3F%26region%3Dus&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/when-are-classes-used/#using-classes-because-a-framework-requires-it" target="_blank">Using classes because a framework requires it</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/when-are-classes-used/#passing-the-same-data-into-multiple-functions" target="_blank">Passing the same data into multiple functions</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/when-are-classes-used/#creating-a-custom-class" target="_blank">Creating a custom class</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/when-are-classes-used/#using-a-class-to-convey-the-purpose-of-data" target="_blank">Using a class to convey the purpose of data</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/when-are-classes-used/#using-classes-to-improve-readability" target="_blank">Using classes to improve readability</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Using classes because a framework requires it</h2>
-    
-      
-        <p>Unlike many programming languages, you can accomplish quite a bit in Python without ever making a class.</p>
-
-      
-        <p>So when are classes typically used?</p>
-
-      
-        <p>The most common time to use a class in Python is when <strong>using a library or framework that <em>requires</em> writing a class</strong>.</p>
-
-      
-        <p>For example, users of the <a href="https://www.djangoproject.com" target="_blank">Django</a> web framework need to make a class to allow Django to manage their database tables:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">django.db</span><span class="w"> </span><span class="kn">import</span> <span class="n">models</span>
-
-
-<span class="k">class</span><span class="w"> </span><span class="nc">Product</span><span class="p">(</span><span class="n">models</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
-    <span class="n">name</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">CharField</span><span class="p">(</span><span class="n">max_length</span><span class="o">=</span><span class="mi">300</span><span class="p">)</span>
-    <span class="n">price</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">DecimalField</span><span class="p">(</span><span class="n">max_digits</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">decimal_places</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-    <span class="n">description</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">TextField</span><span class="p">()</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
-</code></pre></div>
-
-
-      
-        <p>With Django, each <code>Model</code> class is used for managing one table in the database.
-Each instance of every model represents one row in each database table:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">products.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">Product</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">Product</span><span class="o">.</span><span class="n">objects</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-<span class="go">&lt;Product: rubber duck&gt;</span>
-</code></pre></div>
-
-
-      
-        <p>Many Python programmers create their first class because a library requires them to make one.</p>
-
-      
-    
-  
-    <h2>Passing the same data into multiple functions</h2>
-    
-      <p>But sometimes you may choose …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/when-are-classes-used/" target="_blank">Read the full article: https://www.pythonmorsels.com/when-are-classes-used/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 02, 2026 11:30 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/when-are-classes-used/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://snarky.ca/state-of-wasi-support-for-cpython-march-2026/" class="hover:underline"
-              >State of WASI support for CPython: March 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It&apos;s been a while since I posted <a href="https://snarky.ca/state-of-wasi-support-for-cpython-march-2024/">about WASI support in CPython</a>! &#x1f605; Up until now, most of the work I have been doing around WASI has been making its maintenance easier for me and other core developers. For instance, the <a href="https://github.com/python/cpython-devcontainers/">cpython-devcontainer repo</a> now provides a <a href="https://github.com/python/cpython-devcontainers/pkgs/container/wasicontainer">WASI dev</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 02, 2026 07:28 PM UTC by
-            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
-              >Brett Cannon</a
-            >
-          </div>
-          <a
-            href="https://snarky.ca/state-of-wasi-support-for-cpython-march-2026/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/ydata-profiling-eda/" class="hover:underline"
-              >Automate Python Data Analysis With YData Profiling</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Automate exploratory data analysis by transforming DataFrames into interactive reports with one command from YData Profiling.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 02, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/ydata-profiling-eda/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/471/the-orm-pattern-of-2026" class="hover:underline"
-              >#471 The ORM pattern of 2026?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Raw+DC: The ORM pattern of 2026, pytest-check releases, Dataclass Wizard, and SQLiteo.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 02, 2026 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/471/the-orm-pattern-of-2026"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121" class="hover:underline"
-              >Tryton News March 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div>  </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/9/9d4232da578af20227f7233128e17af01742fe6e.jpeg" title="Photo Pexels, cottonbro studio"><img alt="Boy in White T-shirt Sitting on Chair in Front of Computer" height="500" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/9/9d4232da578af20227f7233128e17af01742fe6e_2_503x500.jpeg" title="Photo Pexels, cottonbro studio" width="503" /></a></div><p></p>
-
-<p>In the last month we focused on fixing bugs, improving the behaviour of things, speeding-up performance issues - building on the changes from <a href="https://discuss.tryton.org/t/tryton-release-7-8/">our last release</a>. We also added some new features which we would like to introduce to you in this newsletter.</p>
-<p>For an in depth overview of the <a href="https://bugs.tryton.org/">Tryton issues please take a look at our issue tracker </a> or see the issues and merge requests <a href="https://code.tryton.org/tryton/-/labels">filtered by label</a>.</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--sales-purchase">Sales, Purchases and Projects</h3>
-<p>Now we <a href="https://bugs.tryton.org/14538">add the web shop URL to sales</a>.</p>
-<p>We now add a <a href="https://bugs.tryton.org/14507">menu entry for <em>party identifier.</em></a></p>
-<h3 id="heading--accounting">Accounting, Invoicing and Payments</h3>
-<p>Now we can <a href="https://code.tryton.org/tryton/-/commit/d859e52b7ba404c95d2ed3c8f0887e0cceb2c1df">search for shipments on the invoice line</a>.</p>
-<p>In UBL we now <a href="https://bugs.tryton.org/14517">set <code>BillingReference</code> to <em>Invoice</em> and <em>Credit Note</em></a>.</p>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/fa6de53a766e1bfb5cfd04009a3f8ba3d04e7ebc">improve the layout of the <em>invoice credit form</em></a>.</p>
-<p>Now we enforce the Peppol rule “<a href="https://www.peppolguide.sg/billing/rules/BR-27/">[BR-27]-The Item net price (BT-146) shall NOT be negative</a>”. So we <a href="https://bugs.tryton.org/14504">make sure that the <em>unit price</em> on an <em>invoice line</em> is not negative</a>.</p>
-<p>We now add an <a href="https://code.tryton.org/tryton/-/commit/e6e5d9c225711c755e8d71ee279c14b8b9cc7d04"><em>Update Status</em> button to the Peppol document</a>.</p>
-<h3 id="heading--stock">Stock, Production and Shipments</h3>
-<p>Now we can <a href="https://bugs.tryton.org/14424">charge duties for UPS for <em>buyer</em> or <em>seller</em> on import and export defined in the incoterms</a>.</p>
-<h3 id="heading--ui">User Interface</h3>
-<p>Now we <a href="https://bugs.tryton.org/14634">allow to re-order tabs in Sao</a>.</p>
-<p>In the <a href="https://bugs.tryton.org/14574">favourites menu we now display a message</a> how to use it, instead of showing an empty menu.</p>
-<p>We also <a href="https://bugs.tryton.org/14575">improve the <em>blank state</em> of <em>notifications</em> by showing a message</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/13306">add a button in Sao for closing the search filter</a>.</p>
-<h3 id="heading--system-data-config">System Data and Configuration</h3>
-<p>Now <a href="https://code.tryton.org/tryton/-/commit/f1888e0e031352187fb5b24207c55618f3081e61">we update the required version of <code>python-stdnum</code> to version <code>2.22</code></a> and introduced new party identifier.</p>
-
-More <a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121/1">(click for more details)</a>
-<h2 id="heading--new-releases">New Releases</h2>
-<p>We released bug fixes for the currently maintained <a href="https://discuss.tryton.org/t/release-process/395">long term support series</a><br />
-<a href="https://code.tryton.org/tryton/-/commits/branch/7.0">7.0</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/6.0">6.0</a>, and for the penultimate series <a href="https://code.tryton.org/tryton/-/commits/branch/7.8">7.8</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/7.6">7.6</a>.</p>
-<h2 id="heading--security">Security</h2>
-Please update your systems to take care of a security related bug we found last month. 
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<p>Now we also <a href="https://code.tryton.org/tryton/-/commit/0a667448a4dd1be5561d205ffa56b077cf79b972">display the <code>create date</code> and <code>create time</code> in the error list</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14528">add <code>basic</code> authentication for <em>user applications</em></a>. Because in some cases the consumer of the user application may not be able to use the <code>bearer</code> authentication.</p>
-<p>Now we <a href="https://bugs.tryton.org/14530">allow to activate the <em>development mode</em> with WSGI applications by setting the environment variable <code>TRYTOND_DEV</code></a>.</p>
-<p>Writing compatible HTML for email can be very difficult. <a href="https://mjml.io/">MJML</a> provides a syntax to ease the creation of such emails. So now we <a href="https://bugs.tryton.org/12597">support the MJML email format in Tryton</a>.</p>
-<h2 id="heading--developer">Changes for Implementers and Developers</h2>
-<p>We now add a <a href="https://bugs.tryton.org/14202">timestamp field on <code>ModelStorage</code> for last modified.</a></p>
-<p>Now we <a href="https://bugs.tryton.org/4369">introduce a new type of field for SQL expressions: <code>Field.sql_column(tables, Model)</code></a></p>
-<p>We now <a href="https://bugs.tryton.org/14539">allow <code>UserError</code> and <code>UserWarning</code> exceptions to be raised on evaluating button</a> inputs.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/646d50f1e24e3070c5cfc7817e1a19ed8202c08d">replace the extension separator by an underscore in report names used as temporary files</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14526">do no longer check for missing parent depends when the <code>One2Many</code> is readonly</a>.</p>
-<p>Now we <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/2971">preserve the line numbers when converting doctest files to python files</a>.</p>
-<p>Authors: <a class="mention" href="https://discuss.tryton.org/u/dave">@dave</a> <a class="mention" href="https://discuss.tryton.org/u/pokoli">@pokoli</a> <a class="mention" href="https://discuss.tryton.org/u/udono">@udono</a></p>
-            <p><small>2 posts - 2 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-news-march-2026/9121">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 01, 2026 07:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-news-march-2026/9121"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/538/python-in-digital-humanities" class="hover:underline"
               >#538: Python in Digital Humanities</a
             >
@@ -2134,6 +1493,822 @@ But because we have access and control over a big part of the infrastructure tha
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/what-is-stack-data-structure/" class="hover:underline"
+              >شرح بنية البيانات Stack: مفهوم كومة الصحون في البرمجة</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>تخيل أن لديك مجموعة من الصحون وأنت تقوم بترتيبها.</p>
+
+<p>تضع صحنًا أزرق، ثم أخضر، ثم أصفر، وأخيرًا برتقالي وأحمر.</p>
+
+<p>عندما تريد أخذ صحن، أي واحد ستختار؟</p>
+
+<p>هل ستسحب الصحن الأزرق من الأسفل وتخاطر بكسر كل الصحون؟</p>
+
+<p>أم ستسحب الصحن الأصفر من المنتصف؟</p>
+
+<p>بالتأكيد لا.</p>
+
+<p>الطريقة المنطقية هي أن تسحب الصحن <strong>الأحمر</strong> من الأعلى.</p>
+
+<p>بعدها، إذا احتجت صحنًا آخر، ستسحب الصحن <strong>البرتقالي</strong>.</p>
+
+<p>ما فعلته للتو هو تطبيق المبدأ الأساسي لبنية البيانات التي نسميها <strong>الستاك (Stack)</strong>.</p>
+
+<h3 id="مبدأ-آخر-من-يدخل-أول-من-يخرج-lifo">مبدأ “آخر من يدخل، أول من يخرج” (LIFO)</h3>
+
+<p>آخر صحن وضعته (الأحمر) هو أول صحن قمت بسحبه.</p>
+
+<p>هذا المبدأ يُعرف في عالم البرمجة باسم <strong>“آخر من يدخل، أول من يخرج”</strong> أو <strong>LIFO (Last-In, First-Out)</strong>.</p>
+
+<p>الستاك هو ببساطة هيكل بيانات يتبع هذا المبدأ البسيط والفعال.</p>
+
+<blockquote class="alert-tip">
+  <p>[!TIP]
+لتتذكر الستاك دائمًا، فكر في <strong>كومة الصحون</strong>. آخر عنصر تضيفه هو أول عنصر تسحبه.</p>
+</blockquote>
+
+<pre class="mermaid-visual"><code class="language-mermaid">graph TD
+    subgraph "إضافة عناصر (Push/Append)"
+        A[البداية] --&gt; B(إضافة صحن 1);
+        B --&gt; C(إضافة صحن 2);
+        C --&gt; D(إضافة صحن 3);
+    end
+
+    subgraph "الكومة (Stack)"
+        S3[صحن 3 (أعلى)]
+        S2[صحن 2]
+        S1[صحن 1 (أسفل)]
+        S3 --&gt; S2 --&gt; S1;
+    end
+
+    subgraph "إزالة عناصر (Pop)"
+        P1(سحب صحن 3) --&gt; P2(سحب صحن 2);
+        P2 --&gt; P3(سحب صحن 1);
+    end
+
+    D --&gt; S3;
+    S3 --&gt; P1;
+</code></pre>
+
+<h3 id="الستاك-مقابل-الكيو-queue">الستاك مقابل الكيو (Queue)</h3>
+
+<p>هناك بنية بيانات أخرى تعمل عكس الستاك تمامًا، وهي <strong>الكيو (Queue)</strong>.</p>
+
+<p>لتوضيح الفرق، تخيل <strong>طابورًا في مخبز</strong>.</p>
+
+<p>أول شخص يصل إلى الطابور هو أول شخص يحصل على الخبز ويغادر.</p>
+
+<p>وآخر شخص يصل هو آخر من يغادر.</p>
+
+<p>هذا المبدأ يُعرف باسم <strong>“أول من يدخل، أول من يخرج”</strong> أو <strong>FIFO (First-In, First-Out)</strong>.</p>
+
+<p>باختصار:</p>
+<ul>
+  <li><strong>الستاك (Stack):</strong> كومة صحون (LIFO).</li>
+  <li><strong>الكيو (Queue):</strong> طابور المخبز (FIFO).</li>
+</ul>
+
+<h3 id="أين-نستخدم-الستاك">أين نستخدم الستاك؟</h3>
+
+<p>الستاك ليس مجرد مفهوم نظري، بل له استخدامات عملية ومهمة في البرمجة، وترجمته الحرفية هي “الكومة”.</p>
+
+<p>هو طريقة رائعة لتنظيم البيانات.</p>
+
+<ul>
+  <li><strong>عمليات التراجع (Undo):</strong> مثل الضغط على <code class="highlighter-rouge">Ctrl+Z</code> في برامج التحرير. كل إجراء هو عنصر يُضاف للستاك، والتراجع هو سحب آخر إجراء.</li>
+  <li><strong>التحقق من الأقواس:</strong> في الأكواد البرمجية، يُستخدم الستاك للتأكد من أن كل قوس مفتوح <code class="highlighter-rouge">(</code> يقابله قوس مغلق <code class="highlighter-rouge">)</code>.</li>
+  <li><strong>سجل التصفح (Browser History):</strong> الصفحات التي تزورها تُخزن في ستاك. عندما تضغط على زر “الرجوع”، فأنت تعود إلى آخر صفحة دخلتها (آخر عنصر أُضيف).</li>
+</ul>
+
+<h3 id="مثال-عملي-الستاك-في-بايثون">مثال عملي: الستاك في بايثون</h3>
+
+<p>لنرى كيف يمكننا محاكاة الستاك باستخدام قائمة (List) بسيطة في بايثون.</p>
+
+<p>الستاك ليس أمرًا أو دالة مدمجة باسم <code class="highlighter-rouge">stack</code>، بل هو <strong>طريقة لتنظيم البيانات</strong>.</p>
+
+<p>سنستخدم قائمة فارغة ونطبق عليها مبدأ LIFO.</p>
+
+<div class="language-python highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c1"># لنقم بإنشاء قائمة فارغة لتمثل الستاك
+# يمكن أن نسميها أي شيء، لكن "stack" يوضح الفكرة
+</span><span class="n">stack</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="c1"># الآن، لنضف بعض العناصر (الصحون) إلى الستاك
+# نستخدم دالة .append() لإضافة عنصر إلى نهاية القائمة
+</span><span class="k">print</span><span class="p">(</span><span class="s">"إضافة العناصر..."</span><span class="p">)</span>
+<span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1"># الصحن الأول
+</span><span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="c1"># الصحن الثاني
+</span><span class="n">stack</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span> <span class="c1"># الصحن الثالث (في الأعلى الآن)
+</span>
+<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك بعد إضافة العناصر: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+
+<span class="c1"># الآن، لنسحب عنصرًا من الستاك
+# نستخدم دالة .pop() بدون تحديد فهرس
+# ستقوم بسحب آخر عنصر تمت إضافته
+</span><span class="k">print</span><span class="p">(</span><span class="s">"</span><span class="se">\n</span><span class="s">سحب العناصر..."</span><span class="p">)</span>
+<span class="n">first_out</span> <span class="o">=</span> <span class="n">stack</span><span class="p">.</span><span class="n">pop</span><span class="p">()</span>
+<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"أول عنصر تم سحبه: </span><span class="si">{</span><span class="n">first_out</span><span class="si">}</span><span class="s">"</span><span class="p">)</span> <span class="c1"># يجب أن يكون 3
+</span><span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك الآن: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+
+<span class="c1"># لنسحب مرة أخرى
+</span><span class="n">second_out</span> <span class="o">=</span> <span class="n">stack</span><span class="p">.</span><span class="n">pop</span><span class="p">()</span>
+<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"ثاني عنصر تم سحبه: </span><span class="si">{</span><span class="n">second_out</span><span class="si">}</span><span class="s">"</span><span class="p">)</span> <span class="c1"># يجب أن يكون 2
+</span><span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"الستاك في النهاية: </span><span class="si">{</span><span class="n">stack</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+</code></pre></div></div>
+
+<h3 id="شرح-الكود-خطوة-بخطوة">شرح الكود خطوة بخطوة</h3>
+
+<p><code class="highlighter-rouge">stack = []</code></p>
+
+<p>هنا ننشئ <strong>قائمة فارغة</strong>. هذه القائمة ستكون بمثابة الستاك الخاص بنا.</p>
+
+<p><code class="highlighter-rouge">stack.append(1)</code></p>
+
+<p>نستخدم الدالة <code class="highlighter-rouge">**append**</code> (إلحاق) لإضافة العنصر <code class="highlighter-rouge">1</code> إلى القائمة.</p>
+
+<p><code class="highlighter-rouge">stack.append(2)</code></p>
+
+<p>ثم نضيف العنصر <code class="highlighter-rouge">2</code>.</p>
+
+<p><code class="highlighter-rouge">stack.append(3)</code></p>
+
+<p>وأخيرًا نضيف العنصر <code class="highlighter-rouge">3</code>.</p>
+
+<p>الآن، القائمة تحتوي على <code class="highlighter-rouge">[1, 2, 3]</code>. العنصر <code class="highlighter-rouge">3</code> هو آخر عنصر دخل، وهو في “أعلى” الستاك.</p>
+
+<p><code class="highlighter-rouge">stack.pop()</code></p>
+
+<p>هنا يأتي دور السحر.</p>
+
+<p>الدالة <code class="highlighter-rouge">**pop**</code> عندما تُستخدم بدون تحديد رقم (فهرس)، تقوم <strong>بإزالة وإرجاع آخر عنصر</strong> في القائمة.</p>
+
+<p>لذلك، في المرة الأولى، ستسحب الرقم <code class="highlighter-rouge">3</code>.</p>
+
+<p>بعد السحب، تصبح القائمة <code class="highlighter-rouge">[1, 2]</code>.</p>
+
+<p>عندما نستدعي <code class="highlighter-rouge">pop</code> مرة أخرى، ستسحب الرقم <code class="highlighter-rouge">2</code>.</p>
+
+<blockquote class="alert-warning">
+  <p>[!WARNING]
+لو استخدمنا <code class="highlighter-rouge">pop(0)</code>، لكان سيسحب أول عنصر (الرقم 1)، وهذا يتبع مبدأ الكيو (FIFO)، وليس الستاك. عدم تحديد الفهرس هو مفتاح عمل الستاك باستخدام القوائم.</p>
+</blockquote>
+
+<h3 id="خلاصة">خلاصة</h3>
+
+<p>ببساطة، الستاك هو هيكل بيانات يعتمد على مبدأ <strong>LIFO</strong>.</p>
+
+<p>تذكر دائمًا مثال <strong>كومة الصحون</strong>.</p>
+
+<p>آخر ما تضعه هو أول ما تأخذه.</p>
+
+<p>هذا المفهوم البسيط قوي للغاية وستجده في العديد من جوانب البرمجة وتطوير البرمجيات.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 20, 2026 12:00 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/what-is-stack-data-structure/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/feb/19/2026-coc-update-phase-2/" class="hover:underline"
+              >Plan to Adopt Contributor Covenant 3 as Django’s New Code of Conduct</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Last month <a href="https://forum.djangoproject.com/t/updating-the-code-of-conduct/43924">we announced our plan</a> to adopt <a href="https://www.contributor-covenant.org/version/3/0/code_of_conduct/">Contributor Covenant 3</a> as Django's new Code of Conduct through a multi-step process. Today we're excited to share that we've completed the first step of that journey!</p>
+<h4 id="s-what-weve-done">What We've Done</h4>
+<p>We've merged <a href="https://github.com/django/code-of-conduct/blob/main/updates.md">new documentation</a> that outlines how any member of the Django community can propose changes to our Code of Conduct and related policies. This creates a transparent, community-driven process for keeping our policies current and relevant.</p>
+<p>The new process includes:</p>
+<ul>
+<li><strong>Proposing Changes</strong>: Anyone can <a href="https://github.com/django/code-of-conduct/issues/new?template=coc-change-proposal.md">open an issue</a> with a clear description of their proposed change and the rationale behind it.</li>
+<li><strong>Community Review</strong>: The Code of Conduct Working Group will discuss proposals in our monthly meetings and may solicit broader community feedback through the forum, Discord, or DSF Slack.</li>
+<li><strong>Approval and Announcement</strong>: Once consensus is reached, changes are merged and announced to the community. Changes to the Code of Conduct itself will be sent to the DSF Board for final approval.</li>
+</ul>
+<h4 id="s-how-you-can-get-involved">How You Can Get Involved</h4>
+<p>We welcome and encourage participation from everyone in the Django community! Here's how you can engage with this process:</p>
+<ul>
+<li><strong>Share Your Ideas</strong>: If you have suggestions for improving our Code of Conduct or related documentation, <a href="https://github.com/django/code-of-conduct/issues/new?template=coc-change-proposal.md">open an issue</a> on our GitHub repo.</li>
+<li><strong>Join the Discussion</strong>: Participate in community discussions about proposed changes on the forum, Discord, or DSF Slack. Keep it positive, constructive, and respectful.</li>
+<li><strong>Stay Informed</strong>: Watch the <a href="https://github.com/django/code-of-conduct">Code of Conduct repository</a> to follow along with proposed changes and discussions.</li>
+<li><strong>Provide Feedback</strong>: Not comfortable with GitHub? You can also reach out via <a href="mailto:conduct@djangoproject.com">conduct@djangoproject.com</a>, or look for anyone with the <code>Code of Conduct WG</code> role on Discord.</li>
+</ul>
+<h4 id="s-whats-next">What's Next</h4>
+<p>We're moving forward with the remaining steps of our plan:</p>
+<ul>
+<li><strong>Step 2</strong> (target: March 15): Update our <a href="https://www.djangoproject.com/conduct/enforcement-manual/">Enforcement Manual</a>, <a href="https://www.djangoproject.com/conduct/reporting/">Reporting Guidelines</a>, and <a href="https://www.djangoproject.com/conduct/faq/">FAQs</a> via <a href="https://github.com/django/code-of-conduct/pull/91">pull request 91</a>.</li>
+<li><strong>Step 3</strong> (target: April 15): Adopt the Contributor Covenant 3 with proposed changes from the working group.</li>
+</ul>
+<p>Each step will have its own pull request where the community can review and provide feedback before we merge. We're committed to taking the time needed to incorporate your input thoughtfully.</p>
+<p>Thank you for being part of this important work to make Django a more welcoming and inclusive community for everyone!</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 19, 2026 03:51 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/feb/19/2026-coc-update-phase-2/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2026/02/langchain-tutorial-2026/" class="hover:underline"
+              >LangChain Python Tutorial: A Complete Guide for 2026</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            If you’ve read the blog post How to Build Chatbots With LangChain, you may want to know more about LangChain. This blog post will dive deeper into what LangChain offers and guide you through a few more real-world use cases. And even if you haven’t read the first post, you might still find the info [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 19, 2026 10:40 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2026/02/langchain-tutorial-2026/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/python-hidden-libraries-2027/" class="hover:underline"
+              >مكتبات بايثون الخفية لعام 2027: قوة خارقة أم تهديد قادم؟</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>اليوم سنغوص في عالم البرمجة.</p>
+
+<p>لكن ليس العالم العادي الذي تعرفونه.</p>
+
+<p>سنتحدث عن <strong>مكتبات غريبة وخرافية</strong> لم يسمع بها معظم الناس.</p>
+
+<p>مكتبات تبدو وكأنها <strong>كائنات حية</strong>، تفكر، تحلل، وأحيانًا قد تثير فيك الخوف.</p>
+
+<p>الموضوع ليس مجرد أكواد وألعاب.</p>
+
+<p>بل هو <strong>أبحاث علمية وحقائق</strong> تُكشف لأول مرة.</p>
+
+<h2 id="مكتبات-ستغير-قواعد-اللعبة-في-2027">مكتبات ستغير قواعد اللعبة في 2027</h2>
+
+<h3 id="1-polars-وحش-البيانات">1. Polars: وحش البيانات</h3>
+
+<p>هذه المكتبة <strong>أسرع من Pandas</strong> بعشرات المرات.</p>
+
+<p>تتراوح سرعتها من <strong>10 إلى 100 مرة</strong> أسرع.</p>
+
+<p>إذا كان لديك ملايين الصفوف من البيانات، <code class="highlighter-rouge">Polars</code> تعالجها <strong>بسرعة البرق</strong>.</p>
+
+<p>يمكن اعتبارها <strong>وحش البيانات</strong> الحقيقي، خاصة لمحبي البيانات الضخمة (Big Data).</p>
+
+<h3 id="2-gpt-pilot-المبرمج-الذكي-بجانبك">2. GPT-Pilot: المبرمج الذكي بجانبك</h3>
+
+<p>هذه المكتبة أغرب من أي شيء جربته.</p>
+
+<p>إنها <strong>تفهم الكود</strong>، تكتب لك التوثيق، وتصلح الأخطاء.</p>
+
+<p>كأنك تجلس مع <strong>مبرمج خارق الذكاء</strong> يعمل بجانبك 24/7 دون توقف.</p>
+
+<p>الذكاء الاصطناعي هنا يبدو وكأنه شخص حقيقي.</p>
+
+<h3 id="3-smolagents-جيش-من-العملاء-الأذكياء">3. SmolAgents: جيش من العملاء الأذكياء</h3>
+
+<p>تتيح لك هذه المكتبة إنشاء <strong>وكلاء ذكاء اصطناعي</strong>.</p>
+
+<p>هؤلاء الوكلاء قادرون على التفاعل مع برامج وأدوات أخرى.</p>
+
+<p>تخيل ذكاءً اصطناعيًا يعمل مع ذكاء اصطناعي آخر، <strong>دون تدخل بشري مباشر</strong>.</p>
+
+<p>الفكرة بحد ذاتها قد تكون مخيفة بعض الشيء.</p>
+
+<h3 id="4-lang-extract-مستخرج-الحقائق">4. Lang-Extract: مستخرج الحقائق</h3>
+
+<p>مكتبة تفهم <strong>النصوص الضخمة</strong> وتعالجها.</p>
+
+<p>تحول أي كتاب أو مقال إلى <strong>بيانات منظمة</strong>.</p>
+
+<p>ستستخرج لك كل <strong>الحقائق والملاحظات المهمة</strong> التي تحتاجها بشكل مباشر.</p>
+
+<p>توفر عليك وقتًا لا يمكنك تخيله.</p>
+
+<h2 id="مكتبات-سرية-قيد-البحث-لمسة-من-الخيال-العلمي">مكتبات سرية قيد البحث: لمسة من الخيال العلمي</h2>
+
+<p>الآن، لنتحدث عن المكتبات التي يعمل عليها العلماء والباحثون حاليًا.</p>
+
+<p>صدقوني، معظم الناس لا يعرفون عنها شيئًا، وبعضها <strong>يثير القلق حقًا</strong>.</p>
+
+<h3 id="1-pydy-المهندس-المعماري-الرقمي">1. PyDy: المهندس المعماري الرقمي</h3>
+
+<p>مكتبة نادرة تحلل <strong>صلابة وبنية المواد</strong> والهياكل.</p>
+
+<p>هل تريد أن تعرف إذا كان جسر أو بناء سيصمد أمام الضغط؟</p>
+
+<p>بايثون سيقوم بهذه الحسابات المعقدة.</p>
+
+<p>فكرة أن لغة برمجة يمكنها تحليل الهياكل مثل مهندس معماري هي <strong>فكرة مخيفة</strong>.</p>
+
+<h3 id="2-backdoor-box-كاشف-نقاط-الضعف">2. Backdoor-Box: كاشف نقاط الضعف</h3>
+
+<p>مكتبة مخصصة <strong>لأبحاث أمان الذكاء الاصطناعي</strong>.</p>
+
+<p>تستخدمها فرق الأمن لاختبار <strong>نقاط ضعف النماذج</strong>.</p>
+
+<p>تُظهر لك أين يمكن أن يتعرض الذكاء الاصطناعي للهجوم.</p>
+
+<p>إنها تنبهك إلى <strong>الثغرات الخطيرة</strong> في النظام.</p>
+
+<h3 id="3-crisp-بوابة-العالم-الكمومي">3. CRISP: بوابة العالم الكمومي</h3>
+
+<p>هذه المكتبة تتيح لك كتابة <strong>خوارزميات كمومية</strong>.</p>
+
+<p>نعم، بايثون أصبح يعمل على <strong>الكمبيوترات الكمومية</strong>.</p>
+
+<p>لغة البرمجة هذه أصبحت تتحكم بأشياء <strong>شبه خارقة للعلم</strong>.</p>
+
+<p>وهذا أمر مخيف حقًا.</p>
+
+<h2 id="الجانب-المظلم-ثغرات-في-قلب-بايثون">الجانب المظلم: ثغرات في قلب بايثون</h2>
+
+<p>الأمر الأكثر إثارة للخوف من كل هذه المكتبات القادمة في 2027، هو اكتشاف ثغرات خطيرة <strong>الآن في 2026</strong>.</p>
+
+<p>مكتبات شائعة مثل <code class="highlighter-rouge">Nemo</code> و <code class="highlighter-rouge">Flex-Talk</code> تحتوي على ثغرات.</p>
+
+<p>هذه الثغرات قد تسمح <strong>بتنفيذ كود ضار</strong>.</p>
+
+<p>فهمت الفكرة؟ المكتبات التي يعتمد عليها كل المطورين قد تكون <strong>بوابة للهجمات</strong>.</p>
+
+<p>الغريب أن بايثون معروف دائمًا بأمانه، لكن الواقع يتغير.</p>
+
+<p>كثرة المكتبات وضخامتها تخلق <strong>نقاط ضعف جديدة</strong>.</p>
+
+<h2 id="بايثون-الوحش-الخفي">بايثون: الوحش الخفي</h2>
+
+<p>لغة البرمجة هذه أصبحت أداة تحليل بيانات رهيبة.</p>
+
+<p>وأداة أبحاث علمية متطورة.</p>
+
+<p>وحتى أداة يمكنها <strong>اختراق الذكاء الاصطناعي</strong> والتحكم به.</p>
+
+<p>فهل ستجعل هذه المكتبات من بايثون <strong>الوحش الخفي</strong> الذي يتطور بسرعة تفوق الخيال؟</p>
+
+<p>أم أنها ستبقى مجرد لغة برمجة عادية؟</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 19, 2026 12:00 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/python-hidden-libraries-2027/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-february-2026-release/" class="hover:underline"
+              >Python Environments Extension for VS Code</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The February 2026 release  This release includes the Python Environments extension... Keep on reading to learn more!</p>
+<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-february-2026-release/">Python Environments Extension for VS Code</a> appeared first on <a href="https://devblogs.microsoft.com/python">Microsoft for Python Developers Blog</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 18, 2026 10:00 PM UTC by
+            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
+              >Python Engineering at Microsoft</a
+            >
+          </div>
+          <a
+            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-february-2026-release/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2026-02-18-iproute2/" class="hover:underline"
+              >net-tools to iproute cheat sheet</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This is also known as: "<code>ifconfig</code> is not installed by default
+anymore, how do I do this only with the <code>ip</code> command?"</p>
+
+<p>I have been slowly training my brain to use the new commands but I
+sometimes forget some. So, here's a couple of equivalence from the old
+package to <code>net-tools</code> the new <code>iproute2</code>, about 10 years late:</p>
+
+<table class="table">
+<thead>
+<tr>
+<th> <code>net-tools</code>                 </th>
+<th> <code>iproute2</code>                                   </th>
+<th> shorter form                 </th>
+<th> what it does                            </th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td> <code>arp -an</code>                   </td>
+<td> <code>ip neighbor</code>                                </td>
+<td> <code>ip n</code>                       </td>
+<td>                                         </td>
+</tr>
+<tr>
+<td> <code>ifconfig</code>                  </td>
+<td> <code>ip address</code>                                 </td>
+<td> <code>ip a</code>                       </td>
+<td> show current IP address                 </td>
+</tr>
+<tr>
+<td> <code>ifconfig</code>                  </td>
+<td> <code>ip link</code>                                    </td>
+<td> <code>ip l</code>                       </td>
+<td> show link stats (up/down/packet counts) </td>
+</tr>
+<tr>
+<td> <code>route</code>                     </td>
+<td> <code>ip route</code>                                   </td>
+<td> <code>ip r</code>                       </td>
+<td> show or modify the routing table        </td>
+</tr>
+<tr>
+<td> <code>route add default GATEWAY</code> </td>
+<td> <code>ip route add default via GATEWAY</code>           </td>
+<td> <code>ip r a default via GATEWAY</code> </td>
+<td> add default route to <code>GATEWAY</code>          </td>
+</tr>
+<tr>
+<td> <code>route del ROUTE</code>           </td>
+<td> <code>ip route del ROUTE</code>                         </td>
+<td> <code>ip r d ROUTE</code>               </td>
+<td> remove <code>ROUTE</code> (e.g. <code>default</code>)         </td>
+</tr>
+<tr>
+<td> <code>netstat -anpe</code>             </td>
+<td> <code>ss --all --numeric  --processes --extended</code> </td>
+<td> <code>ss -anpe</code>                   </td>
+<td> list listening processes, less pretty   </td>
+</tr>
+</tbody>
+</table>
+
+
+<p>Note that I wrote a <a href="https://anarc.at/blog/2023-03-10-listening-processes/">whole
+article</a> about the latter.</p>
+
+<h1 id="another-trick">Another trick</h1>
+
+<p>Also note that I often alias <code>ip</code> to <code>ip -br -c</code> as it provides a
+much prettier output.</p>
+
+<p>Compare, before:</p>
+
+<pre><code>anarcat@angela:~&gt; ip a
+1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host noprefixroute 
+       valid_lft forever preferred_lft forever
+2: wlan0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN group default qlen 1000
+    link/ether xx:xx:xx:xx:xx:xx brd ff:ff:ff:ff:ff:ff permaddr xx:xx:xx:xx:xx:xx
+    altname wlp166s0
+    altname wlx8cf8c57333c7
+4: virbr0: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc noqueue state DOWN group default qlen 1000
+    link/ether xx:xx:xx:xx:xx:xx brd ff:ff:ff:ff:ff:ff
+    inet 192.168.122.1/24 brd 192.168.122.255 scope global virbr0
+       valid_lft forever preferred_lft forever
+20: eth0: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc fq_codel state UP group default qlen 1000
+    link/ether xx:xx:xx:xx:xx:xx brd ff:ff:ff:ff:ff:ff
+    inet 192.168.0.108/24 brd 192.168.0.255 scope global dynamic noprefixroute eth0
+       valid_lft 40699sec preferred_lft 40699sec
+</code></pre>
+
+<p>After:</p>
+
+<pre><code>anarcat@angela:~&gt; ip -br -c a
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+wlan0            DOWN           
+virbr0           DOWN           192.168.122.1/24 
+eth0             UP             192.168.0.108/24 
+</code></pre>
+
+<p>I don't even need to redact MAC addresses! It also affects the display
+of the other commands, which look similarly neat.</p>
+
+<p>Also imagine pretty colors above.</p>
+
+<p>Finally, I don't have a cheat sheet for <code>iw</code> vs <code>iwconfig</code> (from
+<code>wireless-tools</code>) yet. I just use NetworkManager now and rarely have
+to mess with wireless interfaces directly.</p>
+
+<h1 id="background-and-history">Background and history</h1>
+
+<p>For context, there are traditionally two ways of configuring the
+network in Linux:</p>
+
+<ul>
+<li>the old way, with commands like <code>ifconfig</code>, <code>arp</code>, <code>route</code> and
+<code>netstat</code>, those are part of the <a href="https://sourceforge.net/projects/net-tools/">net-tools</a> package</li>
+<li>the new way, mostly (but not entirely!) wrapped in a single <code>ip</code>
+command, that is the <a href="https://wiki.linuxfoundation.org/networking/iproute2">iproute2</a> package</li>
+</ul>
+
+
+<p>It seems like the latter was made "important" in Debian <a href="https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=487533">in 2008</a>,
+which means every release since Debian 5 "lenny" <img alt="(!)" src="https://anarc.at/smileys/idea.png" /> has featured the
+<code>ip</code> command.</p>
+
+<p>The former <code>net-tools</code> package was <a href="https://lists.debian.org/debian-devel/2016/12/msg00775.html">demoted in December 2016</a> which
+means every release since Debian 9 "stretch" ships <em>without</em> an
+<code>ifconfig</code> command unless explicitly requested. Note that this was
+mentioned <a href="https://www.debian.org/releases/stretch/amd64/release-notes">in the release notes</a> in a similar (but, IMHO, less
+useful) table.</p>
+
+<p>(Technically, the <code>net-tools</code> Debian package source still indicates it
+is <code>Priority: important</code> but that's <a href="https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1128342">a bug I have just filed</a>.)</p>
+
+<p>Finally, and perhaps more importantly, the name <code>iproute</code> is hilarious
+if you are a bilingual french speaker: it can be read as "I proute"
+which can be interpreted as "I fart" as "prout!" is the sound a fart
+makes. The fact that it's called <code>iproute2</code> makes it only more
+hilarious.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 18, 2026 04:30 PM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2026-02-18-iproute2/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/write-python-docstrings-effectively/" class="hover:underline"
+              >Write Python Docstrings Effectively</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn to write clear, effective Python docstrings using best practices, common styles, and built-in conventions for your code.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 17, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/write-python-docstrings-effectively/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/02/join-the-python-security-response-team.html" class="hover:underline"
+              >Join the Python Security Response Team!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <div class="js-commit-preview commit-preview
+        p-5 markdown-body
+        
+         "><p>Thanks to the work of the Security Developer-in-Residence 
+Seth Larson, the Python Security Response Team (PSRT) now has an 
+approved <a href="https://peps.python.org/pep-0811/" rel="nofollow">public governance document</a> (PEP 811). Following the new governance structure the PSRT now <a href="https://devguide.python.org/developer-workflow/psrt/#members" rel="nofollow">publishes a public list of members</a>, has documented <a href="https://devguide.python.org/developer-workflow/psrt/#responsibilities-of-psrt-members" rel="nofollow">responsibilities for members</a> and <a href="https://devguide.python.org/developer-workflow/psrt/#responsibilities-of-psrt-admins" rel="nofollow">admins</a>, and a defined process for <a href="https://devguide.python.org/developer-workflow/psrt/#how-can-i-join-the-psrt" rel="nofollow">onboarding and offboarding members</a> to balance the needs of security and sustainability. The document also clarifies the relationship between the <a href="https://github.com/python/steering-council">Python Steering Council</a> and the PSRT.</p>
+<p>And this new onboarding process is already working! The PSF 
+Infrastructure Engineer, Jacob Coffee, has just joined the PSRT as the 
+first new non-"Release Manager" member since Seth joined the PSRT in 
+2023. We expect new members to join further bolstering the 
+sustainability of security work for the Python programming language.</p>
+<p>Thanks to <a href="https://alpha-omega.dev" rel="nofollow">Alpha-Omega</a>
+ for their support of Python ecosystem security by sponsoring Seth’s 
+work as the Security Developer-in-Residence at the Python Software 
+Foundation.</p>
+<div class="markdown-heading"><h3 class="heading-element"><strong>What is the Python Security Response Team?</strong></h3><a class="anchor" href="https://gist.github.com/#what-is-the-python-security-response-team" id="user-content-what-is-the-python-security-response-team"><span class="octicon octicon-link"></span></a></div>
+<p>Security doesn't happen by accident: it's thanks to the work of 
+volunteers and paid Python Software Foundation staff on the Python 
+Security Response Team to triage and coordinate vulnerability reports 
+and remediations keeping all Python users safe. Just last year the PSRT 
+published 16 vulnerability advisories for CPython and pip, <em>the most in a single year to date!</em></p>
+<p>And the PSRT usually can’t do this work alone, PSRT coordinators are 
+encouraged to involve maintainers and experts on the projects and 
+submodules. By involving the experts directly in the remediation process
+ ensures fixes adhere to existing API conventions and threat-models, are
+ maintainable long-term, and have minimal impact on existing use-cases.</p>
+<p>Sometimes the PSRT even coordinates with other open source projects 
+to avoid catching the Python ecosystem off-guard by publishing a 
+vulnerability advisory that affects multiple other projects. The most 
+recent example of this is PyPI’s <a href="https://blog.pypi.org/posts/2025-08-07-wheel-archive-confusion-attacks/" rel="nofollow">ZIP archive differential attack mitigation</a>.</p>
+<p>This work deserves <a href="https://devguide.python.org/developer-workflow/psrt/#members" rel="nofollow">recognition and celebration</a>
+ just like contributions to source code and documentation. Seth and 
+Jacob are developing further improvements to workflows involving “GitHub
+ Security Advisories” to record the reporter, coordinator, and 
+remediation developers and reviewers to CVE and OSV records to properly 
+thank everyone involved in the otherwise private contribution to open 
+source projects.</p>
+<div class="markdown-heading"><h3 class="heading-element"><strong>How can I join the Python Security Response Team?</strong></h3><a class="anchor" href="https://gist.github.com/#how-can-i-join-the-python-security-response-team" id="user-content-how-can-i-join-the-python-security-response-team"><span class="octicon octicon-link"></span></a></div>
+<p>Maybe you’ve read all this and are interested in directly helping the
+ Python programming language be more secure! The process is <a href="https://devguide.python.org/developer-workflow/psrt/#how-can-i-join-the-psrt" rel="nofollow">similar to the Core Team nomination process</a>,
+ you need an existing PSRT member to nominate you and for your 
+nomination to receive at least ⅔ positive votes from existing PSRT 
+members.</p>
+<p>You do not need to be a core developer, team member, or triager to be
+ a member of the Python Security Response Team. Anyone with security 
+expertise that is known and highly-trusted within the Python community 
+and has time to volunteer or donate through their employer would make a 
+good candidate for the PSRT. Please note that all PSRT team members <a href="https://devguide.python.org/developer-workflow/psrt/#responsibilities-of-psrt-members" rel="nofollow">have documented responsibilities</a> and are expected to contribute meaningfully to the remediation of vulnerabilities.</p>
+<p>Being a member of the PSRT is not required <a href="https://mail.python.org/archives/list/security-announce@python.org/" rel="nofollow">to be notified of vulnerabilities</a>
+ and shouldn’t be to receive “early notification” of vulnerabilities 
+affecting CPython and pip. The Python Software Foundation is a <a href="https://www.python.org/cve-numbering-authority/" rel="nofollow">CVE Numbering Authority</a> and publishes CVE and <a href="https://github.com/psf/advisory-database/">OSV</a> records with up-to-date information about vulnerabilities affecting CPython and pip.</p>
+</div><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 17, 2026 07:30 AM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/02/join-the-python-security-response-team.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2145,7 +2320,7 @@ But because we have access and control over a big part of the infrastructure tha
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8020</a></li>
+    <li><a>Total Entries: 8167</a></li>
     <li><a>Unique Feeds: 387</a></li>
     
 
