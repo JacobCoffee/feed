@@ -53,6 +53,578 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/" class="hover:underline"
+              >Kernel-only network configuration on Linux</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>What if I told you there is a way to configure the network on any
+Linux server that:</p>
+
+<ol>
+<li>works across all distributions</li>
+<li>doesn't require any software installed apart from the kernel and a
+boot loader (no <code>systemd-networkd</code>, <code>ifupdown</code>, <code>NetworkManager</code>,
+nothing)</li>
+<li>is backwards compatible all the way back to Linux 2.0, in 1996</li>
+</ol>
+
+
+<p>It has literally 8 different caveats on top of that, but is still
+totally worth your time.</p>
+
+<h1 id="known-options-in-debian">Known options in Debian</h1>
+
+<p>People following Debian development might have noticed there are now
+<em>four</em> ways of configuring the network Debian system. At least that is
+what the <a href="https://wiki.debian.org/NetworkConfiguration#A4_ways_to_configure_the_network">Debian wiki claims</a>, namely:</p>
+
+<ul>
+<li><p><code>ifupdown</code> (<code>/etc/network/interfaces</code>): traditional static
+configuration system, mostly for workstations and servers that has
+been there forever in Debian (since <a href="https://sources.debian.org/src/ifupdown/0.8.45/debian/changelog#L1948-L1952">at least 2000</a>), documented
+<a href="https://wiki.debian.org/NetworkConfiguration">in the Debian wiki</a></p></li>
+<li><p><a href="https://networkmanager.dev/">NetworkManager</a>: self-proclaimed "standard Linux network
+configuration", mostly used on desktops but technically supports
+servers as well, see the <a>Debian wiki page</a> (introduced in 2004)</p></li>
+<li><p><code>systemd-network</code>: used more for servers, see <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_without_gui">Debian reference Doc
+Chapter 5</a> (introduced some time around Debian 8 "jessie", in
+2015)</p></li>
+<li><p><a href="https://netplan.io/">Netplan</a>: latest entry (2018), YAML-based configuration
+abstraction layer on top of the above two, see also <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_for_cloud">Debian
+reference Doc Chapter 5</a> and <a href="https://wiki.debian.org/Netplan">the Debian wiki</a></p></li>
+</ul>
+
+
+<p>At this point, I feel <code>ifupdown</code> is on its way out, possibly replaced
+by <code>systemd-networkd</code>. NetworkManager already manages most desktop
+configurations.</p>
+
+<h1 id="a-new-network-configuration-system">A "new" network configuration system</h1>
+
+<p>The method is this:</p>
+
+<ul>
+<li><code>ip=</code> on the <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">Linux kernel command line</a>: for servers with a
+single IPv4 or IPv6 address, no software required other than the
+kernel and a boot loader (since 2002 or older)</li>
+</ul>
+
+
+<blockquote><p>So by "new" I mean "new to me". This option is <em>really</em> old. The
+<code>nfsroot.txt</code> where it is documented predates the git import of the
+Linux kernel: it's part of the 2005 git import of 2.6.12-rc2. That's
+already 20+ years old already.</p>
+
+<p>The oldest trace I found is in this <a href="https://git.kernel.org/pub/scm/linux/kernel/git/tglx/history.git/commit/Documentation/nfsroot.txt?id=7a2deb32924142696b8174cdf9b38cd72a11fc96">2002 commit</a>, which imports
+the whole file at once, but the option might goes back as far as
+1996-1997, if the copyright on the file is correct and the option
+was present back then.</p></blockquote>
+
+<h1 id="what-are-you-doing">What are you doing.</h1>
+
+<p>The trick is to add an <code>ip=</code> parameter to the kernel's
+command-line. The syntax, as mentioned above, is in <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">nfsroot.txt</a>
+and looks like this:</p>
+
+<pre><code>ip=&lt;client-ip&gt;:&lt;server-ip&gt;:&lt;gw-ip&gt;:&lt;netmask&gt;:&lt;hostname&gt;:&lt;device&gt;:&lt;autoconf&gt;:&lt;dns0-ip&gt;:&lt;dns1-ip&gt;:&lt;ntp0-ip&gt;
+</code></pre>
+
+<p>Most settings are pretty self-explanatory, if you ignore the useless
+ones:</p>
+
+<ul>
+<li><code>&lt;client-ip&gt;</code>: IP address of the server</li>
+<li><code>&lt;gw-ip&gt;</code>: address of the gateway</li>
+<li><code>&lt;netmask&gt;</code>: netmask, in quad notation</li>
+<li><code>&lt;device&gt;</code>: interface name, if multiple available</li>
+<li><code>&lt;autoconf&gt;</code>: how to configure the interface, namely:
+
+<ul>
+<li><code>off</code> or <code>none</code>: no autoconfiguration (static)</li>
+<li><code>on</code> or <code>any</code>: use any protocol (default)</li>
+<li><code>dhcp</code>, essentially like <code>on</code> for all intents and purposes</li>
+</ul>
+</li>
+<li><code>&lt;dns0-ip&gt;</code>, <code>&lt;dns1-ip&gt;</code>: IP address of primary and secondary name
+servers, exported to <code>/proc/net/pnp</code>, can by symlinked to
+<code>/etc/resolv.conf</code></li>
+</ul>
+
+
+<p>We're ignoring the options:</p>
+
+<ul>
+<li><code>&lt;server-ip&gt;</code>: IP address of the NFS server, exported to <code>/proc/net/pnp</code></li>
+<li><code>&lt;hostnname&gt;</code>: Name of the client, typically sent over the DHCP
+requests, which may lead to a DNS record to be created in some
+networks</li>
+<li><code>&lt;ntp0-ip&gt;</code>: exported to <code>/proc/net/ipconfig/ntp_servers</code>, unused by
+the kernel</li>
+</ul>
+
+
+<p>Note that the <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/networking_guide/sec-configuring_ip_networking_from_the_kernel_command_line">Red Hat manual</a> has a different opinion:</p>
+
+<pre><code>ip=[&lt;server-id&gt;]:&lt;gateway-IP-number&gt;:&lt;netmask&gt;:&lt;client-hostname&gt;:inteface:[dhcp|dhcp6|auto6|on|any|none|off]
+</code></pre>
+
+<p>It's essentially the same (although <code>server-id</code> is weird), and the
+<code>autoconf</code> variable has other settings, so that's a bit odd.</p>
+
+<h1 id="examples">Examples</h1>
+
+<p>For example, this command-line setting:</p>
+
+<pre><code>ip=192.0.2.42::192.0.2.1:255.255.255.0:::off
+</code></pre>
+
+<p>... will set the IP address to 192.0.2.42/24 and the gateway to
+192.0.2.1. This will properly guess the network interface if there's a
+single one.</p>
+
+<p>A DHCP only configuration will look like this:</p>
+
+<pre><code>ip=::::::dhcp
+</code></pre>
+
+<p>Of course, you don't want to type this by hand every time you boot the
+machine. That wouldn't work. You need to configure the kernel
+commandline, and that depends on your boot loader.</p>
+
+<h2 id="grub">GRUB</h2>
+
+<p>With GRUB, you need to edit (on Debian), the file <code>/etc/default/grub</code>
+(ugh) and find a line like:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=
+</code></pre>
+
+<p>and change it to:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=ip=::::::dhcp
+</code></pre>
+
+<h2 id="systemd-boot-and-uki-setups">systemd-boot and UKI setups</h2>
+
+<p>For <code>systemd-boot</code> UKI setups, it's simpler: just add the setting to
+the <code>/etc/kernel/cmdline</code> file. Don't forget to include anything
+that's non-default from <code>/proc/cmdline</code>.</p>
+
+<p>This assumes that is the <code>Cmdline=@</code> setting in
+<code>/etc/kernel/uki.conf</code>. See <a href="https://anarc.at/blog/2025-08-20-luks-ukify-conversion/">2025-08-20-luks-ukify-conversion</a> for
+my minimal documentation on this.</p>
+
+<h2 id="other-systems">Other systems</h2>
+
+<p>This is perhaps where this is much less portable than it might first
+look, because of course each distribution has its own way of
+configuring those options. Here are some that I know of:</p>
+
+<ul>
+<li><a href="https://wiki.archlinux.org/title/Kernel_parameters">Arch</a> (11 options, mostly <code>/etc/default/grub</code>,
+<code>/boot/loader/entries/arch.conf</code> for <code>systemd-boot</code> or
+<code>/etc/kernel/cmdline</code> for UKI)</li>
+<li><a href="https://fedoramagazine.org/setting-kernel-command-line-arguments-with-fedora-30/">Fedora</a> (mostly <code>/etc/default/grub</code>, may be more <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/managing_monitoring_and_updating_the_kernel/configuring-kernel-command-line-parameters_managing-monitoring-and-updating-the-kernel">RHEL mentions
+grubby</a>, possibly some <code>systemd-boot</code> things here as well)</li>
+<li><a href="https://wiki.gentoo.org/wiki/Kernel/Command-line_parameters">Gentoo</a> (5 options, mostly <code>/etc/default/grub</code>,
+<code>/efi/loader/entries/gentoo-sources-kernel.conf</code> for <code>systemd-boot</code>,
+or <code>/etc/kernel/install.d/95-uki-with-custom-opts.install</code>)</li>
+</ul>
+
+
+<p>It's interesting that <code>/etc/default/grub</code> is consistent across all
+distributions above, while the <code>systemd-boot</code> setups are <em>all over the
+place</em> (except for the UKI case), while I would have expected those be
+<em>more</em> standard than GRUB.</p>
+
+<h2 id="dropbear-initramfs">dropbear-initramfs</h2>
+
+<p>If <code>dropbear-initramfs</code> is setup, it already <em>requires</em> you to have
+such a configuration, and it might not work out of the box.</p>
+
+<p>This is because, by default, it <em>disables</em> the interfaces configured
+in the kernel after completing its tasks (typically unlocking the
+encrypted disks).</p>
+
+<p>To fix this, you need to <em>disable</em> that "feature":</p>
+
+<pre><code>IFDOWN="none"
+</code></pre>
+
+<p>This will keep <code>dropbear-initramfs</code> from disabling the configured
+interface.</p>
+
+<h1 id="why">Why?</h1>
+
+<p>Traditionally, I've always setup my servers with <code>ifupdown</code> on servers
+and NetworkManager on laptops, because that's essentially the
+default. But on some machines, I've started using <code>systemd-networkd</code>
+because <code>ifupdown</code> has ... issues, particularly with reloading network
+configurations. <code>ifupdown</code> is a old hack, feels like legacy, and is
+Debian-specific.</p>
+
+<p>Not excited about configuring another service, I figured I would try
+something else: just configure the network at boot, through the kernel
+command-line.</p>
+
+<p>I was already doing such configurations for <a href="https://packages.debian.org/unstable/dropbear-initramfs">dropbear-initramfs</a>
+(see <a href="https://wiki.debian.org/DropBear">this documentation</a>), which requires the network the be up
+for unlocking the full-disk encryption keys.</p>
+
+<p>So in a sense, this is a "Don't Repeat Yourself" solution.</p>
+
+<h1 id="caveats">Caveats</h1>
+
+<p>Also known as: "wait, that works?" Yes, it does! That said...</p>
+
+<ol>
+<li><p>This is useful for servers where the network configuration will
+not change after boot. Of course, this won't work on laptops or
+any mobile device.</p></li>
+<li><p>This only works for configuring a single, simple, interface. You
+can't configure multiple interfaces, WiFi, bridges, VLAN, bonding,
+etc.</p></li>
+<li><p>It does support IPv6 and feels like the best way to configure IPv6
+hosts: true zero configuration.</p></li>
+<li><p>It likely does <em>not</em> work with a <em>dual-stack</em> IPv4/IPv6 static
+configuration. It <em>might</em> work with a <em>dynamic</em> dual stack
+configuration, but I doubt it.</p></li>
+<li><p>I don't know what happens when a DHCP lease expires. No daemon
+seems to be running so I assume leases are not renewed, so this is
+more useful for static configurations, which includes server-side
+reserved fixed IP addresses. (A non-renewed lease risks getting
+reallocated to another machine, which would cause an addressing
+conflict.)</p></li>
+<li><p>It will not automatically reconfigure the interface on link
+changes, but <code>ifupdown</code> does not either.</p></li>
+<li><p>It will <em>not</em> write <code>/etc/resolv.conf</code> for you <em>but</em> the <code>dns0-ip</code>
+and <code>dns1-ip</code> do end up in <code>/proc/net/pnp</code> which has a compatible
+syntax, so a common configuration is:</p>
+
+<pre><code>ln -s /proc/net/pnp /etc/resolv.conf
+</code></pre></li>
+<li><p>I have not really tested this <a href="https://db.torproject.org/machines.cgi">at scale</a>: only a single, test
+server at home.</p></li>
+</ol>
+
+
+<p>Yes, that's a lot of caveats, but it happens to cover a <em>lot</em> of
+machines for me, and it works surprisingly well. My main doubts are
+about long-term DHCP behaviour, but I don't see why that would be a
+problem with a statically defined lease.</p>
+
+<h1 id="cleanup">Cleanup</h1>
+
+<p>Once you have this configuration, you don't need <em>any</em> "user" level
+network system, so you can get rid of <em>everything</em>:</p>
+
+<pre><code>apt purge systemd-networkd ifupdown network-manager netplan.io
+</code></pre>
+
+<p>Note that <code>ifupdown</code> (and probably others) leave stray files in (e.g.)
+<code>/etc/network</code> which you might want to cleanup, or keep in case all
+this fails and I have put you in utter misery. Configuration files for
+other packages might also be left behind, I haven't tested this, no
+warranty.</p>
+
+<h1 id="credits">Credits</h1>
+
+<p>This whole idea came from the <a href="https://www.autistici.org/">A/I</a> folks (not to be confused with
+<a href="https://en.wikipedia.org/wiki/Bullshit">AI</a>) who have been doing this forever, thanks!</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 16, 2026 04:18 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://efficientcoder.net/python-dark-side/" class="hover:underline"
+              >الجانب المظلم لبايثون: استخدامات صادمة لم تكن تعرفها</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>تعتقد أن <strong>بايثون</strong> هي تلك اللغة اللطيفة التي يتعلمها المبتدئون.
+بسيطة، سهلة، ومناسبة للجميع.</p>
+
+<p>لكن ما لا يخبرونك به هو أن هذه اللغة نفسها يمكنها السيطرة على جهازك بصمت، فتح كاميرتك، سرقة كلمات مرورك، وحتى توليد فيديوهات مزيفة لك تقول فيها أشياء لم تقلها أبدًا.</p>
+
+<p>اليوم، سنكشف عن <strong>الجانب المظلم لبايثون</strong>، وهو واقع حقيقي ومقلق في عالمنا اليوم.</p>
+
+<h2 id="بايثون-السلاح-الخفي-في-عالم-الأمن-السيبراني">بايثون: السلاح الخفي في عالم الأمن السيبراني</h2>
+
+<p>في عالم <strong>الأمن السيبراني</strong>، هناك أنظمة اختراق شهيرة تحتوي على مئات الأدوات، والكثير منها مكتوب ومدعوم ببايثون. هذه الأدوات تُستخدم لاكتشاف الثغرات، ولكنها في الأيدي الخاطئة تتحول إلى سلاح فتاك.</p>
+
+<p>ماذا يمكن لبايثون أن تفعل في هذا المجال؟</p>
+<ul>
+  <li><strong>فحص شبكات</strong> بالكامل خلال دقائق.</li>
+  <li><strong>اكتشاف الأجهزة المتصلة</strong> بالراوتر.</li>
+  <li><strong>تجربة آلاف كلمات المرور</strong> تلقائيًا.</li>
+  <li><strong>إنشاء سكربتات</strong> للتحكم في الأجهزة عن بعد.</li>
+</ul>
+
+<p>الأخطر من ذلك أن كل هذا يمكن كتابته بأسطر برمجية بسيطة نسبيًا مقارنة باللغات الأخرى. المفارقة أن نفس الأدوات التي تُستخدم لحماية الشركات الكبرى هي نفسها التي تُستخدم لاختراقها.</p>
+
+<p>الفرق الوحيد هو <strong>النية</strong>.</p>
+
+<h2 id="صناعة-الفيروسات-عندما-يختبئ-الشر-في-بضعة-أسطر">صناعة الفيروسات: عندما يختبئ الشر في بضعة أسطر</h2>
+
+<p>بايثون ليست مجرد لغة تعليمية، بل هي قادرة على بناء برمجيات تختبئ في الظلام.</p>
+
+<p>يمكنها إنشاء <strong>مسجل لكل ضغطة زر</strong> (Keylogger)، أو <strong>برنامج تجسس</strong> يسحب ملفاتك بصمت، أو حتى <strong>برنامج فدية</strong> يشفر صورك ويطلب المال مقابل إعادتها.</p>
+
+<p>قد يبدو الملف صغيرًا وبريئًا، لكنه يفتح بابًا لا يمكن إغلاقه. هجوم الفدية الشهير “WannaCry” عام 2017، رغم أنه لم يكن مكتوبًا بالكامل ببايثون، ألهم آلاف البرمجيات الخبيثة المشابهة التي تم تطويرها باستخدامها.</p>
+
+<p>أحيانًا، فيروس لا يتجاوز حجمه بضعة كيلوبايتات يمكن أن يدمر شركات بأكملها.</p>
+
+<h2 id="الذكاء-الاصطناعي-بين-صناعة-الحقيقة-وتزييفها">الذكاء الاصطناعي: بين صناعة الحقيقة وتزييفها</h2>
+
+<p>بايثون هي العمود الفقري لعالم <strong>الذكااء الاصطناعي</strong>. المكتبات القوية التي تدعمها تمنحها قدرات مخيفة:</p>
+<ul>
+  <li>تقليد صوت أي شخص بدقة مذهلة.</li>
+  <li>توليد صور واقعية لأشخاص غير موجودين.</li>
+  <li>صناعة فيديوهات مزيفة (Deepfakes) تبدو حقيقية تمامًا.</li>
+</ul>
+
+<p>تخيل فيديو لشخصية عامة يعلن عن خبر خطير، بينما الفيديو كله مزيف. في عصر المعلومات، بايثون قادرة على <strong>صناعة الحقيقة أو قتلها</strong>.</p>
+
+<h2 id="التلاعب-بالأسواق-ونشر-الفوضى">التلاعب بالأسواق ونشر الفوضى</h2>
+
+<p>الأمر لا يتوقف عند التزييف. الخوارزميات المكتوبة ببايثون بدأت تلعب بالأسواق المالية والرأي العام.</p>
+
+<p>يمكنها إنشاء <strong>بوتات تداول آلية</strong> تحلل ملايين البيانات في ثوانٍ، استخراج بيانات المستخدمين، وتشغيل شبكات من الحسابات الوهمية بسكربت واحد لنشر فكرة معينة أو التلاعب بأسعار الأسهم.</p>
+
+<p>هذه هي “الخوارزميات التي لا تنام”. والسؤال الذي يطرح نفسه: ما هو حجم الرأي العام الذي يمكن توجيهه بواسطة هذه الخوارزميات؟</p>
+
+<h2 id="التجسس-الصامت-عندما-يصبح-جهازك-نافذة-مفتوحة">التجسس الصامت: عندما يصبح جهازك نافذة مفتوحة</h2>
+
+<p>بعض الأدوات المكتوبة ببايثون قادرة على تحويل جهازك إلى نافذة مفتوحة للمجرمين.</p>
+
+<p>يمكنها <strong>فتح الكاميرا</strong> دون إضاءة المؤشر، <strong>تسجيل الصوت</strong>، <strong>تتبع ضغطات المفاتيح</strong>، ونسخ ملفاتك وإرسالها عبر الإنترنت.</p>
+
+<p>هذه التقنيات، التي تُستخدم رسميًا في التحقيقات الجنائية، أصبحت الآن أداة في أيدي المجرمين الإلكترونيين. الرعب الحقيقي هو أن الضحية غالبًا لا يعلم أنه مراقب.</p>
+
+<h2 id="ليست-المشكلة-في-الأداة-بل-في-اليد-التي-تستخدمها">ليست المشكلة في الأداة، بل في اليد التي تستخدمها</h2>
+
+<p>بعد كل هذا السواد، يجب أن نقلب المشهد.
+المشكلة ليست في <strong>بايثون</strong> بحد ذاتها، ولا في التكنولوجيا.</p>
+
+<p>نفس اللغة التي تدمر هي نفسها التي تبني. هي التي تُستخدم لتطوير أدوية جديدة بالذكاء الاصطناعي، وتحليل صور الأشعة لاكتشاف السرطان مبكرًا، وحماية البنوك من الاختراق عبر اكتشاف الثغرات قبل استغلالها.</p>
+
+<p>التكنولوجيا قوة خام، والإنسان هو من يحدد اتجاهها، سواء للخير أو للشر.</p>
+
+<h2 id="الخاتمة-العقل-البشري-هو-الخطر-الحقيقي">الخاتمة: العقل البشري هو الخطر الحقيقي</h2>
+
+<p>في النهاية، أخطر شيء في العالم ليس الذكاء الاصطناعي، ولا البرمجة، ولا التطور المرعب الذي نشهده.</p>
+
+<p>أخطر شيء هو <strong>العقل الذي يستخدم كل هذه الأدوات بلا أخلاق</strong>.</p>
+
+<p>عندما تمتلك أداة قوية، يمكنك استخدامها لمساعدة العالم، أو لتدمير الآخرين. المشكلة ليست في بايثون، بل في عقل وأخلاق الإنسان الذي وصلنا إليه.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 14, 2026 12:00 AM UTC by
+            <a href="https://www.ahmedbouchefra.com/python/feed.xml" class="link link-hover text-primary"
+              >Ahmed Bouchefra</a
+            >
+          </div>
+          <a
+            href="https://efficientcoder.net/python-dark-side/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/default-dictionary-values/" class="hover:underline"
+              >Setting default dictionary values in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>There are <em>many</em> ways to set default values for dictionary key lookups in Python. Which way you should use will depend on your use case.</p>
+
+
+<div>
+  
+    <a href="https://www.pythonmorsels.com/default-dictionary-values/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2121523943-297895de5097aff62961efa4bf8b0e8fdeeba9ef7950d9c838bd9478d1fe282b-d_1920x1080%3F%26region%3Dus&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#get" target="_blank">The <code>get</code> method: lookups with a default</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#setdefault" target="_blank">The <code>setdefault</code> method: setting a default</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#fromkeys" target="_blank">The <code>fromkeys</code> method: initializing defaults</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#fromkeys-issue" target="_blank">Caution with mutable defaults</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#comprehension" target="_blank">A dictionary comprehension</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#defaultdict" target="_blank">The <code>collections.defaultdict</code> class</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#counter" target="_blank">The <code>collections.Counter</code> class</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/default-dictionary-values/#start-simple-with-your-defaulting" target="_blank">Start simple with your defaulting</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>The <code>get</code> method: lookups with a default</h2>
+    
+      
+        <p>The <code>get</code> method is the classic way to look up a value for a dictionary key without raising an exception for missing keys.</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">quantities</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"pink"</span><span class="p">:</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">"green"</span><span class="p">:</span> <span class="mi">4</span><span class="p">}</span>
+</code></pre></div>
+
+
+      
+        <p>Instead of this:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="k">try</span><span class="p">:</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="n">quantities</span><span class="p">[</span><span class="n">color</span><span class="p">]</span>
+<span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+</code></pre></div>
+
+
+      
+        <p>Or this:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="k">if</span> <span class="n">color</span> <span class="ow">in</span> <span class="n">quantities</span><span class="p">:</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="n">quantities</span><span class="p">[</span><span class="n">color</span><span class="p">]</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+</code></pre></div>
+
+
+      
+        <p>We can do this:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="n">count</span> <span class="o">=</span> <span class="n">quantities</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">color</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>Here's what this would do for a key that's <em>in</em> the dictionary and one that isn't:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">quantities</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pink"</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="go">3</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">quantities</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"blue"</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="go">0</span>
+</code></pre></div>
+
+
+      
+        <p>The <code>get</code> method accepts two arguments: the key to look up and <strong>the default value</strong> to use if that key isn't in the dictionary.
+The second argument defaults to <code>None</code>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">quantities</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"pink"</span><span class="p">)</span>
+<span class="go">3</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">quantities</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"blue"</span><span class="p">)</span>
+<span class="go">None</span>
+</code></pre></div>
+
+
+      
+    
+  
+    <h2>The <code>setdefault</code> method: setting a default</h2>
+    
+      <p>The <code>get</code> method doesn&#x27;t <em>modify</em> …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/default-dictionary-values/" target="_blank">Read the full article: https://www.pythonmorsels.com/default-dictionary-values/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 13, 2026 04:45 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/default-dictionary-values/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/podcasts/rpp/284/" class="hover:underline"
               >The Real Python Podcast – Episode #284: Running Local LLMs With Ollama and Connecting With Python</a
             >
@@ -213,6 +785,279 @@ upwards, it might change, but so far, how that would happen is not clear.</p>
           </div>
           <a
             href="https://lucumr.pocoo.org/2026/2/13/the-final-bottleneck/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html" class="hover:underline"
+              >Garmin inReach Mini 2 Leaflet checkin map</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We will be trekking the eastern part of the Great Himalaya Trail in Nepal in
+March/April. Details on the route and our plans can be found at
+<a href="https://greathimalayatrail.de">https://greathimalayatrail.de</a>. Our intent is to keep friends and family
+updated on our progress. Given that we'll be hiking in quite remote areas, a
+satellite phone/pager will be our sole means of communication.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/garmin-inreach-mini.png" /></p>
+<p>After the Garmin inReach Mini 3 was released recently, the Inreach Mini 2 was on
+heavy sale. The inReach Mini 2 has all the features I need: satellite messaging,
+check-ins, offline mode with navigation, and track recording.</p>
+<h1>Plans</h1>
+<p>I'm on the Garmin Essential plan for 18 euros per month. It includes 50 free
+text messages or weather requests each month, plus unlimited check-in messages.
+The smaller Enabled plan (10 Euros) is missing the unlimited checkins, while the
+the Standard plan (34 Euros) gives you 150 free messages and unlimited live tracking.
+More details are on the <a href="https://www.garmin.com/de-DE/p/837461/pn/010-04015-SU/">Garmin page</a></p>
+<h1>Messaging</h1>
+<p>There are three different type of messages that you can send:</p>
+<p><strong>Check-In Messages:</strong> There are three preset messages. You can configure the
+recipients at <a href="https://explore.garmin.com">explore.garmin.com</a>. Depending on your Garmin
+subscription, sending check-in messages are free of charge. In the configuration section,
+you can enable the option to include your latitude/longitude and a link to the
+Garmin map in each SMS message. This information is always included for email
+recipients</p>
+<p><strong>Quick Messages:</strong> You can create up to 20 predefined messages so you don’t
+have to type them while you’re on the trail. The number of free messages you
+get depends on your Garmin subscription; any additional messages are billed per
+use. You can create or edit these messages at explore.garmin.com.</p>
+<p><strong>Normal Messages:</strong> In the Garmin Messenger iPhone app, you can type any custom
+message and send it to both SMS and email recipients. These messages are billed
+the same way as quick messages.</p>
+<p>You can configure the system to send all messages to any email/sms recipients. The great
+thing is that the unlimited check-in messages also include latitude/longitude information.
+Here is a sample message.</p>
+<div class="highlight"><pre><span></span>Arrived at Camp
+
+View the location or send a reply to Peter Hoffmann:
+https://inreachlink.com/&lt;unique_code&gt;
+
+Peter Hoffmann sent this message from: Lat 48.996386 Lon 8.468849
+
+Do not reply directly to this message.
+
+This message was sent to you using the inReach two-way satellite communicator with GPS. To learn more, visit http://explore.garmin.com/inreach.
+</pre></div>
+<p>As we do not want to spam all our friends with daily checkins I have build
+a little leaflet-checkin plugin and an imap scraper to pull and visualize
+the checkin/messages.</p>
+<h1>Build your own Tracking with Check-In Messages</h1>
+<p>For battery life reasons, we are not interested in real-time live tracking.<br />
+Instead, I’ve created a small script that checks a dedicated IMAP email account
+for check-in messages and publishes them to a server, which then displays the
+location of our most recent check-in. Sending a check-in once a day or during
+each break when we are in more remote areas—should give our friends enough
+information in case any problems arise.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/leaflet-checkin-map.png" /></p>
+<p>A straightforward Python script connects to my IMAP server, retrieves all emails from
+the Garmin InReach service, parses the message, timestamp, and latitude/longitude, and
+then updates a <code>positions.json</code> file on my webserver.</p>
+<p>Then a simple static html file with a <a href="https://leafletjs.com">leaflet</a> map pulls
+the <code>positions.json</code> file and displays the messages/checkins on the map.</p>
+<p>A demo of the map is available at:</p>
+<p><a href="https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html">https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html</a></p>
+<p>and you can checkout the code</p>
+<p><a href="https://github.com/hoffmann/garmin-inreach-checkin-map">https://github.com/hoffmann/garmin-inreach-checkin-map</a></p>
+<div class="highlight"><pre><span></span><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;Poll IMAP inbox for Garmin inReach emails and extract positions into positions.json.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">email</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">email.utils</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">imaplib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timezone</span>
+
+<span class="n">BOILERPLATE_PREFIXES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;View the location&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Do not reply&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;This message was sent&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">POSITIONS_FILE</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;positions.json&quot;</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">imaplib</span><span class="o">.</span><span class="n">IMAP4_SSL</span><span class="p">(</span><span class="n">host</span><span class="p">)</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">login</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">imap</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">):</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;INBOX&quot;</span><span class="p">)</span>
+    <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="kc">None</span><span class="p">,</span> <span class="s1">'(OR FROM &quot;no.reply.inreach@garmin.com&quot; SUBJECT &quot;inReach message&quot;)'</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">msg_ids</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">is_multipart</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">walk</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_type</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;text/plain&quot;</span><span class="p">:</span>
+                <span class="n">charset</span> <span class="o">=</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+                <span class="k">return</span> <span class="n">part</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">charset</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+        <span class="k">return</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="n">date_str</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Date&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">date_str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">parsedate_to_datetime</span><span class="p">(</span><span class="n">date_str</span><span class="p">)</span>
+    <span class="n">dt_utc</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">astimezone</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">dt_utc</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">):</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+
+    <span class="c1"># Extract message: first non-empty line</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">stripped</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">stripped</span><span class="p">:</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="n">stripped</span>
+            <span class="k">break</span>
+
+    <span class="c1"># Check if the message is boilerplate</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">message</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="k">for</span> <span class="n">prefix</span> <span class="ow">in</span> <span class="n">BOILERPLATE_PREFIXES</span><span class="p">):</span>
+        <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="c1"># Extract lat/lon</span>
+    <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;Lat\s+([-\d.]+)\s+Lon\s+([-\d.]+)&quot;</span><span class="p">,</span> <span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">lat</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">lon</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_email</span><span class="p">(</span><span class="n">msg_data</span><span class="p">):</span>
+    <span class="n">msg</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">message_from_bytes</span><span class="p">(</span><span class="n">msg_data</span><span class="p">)</span>
+
+    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">timestamp</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">body</span> <span class="o">=</span> <span class="n">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">body</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="n">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">lat</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">lon</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">timestamp</span><span class="p">,</span>
+        <span class="s2">&quot;lat&quot;</span><span class="p">:</span> <span class="n">lat</span><span class="p">,</span>
+        <span class="s2">&quot;lon&quot;</span><span class="p">:</span> <span class="n">lon</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="n">message</span><span class="p">:</span>
+        <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;msg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">message</span>
+    
+
+    <span class="k">return</span> <span class="n">entry</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_positions</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">save_positions</span><span class="p">(</span><span class="n">positions</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">host</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_HOST&quot;</span><span class="p">)</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_USER&quot;</span><span class="p">)</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_PASSWORD&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">([</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">]):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Error: Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD environment variables.&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">msg_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> inReach email(s)&quot;</span><span class="p">)</span>
+
+        <span class="n">new_entries</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">msg_id</span> <span class="ow">in</span> <span class="n">msg_ids</span><span class="p">:</span>
+            <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">msg_id</span><span class="p">,</span> <span class="s2">&quot;(RFC822)&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">entry</span> <span class="o">=</span> <span class="n">parse_email</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">entry</span><span class="p">:</span>
+                <span class="n">new_entries</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">imap</span><span class="o">.</span><span class="n">logout</span><span class="p">()</span>
+
+    <span class="n">existing</span> <span class="o">=</span> <span class="n">load_positions</span><span class="p">()</span>
+    <span class="n">existing_timestamps</span> <span class="o">=</span> <span class="p">{</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">existing</span><span class="p">}</span>
+
+    <span class="n">added</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">new_entries</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">existing_timestamps</span><span class="p">:</span>
+            <span class="n">existing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+            <span class="n">existing_timestamps</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+            <span class="n">added</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">existing</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+    <span class="n">save_positions</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Added </span><span class="si">{</span><span class="n">added</span><span class="si">}</span><span class="s2"> new position(s) (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span><span class="si">}</span><span class="s2"> total)&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 13, 2026 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1789,264 +2634,6 @@ the core parsing.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2026/02/05/2026-certified-ai-developer/" class="hover:underline"
-              >Certified AI Developer - A Journey of Growth, Grief, and New Beginning</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>✨ <strong>The Certification Just Arrived!</strong></p>
-<p>I just received word from <a href="https://www.alyra.fr">Alyra</a> – I&rsquo;ve officially completed the <strong>AI Developer Certification</strong>, successfully mastering the fundamentals of <strong>Machine Learning and Deep Learning</strong>! 🎉</p>
-<p>🔗 <a href="https://certificate.alyra.fr/check/CCC770B41BF3381DED42A38EE913A22536A4AA98C780CD71BDD15973CC211356dzd4SC9iajJjUW5ZWDQ4M2NxekVZUjN1U043Q09YcXVianRTVlRDaWFHSE1ja0ht">Verify my certification</a></p>
-<p>These past three months have been nothing short of transformative. Not just technically, but personally too. This certification represents far more than finishing a course — it&rsquo;s about rediscovering mathematics, overcoming personal challenges, and proving to myself that I can learn deeply, even when everything feels impossible.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 05, 2026 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2026/02/05/2026-certified-ai-developer/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/feb/04/recent-trends-security-team/" class="hover:underline"
-              >Recent trends in the work of the Django Security Team</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Yesterday, Django <a href="https://www.djangoproject.com/weblog/2026/feb/03/security-releases/">issued security releases</a> mitigating six vulnerabilities of varying severity. Django is a secure web framework, and that hasn’t changed. What feels new is the remarkable consistency across the reports we receive now.</p>
-<p>Almost every report now is a variation on a prior vulnerability. Instead of uncovering new classes of issues, these reports explore how an underlying pattern from a recent advisory might surface in a similar code path or under a slightly different configuration. These reports are often technically plausible but only sometimes worth fixing. Over time, this has shifted the Security Team’s work away from discovery towards deciding how far a given precedent should extend and whether the impact of the marginal variation rises to the level of a vulnerability.</p>
-<p>Take yesterday’s releases:</p>
-<p>We patched a “low” severity user enumeration vulnerability in the <code>mod_wsgi</code> authentication handler (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2025-13473">CVE 2025-13473</a>). It’s a straightforward variation on <a href="https://docs.djangoproject.com/en/6.0/releases/security/#july-9-2024-cve-2024-39329">CVE 2024-39329</a>, which affected authentication more generally.</p>
-<p>We also patched two potential denial-of-service vulnerabilities when handling large, malformed inputs. One exploits inefficient string concatenation in header parsing under ASGI (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2025-14550">CVE 2025-14550</a>). Concatenating strings in a loop is known to be slow, and we’ve done <a href="https://github.com/django/django/pull/20045/changes/ad94446fcc5b50401dd0c48718502d5d1b92df58">fixes</a> in public where the impact is low. The other one (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2026-1285">CVE 2026-1285</a>) exploits deeply nested entities. December’s vulnerability in the XML serializer (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#december-2-2025-cve-2025-64460">CVE 2025-64460</a>) was about those very two themes.</p>
-<p>Finally, we also patched three potential SQL injection vulnerabilities. One envisioned a developer passing unsanitized user input to a niche feature of the PostGIS backend (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2026-1207">CVE 2026-1207</a>), much like <a href="https://docs.djangoproject.com/en/6.0/releases/security/#march-4-2020-cve-2020-9402">CVE 2020-9402</a>. Our <a href="https://docs.djangoproject.com/en/6.0/internals/security/#user-input-must-be-sanitized">security reporting policy</a> assumes that developers are aware of the risks when passing unsanitized user input directly to the ORM. But the division between SQL statements and parameters is well ingrained, and the expectation is that Django will not fail to escape parameters. The last two vulnerabilities (<a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2026-1287">CVE 2026-1287</a> and <a href="https://docs.djangoproject.com/en/6.0/releases/security/#february-3-2026-cve-2026-1312">CVE 2026-1312</a>) targeted user-controlled column aliases, the latest in a stream of reports stemming from <a href="https://docs.djangoproject.com/en/6.0/releases/security/#april-11-2022-cve-2022-28346">CVE 2022-28346</a>, involving unpacking <code>**kwargs</code> into <code>.filter()</code> and friends, including four security releases in a row in late 2025. You might ask, “who would unpack <code>**kwargs</code> into the ORM?!” But imagine letting users name aggregations in configurable reports. You would have something more like a parameter, and so you would appreciate some protection against crafted inputs.</p>
-<p>On top of all that, on a nearly daily basis we get reports duplicating other pending reports, or even reports about vulnerabilities that have already been fixed and publicized. Clearly, reporters are using LLMs to generate (initially) plausible variations.</p>
-<p>Security releases come with costs to the community. They interrupt our users’ development workflows, and they also severely interrupt ours.</p>
-<p>There are alternatives. The long tail of reports about user-controlled aliases presents an obvious one: we can just re-architect that area. (Thanks to Simon Charette for a <a href="https://github.com/django/django/pull/20587">pull request</a> doing just that!) Beyond that, there are more drastic alternatives. We can confirm fewer vulnerabilities by placing a higher value on a user's duty to validate inputs, placing a lower value on our prior precedents, or fixing lower severity issues publicly. The risk there is underreacting, or seeing our development workflow disrupted anyway when a decision not to confirm a vulnerability is challenged.</p>
-<p>Reporters are clearly benefiting from our commitment to being consistent. For the moment, the Security Team hopes that reacting in a consistent way—even if it means sometimes issuing six patches—outweighs the cost of the security process. It’s something we’re weighing.</p>
-<p>As always, keep the responsibly vetted reports coming to security@djangoproject.com.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 04, 2026 04:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/feb/04/recent-trends-security-team/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonmorsels.com/class-or-function/" class="hover:underline"
-              >Is it a class or a function?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If a callable feels like a function, we often call it a function... even when it's not!</p>
-
-
-<div>
-  
-    <a href="https://www.pythonmorsels.com/class-or-function/"><img height="270" src="https://i.vimeocdn.com/filter/overlay?src0=https%3A%2F%2Fi.vimeocdn.com%2Fvideo%2F2116860540-9b68eb32dbd5cf160c6c1eee7090bb21e897af8bcd70c822d51c5ccd4a957449-d_1920x1080%3F%26region%3Dus&amp;src1=http%3A%2F%2Ff.vimeocdn.com%2Fp%2Fimages%2Fcrawler_play.png" width="480" /></a>
-  
-  <p>
-  <strong>Table of contents</strong>
-  <ol>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#classes-are-callable-in-python" target="_blank">Classes are callable in Python</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#print" target="_blank"><code>print</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#str" target="_blank"><code>str</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#the-str-function" target="_blank">The "<code>str</code> function"?</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#list" target="_blank"><code>list</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#sum" target="_blank"><code>sum</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#bool" target="_blank"><code>bool</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#enumerate" target="_blank"><code>enumerate</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#type" target="_blank"><code>type</code></a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#we-usually-call-callables-functions" target="_blank">We usually call "callables" functions</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#why-the-distinction-doesnt-matter" target="_blank">Why the distinction doesn't matter</a></li>
-  
-  <li><a href="https://www.pythonmorsels.com/class-or-function/#class-or-function-is-just-an-implementation-detail" target="_blank">Class or function is just an implementation detail</a></li>
-  
-  </ol>
-  </p>
-</div>
-<div>
-  
-    <h2>Classes are callable in Python</h2>
-    
-      
-        <p>To create a new instance of a class in Python, we <em>call</em> the class:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
-<span class="gp">&gt;&gt;&gt; </span><span class="n">counts</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
-</code></pre></div>
-
-
-      
-        <p>Calling a class returns <strong>a new instance</strong> of that class:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="n">counts</span>
-<span class="go">Counter()</span>
-</code></pre></div>
-
-
-      
-        <p>That is, an object whose <code>type</code> is that class:</p>
-
-      
-        <div class="codehilite"><pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="nb">type</span><span class="p">(</span><span class="n">counts</span><span class="p">)</span>
-<span class="go">&lt;class 'collections.Counter'&gt;</span>
-</code></pre></div>
-
-
-      
-        <p>In Python, the syntax for calling a function is the same as the syntax for making a new class instance.</p>
-
-      
-        <p><strong>Both functions and classes can be called.</strong>
-Functions are called to evaluate the code in that function, and classes are called to make a new instance of that class.</p>
-
-      
-    
-  
-    <h2><code>print</code></h2>
-    
-      <p>Is <code>print</code> a class or …</p>
-    
-  
-</div>
-<h3><a href="https://www.pythonmorsels.com/class-or-function/" target="_blank">Read the full article: https://www.pythonmorsels.com/class-or-function/</a></h3>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 04, 2026 03:30 PM UTC by
-            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
-              >Python Morsels</a
-            >
-          </div>
-          <a
-            href="https://www.pythonmorsels.com/class-or-function/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.rtwilson.com/pharmacy-late-night-opening-hours-analysis-featured-in-the-financial-times/" class="hover:underline"
-              >Pharmacy late-night opening hours analysis featured in the Financial Times</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Some data analysis I&#8217;ve done has been featured in the Financial Times today &#8211; see this article (the link may not work any more unless you have a FT subscription &#8211; sorry). The brief story is that I had terrible back pain over Christmas, and spoke to an out-of-hours GP on the phone who prescribed [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 04, 2026 02:10 PM UTC by
-            <a href="http://blog.rtwilson.com/category/programming-2/python/feed/" class="link link-hover text-primary"
-              >Robin Wilson</a
-            >
-          </div>
-          <a
-            href="https://blog.rtwilson.com/pharmacy-late-night-opening-hours-analysis-featured-in-the-financial-times/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index6.html" class="btn">«</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</button><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index8.html" class="btn">»</a></div></div>
 </div>
@@ -2058,8 +2645,8 @@ Functions are called to evaluate the code in that function, and classes are call
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8117</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8174</a></li>
+    <li><a>Unique Feeds: 386</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
