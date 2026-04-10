@@ -53,6 +53,308 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/" class="hover:underline"
+              >Correcting OpenStreetMap wrong tag values</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>As a hobbyist consumer of OSM data to render maps, I find wrong tags annoying. Bad values mean that the 
+resulting map is wrong or incomplete, so less useful. I decided to attack the most egregious ones, which
+include typos, street names instead of type and some other errors. The idea is to attack the long tail 
+first, so I'm not blocked because the next batch of errors (objects with exactly the same error) looks
+too big (yes, OCD).</p>
+<p>So I hacked a small python script to help me find and edit them:</p>
+<div class="code"><pre class="code literal-block"><span class="ch">#! /usr/bin/env python3</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">psycopg2</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">dbname</span><span class="o">=</span><span class="s1">'europe'</span><span class="p">)</span>
+    <span class="n">cursor</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">        SELECT</span>
+<span class="s1">            count(*) AS count,</span>
+<span class="s1">            highway</span>
+<span class="s1">        FROM planet_osm_line</span>
+<span class="s1">        WHERE</span>
+<span class="s1">            highway IS NOT NULL</span>
+<span class="s1">        GROUP BY highway</span>
+<span class="s1">        ORDER BY count ASC</span>
+<span class="s1">    '''</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">count</span><span class="p">,</span> <span class="n">highway</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"next </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">highway</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">            SELECT osm_id</span>
+<span class="s1">            FROM planet_osm_line</span>
+<span class="s1">            WHERE</span>
+<span class="s1">                highway = </span><span class="si">%s</span>
+<span class="s1">        '''</span><span class="p">,</span> <span class="p">(</span><span class="n">highway</span><span class="p">,</span> <span class="p">))</span>
+
+        <span class="k">for</span> <span class="p">(</span><span class="n">osm_id</span><span class="p">,</span> <span class="p">)</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">osm_id</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="c1"># in rendering DBs, this is a relation</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?relation=</span><span class="si">{</span><span class="o">-</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?way=</span><span class="si">{</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">'__main__'</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+<p>It <em>is</em> quite inefficient, but what I want is to edit the errors, not to write a script :) This requires
+a rendering database, which I already have locally :)</p>
+<p>From here the workflow is:</p>
+<ul>
+<li>Analyze the type of error.<ul>
+<li>This includes looking at the history of the object.</li>
+</ul>
+</li>
+<li>Search the wiki.</li>
+<li>Correct the error or leave a note.</li>
+<li>Find the original changeset and leave a note if needed.</li>
+<li>Add any details to te changeset if needed.</li>
+</ul>
+<p>In my machine, finding the long tail, and finding each set of errors takes one minute, so I was launching 
+two at the same time. One of the things to notice is that if the object you try to edit does no exists 
+anymore, you get and edit view of the whole planet.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 04, 2026 10:16 AM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/" class="hover:underline"
+              >Absurd In Production</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>About five months ago I wrote about <a href="/2025/11/3/absurd-workflows/">Absurd</a>, a
+durable execution system we built for our own use at Earendil, sitting entirely
+on top of Postgres and Postgres alone.  The pitch was simple: you don&#8217;t need a
+<a href="https://hatchet.run/">separate</a> <a href="https://www.inngest.com/">service</a>, <a href="https://useworkflow.dev/">a
+compiler plugin</a>, or <a href="https://temporal.io/">an entire
+runtime</a> to get durable workflows.  You need a SQL file
+and a thin SDK.</p>
+<p>Since then we&#8217;ve been running it in production, and I figured it&#8217;s worth
+sharing what the experience has been like.  The short version: the design
+held up, the system has been a pleasure to work with, and other people seem
+to agree.</p>
+<h2>A Quick Refresher</h2>
+<p>Absurd is a durable execution system that lives entirely inside Postgres.
+The core is a single SQL file
+(<a href="https://github.com/earendil-works/absurd/blob/main/sql/absurd.sql">absurd.sql</a>)
+that defines stored procedures for task management, checkpoint storage, event
+handling, and claim-based scheduling.  On top of that sit thin SDKs (currently
+<a href="https://www.npmjs.com/package/absurd-sdk">TypeScript</a>,
+<a href="https://pypi.org/project/absurd-sdk/">Python</a> and an experimental
+<a href="https://github.com/earendil-works/absurd/tree/main/sdks/go/absurd">Go</a> one)
+that make the system ergonomic in your language of choice.</p>
+<p>The model is straightforward: you register tasks, decompose them into steps,
+and each step acts as a checkpoint.  If anything fails, the task retries from
+the last completed step.  Tasks can sleep, wait for external events, and
+suspend for days or weeks.  All state lives in Postgres.</p>
+<p>If you want the full introduction, the <a href="/2025/11/3/absurd-workflows/">original blog
+post</a> covers the fundamentals.  What follows here
+is what we&#8217;ve learned since.</p>
+<h2>What Changed</h2>
+<p>The project got multiple releases over the last five months.  Most of the
+changes are things you&#8217;d expect from a system that people actually started
+depending on: hardened claim handling, watchdogs that terminate broken workers,
+deadlock prevention, proper lease management, event race conditions, and all the
+edge cases that only show up when you&#8217;re running real workloads.</p>
+<p>A few things worth calling out specifically.</p>
+<p><strong>Decomposed steps.</strong>  The original design only had <code>ctx.step()</code>, where you pass
+in a function and get back its checkpointed result.  That works well for many
+cases but not all.  Sometimes you need to know whether a step already ran before
+deciding what to do next.  So we added <code>beginStep()</code> / <code>completeStep()</code>, which
+give you a handle you can inspect before committing the result.  This turned out
+to be very useful for modeling intentional failures and conditional logic.
+This in particular is necessary when working with &#8220;before call&#8221; and &#8220;after call&#8221;
+type hook APIs.</p>
+<p><strong>Task results.</strong>  You can now spawn a task, go do other things, and later
+come back to fetch or await its result.  This sounds obvious in hindsight, but
+the original system was purely fire-and-forget.  Having proper result inspection
+made it possible to use Absurd for things like spawning child tasks from within
+a parent workflow and waiting for them to finish.  This is particularly useful
+for debugging with agents too.</p>
+<p><strong><a href="https://earendil-works.github.io/absurd/tools/absurdctl/">absurdctl</a>.</strong>  We built this out as a proper CLI tool.  You can initialize
+schemas, run migrations, create queues, spawn tasks, emit events, retry failures
+from the command line.  It&#8217;s installable via <code>uvx</code> or as a standalone binary.
+This has been invaluable for debugging production issues.  When something is
+stuck, being able to just <code>absurdctl dump-task --task-id=&lt;id&gt;</code> and see exactly
+where it stopped is a very different experience from digging through logs.</p>
+<p><strong><a href="https://earendil-works.github.io/absurd/tools/habitat/">Habitat</a>.</strong>  A small Go application that serves up a web dashboard for
+monitoring tasks, runs, checkpoints, and events.  It connects directly to
+Postgres and gives you a live view of what&#8217;s happening.  It&#8217;s simple, but it&#8217;s
+the kind of thing that makes the system more enjoyable for humans.</p>
+<p><strong>Agent integration.</strong>  Since Absurd was originally built for agent workloads,
+we added a bundled skill that coding agents can discover and use to debug
+workflow state via <code>absurdctl</code>.  There&#8217;s also a documented pattern for making
+<a href="https://pi.dev/">pi</a> agent turns durable by logging each message as a
+checkpoint.</p>
+<h2>What Held Up</h2>
+<p>The thing I&#8217;m most pleased about is that the core design didn&#8217;t need to change
+all that much.  The fundamental model of tasks, steps, checkpoints, events, and
+suspending is still exactly what it was initially.  We added features around it,
+but nothing forced us to rethink the basic abstractions.</p>
+<p>Putting the complexity in SQL and keeping the SDKs thin turned out to be a
+genuinely good call.  The TypeScript SDK is about 1,400 lines.  The Python SDK
+is about 1,900 but most of this comes from the complexity of supporting colored
+functions.  Compare that to Temporal&#8217;s Python SDK at around 170,000 lines.  It
+means the SDKs are easy to understand, easy to debug, and easy to port.  When
+something goes wrong, you can read the entire SDK in an afternoon and understand
+what it does.</p>
+<p>The checkpoint-based replay model also aged well.  Unlike systems that require
+deterministic replay of your entire workflow function, Absurd just loads the
+cached step results and skips over completed work.  That means your code doesn&#8217;t
+need to be deterministic outside of steps.  You can call <code>Math.random()</code> or
+<code>datetime.now()</code> in between steps and things still work, because only the step
+boundaries matter.  In practice, this makes it much easier to reason about
+what&#8217;s safe and what isn&#8217;t.</p>
+<p>Pull-based scheduling was the right choice too.  Workers pull tasks from
+Postgres as they have capacity.  There&#8217;s no coordinator, no push mechanism, no
+HTTP callbacks.  That makes it trivially self-hostable and means you don&#8217;t have
+to think about load management at the infrastructure level.</p>
+<h2>What Might Not Be Optimal</h2>
+<p>I had some discussions with folks about whether the right abstraction should have been
+a <a href="https://www.distributed-async-await.io/specification/programming-model/durable-promise-specification">durable
+promise</a>.
+It&#8217;s a very appealing idea, but it turns out to be much more complex to
+implement in practice.  It&#8217;s however in theory also more powerful.  I did make
+some attempts to see what absurd would look like if it was based on durable
+promises but so far did not get anywhere with it.  It&#8217;s however an experiment
+that I think would be fun to try!</p>
+<h2>What We Use It For</h2>
+<p>The primary use case is still agent workflows.  An agent is essentially a loop
+that calls an LLM, processes tool results, and repeats until it decides it&#8217;s
+done.  Each iteration becomes a step, and each step&#8217;s result is checkpointed.
+If the process dies on iteration 7, it restarts and replays iterations 1 through
+6 from the store, then continues from 7.</p>
+<p>But we&#8217;ve found it useful for a lot of other things too.  All our crons just
+dispatch distributed workflows with a pre-generated deduplication key from the
+invocation.  We can have two cron processes running and they will only trigger
+one absurd task invocation.  We also use it for background processing that needs
+to survive deploys.  Basically anything where you&#8217;d otherwise build your own
+retry-and-resume logic on top of a queue.</p>
+<h2>What&#8217;s Still Missing</h2>
+<p>Absurd is deliberately minimal, but there are things I&#8217;d like to see.</p>
+<p>There&#8217;s no built-in scheduler.  If you want cron-like behavior, you run your own
+scheduler loop and use idempotency keys to deduplicate.  That works, and we have
+a <a href="https://earendil-works.github.io/absurd/patterns/cron/">documented pattern for
+it</a>, but it would be
+nice to have something more integrated.</p>
+<p>There&#8217;s no push model.  Everything is pull.  If you need an HTTP endpoint to
+receive webhooks and wake up tasks, you build that yourself.  I think that&#8217;s the
+right default as push systems are harder to operate and easier to overwhelm but
+there are cases where it would be convenient.  In particular there are quite a
+few agentic systems where it would be super nice to have webhooks natively
+integrated (wake on incoming POST request).  I definitely don&#8217;t want to have
+this in the core, but that sounds like the kind of problem that could be a nice
+adjacent library that builds on top of absurd.</p>
+<p>The biggest omission is that it does not support partitioning yet.  That&#8217;s
+unfortunate because it makes cleaning up data more expensive than it has to be.
+In theory supporting partitions would be pretty simple.  You could have weekly
+partitions and then detach and delete them when they expire.  The only thing
+that really stands in the way of that is that Postgres does not have a
+convenient way of actually doing that.</p>
+<p>The hard part is not partitioning itself, it&#8217;s partition lifecycle management under
+real workloads.  If a worker inserts a row whose <code>expires_at</code> lands in a month
+without a partition, the insert fails and the workflow crashes.  So you need a
+separate maintenance loop that always creates future partitions far enough ahead
+for sleeps/retries, and does that for every queue.</p>
+<p>On the delete side, the safe approach is <code>DETACH PARTITION CONCURRENTLY</code>, but
+getting that to run from <code>pg_cron</code> doesn&#8217;t work because it cannot be run within a
+transaction, but <code>pg_cron</code> runs everything in one.</p>
+<p>I don&#8217;t think it&#8217;s an unsolvable problem, but it&#8217;s one I have not found a good
+solution for and I would love <a href="https://github.com/earendil-works/absurd/issues/4">to get input
+on</a>.</p>
+<h2>Does Open Source Still Matter?</h2>
+<p>This brings me a bit to a meta point on the whole thing which is what the point
+of Open Source libraries in the age of agentic engineering is.  Durable
+Execution is now something that plenty of startups sell you.  On the other hand
+it&#8217;s also something that an agent would build you and people might not even look
+for solutions any more.  It&#8217;s kind of … weird?</p>
+<p>I don&#8217;t think a durable execution library can support a company, I really
+don&#8217;t.  On the other hand I think it&#8217;s just complex enough of a problem that it
+could be a good Open Source project void of commercial interests.  You do need a
+bit of an ecosystem around it, particularly for UI and good DX for debugging,
+and that&#8217;s hard to get from a throwaway implementation.</p>
+<p>I don&#8217;t think we have squared this yet, but it&#8217;s already much better to use than
+a few months ago.</p>
+<p>If you&#8217;re using Absurd, thinking about it, or building adjacent ideas, I&#8217;d love
+your feedback. Bug reports, rough edges, design critiques, and contributions are
+all very welcome—this project has gotten better every time someone poked at it
+from a different angle.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 04, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycon.blogspot.com/2026/04/haciendo-historia-celebrating-pycon-uss.html" class="hover:underline"
               >¡Haciendo Historia! Celebrating PyCon US’s First-Ever Spanish-Language Keynote</a
             >
@@ -1287,86 +1589,6 @@ samples are spread evenly across time.</li>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/march-newsletter-sponsorship-early-bird-ending-programme-due-soon/" class="hover:underline"
-              >March Newsletter: Sponsorship Early Bird Ending, Programme Due Soon</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Hey there! &#x1f44b;&#xa0;</p><p>Hope you&apos;re all having a fantastic March. We sure have been busy and we&#x2019;ve got some exciting updates for you as we gear up for EuroPython 2026. This year the conference will take place in Krak&#xf3;w, the city of castles</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 26, 2026 07:45 AM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/march-newsletter-sponsorship-early-bird-ending-programme-due-soon/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://snarky.ca/why-pylock-toml-includes-digital-attestations/" class="hover:underline"
-              >Why pylock.toml includes digital attestations</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A Python project got hacked where <a href="https://docs.litellm.ai/blog/security-update-march-2026#:~:text=Initial%20evidence%20suggests%20the%20attacker%20bypassed%20official%20CI/CD%20workflows%20and%20uploaded%20malicious%20packages%20directly%20to%20PyPI.">malicious releases were directly uploaded to PyPI</a>. <a href="https://mastodon.social/@brettcannon/116285324855374142">I said on Mastodon</a> that had the project used <a href="https://docs.pypi.org/trusted-publishers/">trusted publishing</a> with <a href="https://docs.pypi.org/attestations/">digital attestations</a>, then people using a <a href="https://packaging.python.org/en/latest/specifications/pylock-toml/"><code>pylock.toml</code> file</a> would have noticed something odd was going on thanks to <a href="https://packaging.python.org/en/latest/specifications/pylock-toml/#packages-attestation-identities">the lock file including attestation data</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 26, 2026 03:59 AM UTC by
-            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
-              >Brett Cannon</a
-            >
-          </div>
-          <a
-            href="https://snarky.ca/why-pylock-toml-includes-digital-attestations/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1378,12 +1600,12 @@ samples are spread evenly across time.</li>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8113</a></li>
-    <li><a>Unique Feeds: 387</a></li>
+    <li><a>Total Entries: 7957</a></li>
+    <li><a>Unique Feeds: 383</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (542)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (476)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (199)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (543)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (476)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (216)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (199)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
