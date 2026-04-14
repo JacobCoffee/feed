@@ -53,8 +53,8 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss" class="hover:underline"
-              >Relative “Dependency Cooldowns” in pip v26.0 with crontab</a
+            <a href="https://blog.jetbrains.com/ai/2026/03/cursor-joined-the-acp-registry-and-is-now-live-in-your-jetbrains-ide/" class="hover:underline"
+              >Cursor Joined the ACP Registry and Is Now Live in Your JetBrains IDE</a
             >
           </h2>
           
@@ -63,132 +63,60 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <blockquote>
-  <p><strong>WARNING:</strong> Most of this blog post is
-    a hack, everyone should probably just
-    wait for relative dependency cooldowns to come
-    to a future version of pip.</p>
-</blockquote>
-
-<!-- more -->
-
-<p>pip v26.0 <a href="https://ichard26.github.io/blog/2026/01/whats-new-in-pip-26.0/#excluding-distributions-by-upload-time">added support for the <code>--uploaded-prior-to</code> option</a>.
-This new option enables implementing “<a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns">dependency cooldowns</a>”, a technique
-described by <a href="https://yossarian.net">William Woodruff</a>, that provides simple but effective
-protections for the <a href="https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns#fn:filippo:~:text=Approx%2E%20Window%20of%20Opportunity">relatively short attack-window time</a>
-of malware published to public software repositories. This brings the
-reaction time to malware back within the realm of humans, who sometimes need to
-execute manual triage processes to take down malware from PyPI.</p>
-
-<!-- more -->
-
-<p>So if you set <code>--uploaded-prior-to</code> to 7 days before this post
-was published, February 25th, you'd do so like this:</p>
-
-<pre><code>python -m pip install \
-  --uploaded-prior-to=2026-02-25 \
-  urllib3
-</code></pre>
-
-<p>But this is only an absolute date, and we have to remember
-to set the option on each call to <code>pip install</code>? That seems like
-a lot of work!</p>
-
-<p>Dependency cooldowns work best when the policy can be set in a
-<a href="https://nesbitt.io/2026/03/04/package-managers-need-to-cool-down.html">global configuration file to a relative value</a>
-like “7 days”.  The “window” of acceptable packages is then automatically updating over time
-without needing to set a new absolute value constantly. “Set-and-forget”-style.</p>
-
-<p>uv allows <a href="https://docs.astral.sh/uv/guides/scripts/#improving-reproducibility">setting a relative value</a> via <code>--exclude-newer</code>,
-but pip <a href="https://github.com/pypa/pip/issues/13674">doesn't support relative ranges yet</a>. I mostly use pip and still wanted to test this feature today, so I
-created a little hack to update my user <code>pip.conf</code> configuration file
-on a regular basis instead. Here's what my <code>pip.conf</code> file looks like:</p>
-
-<pre><code>[install]
-uploaded-prior-to = 2026-02-25
-</code></pre>
-
-<p>And below is the entire Python script doing the updating. Quick reminder that
-I only tested this on my own system, your mileage
-may vary, do not use in production.</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="ch">#!/usr/bin/python3</span>
-<span class="c1"># License: MIT</span>
-
-<span class="kn">import</span> <span class="nn">datetime</span>
-<span class="kn">import</span> <span class="nn">sys</span>
-<span class="kn">import</span> <span class="nn">os</span>
-<span class="kn">import</span> <span class="nn">re</span>
-
-<span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="c1"># Parse the command line options.</span>
-    <span class="n">pip_conf</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]))</span>
-    <span class="n">days</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>
-
-    <span class="c1"># Load the existing pip.conf file.</span>
-    <span class="k">try</span><span class="p">:</span>
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
-    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Could not find pip.conf file at: </span><span class="si">{</span><span class="n">pip_conf</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="mi">1</span>
-
-    <span class="c1"># Update the existing uploaded-prior-to value.</span>
-    <span class="n">uploaded_prior_to_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
-        <span class="sa">r</span><span class="s2">&quot;^uploaded-prior-to\s*=\s*2[0-9]</span><span class="si">{3}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">-[0-9]</span><span class="si">{2}</span><span class="s2">$&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span>
-    <span class="p">)</span>
-    <span class="k">if</span> <span class="ow">not</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">):</span>
-        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Could not find uploaded-prior-to option in pip.conf under [install]&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="mi">1</span>
-    <span class="n">new_uploaded_prior_to</span> <span class="o">=</span> <span class="p">(</span>
-        <span class="n">datetime</span><span class="o">.</span><span class="n">date</span><span class="o">.</span><span class="n">today</span><span class="p">()</span> <span class="o">-</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="n">days</span><span class="p">)</span>
-    <span class="p">)</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">)</span>
-    <span class="n">pip_conf_data</span> <span class="o">=</span> <span class="n">uploaded_prior_to_re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span>
-        <span class="sa">f</span><span class="s2">&quot;uploaded-prior-to = </span><span class="si">{</span><span class="n">new_uploaded_prior_to</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">pip_conf_data</span>
-    <span class="p">)</span>
-
-    <span class="c1"># Write the new uploaded-prior-to</span>
-    <span class="c1"># value to pip.conf</span>
-    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">pip_conf</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">pip_conf_data</span><span class="p">)</span>
-    <span class="k">return</span> <span class="mi">0</span>
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
-</code></pre>
-</div>
-
-<p>The script takes two parameters, your <code>pip.conf</code> file you want
-to update (typically <code>~/.config/pip/pip.conf</code> on Linux) and
-an integer number of days. I used 14 in my cron example below.</p>
-
-<p>Simple right? I installed and <code>chmod u+X</code>-ed the script in my <code>/usr/local/bin</code> directory
-and then added to my crontab using <code>crontab -u (USERNAME) -e</code>:</p>
-
-<pre><code>0 * * * * (/usr/local/bin/pip-dependency-cooldown /home/sethmlarson/.config/pip/pip.conf 14)  2&gt;&amp;1 | logger -t pip-dependency-cooldown
-</code></pre>
-
-<p>This pattern will run the script once per hour and update the value
-of <code>uploaded-prior-to</code> to the new day. Now I only receive packages that
-were published 14 or more days ago by default when running <code>pip install</code> without any other options.</p>
-
-<p>Stay tuned for more about dependency cooldowns for Python installers
-once pip supports relative values.</p>
-<br /><hr /><p>Thanks for keeping RSS alive! ♥</p>
+            Cursor is now available as an AI agent inside JetBrains IDEs through the Agent Client Protocol. Select it from the agent picker, and it has full access to your project. If you&#8217;ve spent any time in the AI coding space, you already know Cursor. It has been one of the most requested additions to the [&#8230;]
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 04, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
+            Posted on March 04, 2026 03:28 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
             >
           </div>
           <a
-            href="https://sethmlarson.dev/pip-relative-dependency-cooling-with-crontab?utm_campaign=rss"
+            href="https://blog.jetbrains.com/ai/2026/03/cursor-joined-the-acp-registry-and-is-now-live-in-your-jetbrains-ide/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.glyph.im/2026/03/what-is-code-review-for.html" class="hover:underline"
+              >What Is Code Review For?</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Code review is not for catching bugs.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 04, 2026 05:24 AM UTC by
+            <a href="http://glyph.twistedmatrix.com/feeds/posts/default" class="link link-hover text-primary"
+              >Glyph Lefkowitz</a
+            >
+          </div>
+          <a
+            href="https://blog.glyph.im/2026/03/what-is-code-review-for.html"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1360,64 +1288,6 @@ Once you’ve submitted your proposal or patch, give reviewers time to respond. 
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/speed-unit-tests/" class="hover:underline"
-              >Unit testing your code's performance, part 2: Catching speed changes</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In a previous post I talked about unit testing for speed, and in particular <a href="https://pythonspeed.com/articles/big-o-tests/">testing for big-O scalability</a>.
-The next step is catching cases where you’ve changed not the scalability, but the direct efficiency of your code.</p>
-
-<p>If your first thought is “how this is different from running benchmarks?”, well, good point!
-An excellent starting point for performance is implementing a benchmark that runs automatically in CI, on every single pull request.
-If you haven’t got that, you probably want to go do that first.</p>
-
-<p>Once you have implemented CI benchmarks, they will typically run when you submit a pull request or the equivalent.
-And if you’re doing performance work, that’s hopefully just a formality, as you likely have been benchmarking your code locally as you work.</p>
-
-<p>But what happens when you or a colleague are working on features or bugfixes, and accidentally modify a performance-critical code path?
-You make changes, run the tests locally, run a linter, open a pull request… and <em>now</em> the benchmark runs, and tells you that your code has made things slower.
-This is annoying, because now you have to go back and figure out which specific change was the cause.</p>
-
-<p>So what you really want is to get some sense of whether performance changed much earlier in the process, giving you immediate feedback when you’re running tests locally.
-Since a reliable benchmark environment is hard, switching to a test might allow for an early warning.</p>
-
-
-   <a href="https://pythonspeed.com/articles/speed-unit-tests/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 24, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/speed-unit-tests/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://anarc.at/blog/2026-02-23-dst-warning/" class="hover:underline"
               >PSA: North america changes time forward soon, Europe next</a
             >
@@ -2309,8 +2179,8 @@ But because we have access and control over a big part of the infrastructure tha
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8175</a></li>
-    <li><a>Unique Feeds: 384</a></li>
+    <li><a>Total Entries: 8174</a></li>
+    <li><a>Unique Feeds: 380</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
