@@ -53,6 +53,112 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/" class="hover:underline"
+              >Correcting OpenStreetMap wrong tag values</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>As a hobbyist consumer of OSM data to render maps, I find wrong tags annoying. Bad values mean that the 
+resulting map is wrong or incomplete, so less useful. I decided to attack the most egregious ones, which
+include typos, street names instead of type and some other errors. The idea is to attack the long tail 
+first, so I'm not blocked because the next batch of errors (objects with exactly the same error) looks
+too big (yes, OCD).</p>
+<p>So I hacked a small python script to help me find and edit them:</p>
+<div class="code"><pre class="code literal-block"><span class="ch">#! /usr/bin/env python3</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">psycopg2</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">dbname</span><span class="o">=</span><span class="s1">'europe'</span><span class="p">)</span>
+    <span class="n">cursor</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">        SELECT</span>
+<span class="s1">            count(*) AS count,</span>
+<span class="s1">            highway</span>
+<span class="s1">        FROM planet_osm_line</span>
+<span class="s1">        WHERE</span>
+<span class="s1">            highway IS NOT NULL</span>
+<span class="s1">        GROUP BY highway</span>
+<span class="s1">        ORDER BY count ASC</span>
+<span class="s1">    '''</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">count</span><span class="p">,</span> <span class="n">highway</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"next </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">highway</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">            SELECT osm_id</span>
+<span class="s1">            FROM planet_osm_line</span>
+<span class="s1">            WHERE</span>
+<span class="s1">                highway = </span><span class="si">%s</span>
+<span class="s1">        '''</span><span class="p">,</span> <span class="p">(</span><span class="n">highway</span><span class="p">,</span> <span class="p">))</span>
+
+        <span class="k">for</span> <span class="p">(</span><span class="n">osm_id</span><span class="p">,</span> <span class="p">)</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">osm_id</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="c1"># in rendering DBs, this is a relation</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?relation=</span><span class="si">{</span><span class="o">-</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?way=</span><span class="si">{</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">'__main__'</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+<p>It <em>is</em> quite inefficient, but what I want is to edit the errors, not to write a script :) This requires
+a rendering database, which I already have locally :)</p>
+<p>From here the workflow is:</p>
+<ul>
+<li>Analyze the type of error.<ul>
+<li>This includes looking at the history of the object.</li>
+</ul>
+</li>
+<li>Search the wiki.</li>
+<li>Correct the error or leave a note.</li>
+<li>Find the original changeset and leave a note if needed.</li>
+<li>Add any details to te changeset if needed.</li>
+</ul>
+<p>In my machine, finding the long tail, and finding each set of errors takes one minute, so I was launching 
+two at the same time. One of the things to notice is that if the object you try to edit does no exists 
+anymore, you get and edit view of the whole planet.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 04, 2026 10:16 AM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/" class="hover:underline"
               >Absurd In Production</a
             >
@@ -850,84 +956,6 @@ template</a>.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/reservoir-sampling-profilers/" class="hover:underline"
-              >Timesliced reservoir sampling: a new(?) algorithm for profilers</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Imagine you are processing a stream of events, of unknown length. It
-could end in 3 seconds, it could run for 3 months; you simply don’t
-know. As a result, storing the whole stream in memory or even on disk is
-not acceptable, but you still need to extract relevant information.</p>
-
-<p>Depending on what information you need, choosing a random sample of the
-stream will give you almost as good information as storing all the
-data. For example, consider a performance profiler, used to find which
-parts of your running code are slowest. Many profilers records a
-program’s callstack every few microseconds, resulting a stream of
-unlimited size: you don’t know how long the program will run. For this
-use case, a random sample of callstacks, say 2000 of them, can usually
-give you sufficient information to do performance optimization.</p>
-
-<p>Why does this work?</p>
-
-<ul>
-  <li>Slow code will result in the same callstack being repeated.</li>
-  <li>A random sample of callstacks is more likely to contain callstacks
-that repeat a lot.</li>
-  <li>Thus, a random sample is more likely to include slow code, the code
-you specifically want to identify with your profiler.</li>
-</ul>
-
-<p>When you need to extract a random sample from a stream of unknown
-length, a common solution is the family of algorithms known as
-<a href="https://en.wikipedia.org/wiki/Reservoir_sampling">reservoir sampling</a>.
-In this article you will learn:</p>
-
-<ul>
-  <li>How basic reservoir sampling works.</li>
-  <li>Some problems with reservoir sampling, motivated by a profiler that
-wants to generate a timeline.</li>
-  <li>A (new?) variant of reservoir sampling that allows you to ensure
-samples are spread evenly across time.</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/reservoir-sampling-profilers/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 01, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/reservoir-sampling-profilers/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycoders.com/issues/728" class="hover:underline"
               >Issue #728: Django With Alpine, Friendly Classes, SQLAlchemy, and More (March 31, 2026)</a
             >
@@ -1534,8 +1562,8 @@ samples are spread evenly across time.</li>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8011</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8070</a></li>
+    <li><a>Unique Feeds: 379</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
