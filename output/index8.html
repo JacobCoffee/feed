@@ -53,6 +53,319 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/" class="hover:underline"
+              >Kernel-only network configuration on Linux</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>What if I told you there is a way to configure the network on any
+Linux server that:</p>
+
+<ol>
+<li>works across all distributions</li>
+<li>doesn't require any software installed apart from the kernel and a
+boot loader (no <code>systemd-networkd</code>, <code>ifupdown</code>, <code>NetworkManager</code>,
+nothing)</li>
+<li>is backwards compatible all the way back to Linux 2.0, in 1996</li>
+</ol>
+
+
+<p>It has literally 8 different caveats on top of that, but is still
+totally worth your time.</p>
+
+<h1 id="known-options-in-debian">Known options in Debian</h1>
+
+<p>People following Debian development might have noticed there are now
+<em>four</em> ways of configuring the network Debian system. At least that is
+what the <a href="https://wiki.debian.org/NetworkConfiguration#A4_ways_to_configure_the_network">Debian wiki claims</a>, namely:</p>
+
+<ul>
+<li><p><code>ifupdown</code> (<code>/etc/network/interfaces</code>): traditional static
+configuration system, mostly for workstations and servers that has
+been there forever in Debian (since <a href="https://sources.debian.org/src/ifupdown/0.8.45/debian/changelog#L1948-L1952">at least 2000</a>), documented
+<a href="https://wiki.debian.org/NetworkConfiguration">in the Debian wiki</a></p></li>
+<li><p><a href="https://networkmanager.dev/">NetworkManager</a>: self-proclaimed "standard Linux network
+configuration", mostly used on desktops but technically supports
+servers as well, see the <a>Debian wiki page</a> (introduced in 2004)</p></li>
+<li><p><code>systemd-network</code>: used more for servers, see <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_without_gui">Debian reference Doc
+Chapter 5</a> (introduced some time around Debian 8 "jessie", in
+2015)</p></li>
+<li><p><a href="https://netplan.io/">Netplan</a>: latest entry (2018), YAML-based configuration
+abstraction layer on top of the above two, see also <a href="https://www.debian.org/doc/manuals/debian-reference/ch05.en.html#_the_modern_network_configuration_for_cloud">Debian
+reference Doc Chapter 5</a> and <a href="https://wiki.debian.org/Netplan">the Debian wiki</a></p></li>
+</ul>
+
+
+<p>At this point, I feel <code>ifupdown</code> is on its way out, possibly replaced
+by <code>systemd-networkd</code>. NetworkManager already manages most desktop
+configurations.</p>
+
+<h1 id="a-new-network-configuration-system">A "new" network configuration system</h1>
+
+<p>The method is this:</p>
+
+<ul>
+<li><code>ip=</code> on the <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">Linux kernel command line</a>: for servers with a
+single IPv4 or IPv6 address, no software required other than the
+kernel and a boot loader (since 2002 or older)</li>
+</ul>
+
+
+<blockquote><p>So by "new" I mean "new to me". This option is <em>really</em> old. The
+<code>nfsroot.txt</code> where it is documented predates the git import of the
+Linux kernel: it's part of the 2005 git import of 2.6.12-rc2. That's
+already 20+ years old already.</p>
+
+<p>The oldest trace I found is in this <a href="https://git.kernel.org/pub/scm/linux/kernel/git/tglx/history.git/commit/Documentation/nfsroot.txt?id=7a2deb32924142696b8174cdf9b38cd72a11fc96">2002 commit</a>, which imports
+the whole file at once, but the option might goes back as far as
+1996-1997, if the copyright on the file is correct and the option
+was present back then.</p></blockquote>
+
+<h1 id="what-are-you-doing">What are you doing.</h1>
+
+<p>The trick is to add an <code>ip=</code> parameter to the kernel's
+command-line. The syntax, as mentioned above, is in <a href="https://docs.kernel.org/admin-guide/nfs/nfsroot.html">nfsroot.txt</a>
+and looks like this:</p>
+
+<pre><code>ip=&lt;client-ip&gt;:&lt;server-ip&gt;:&lt;gw-ip&gt;:&lt;netmask&gt;:&lt;hostname&gt;:&lt;device&gt;:&lt;autoconf&gt;:&lt;dns0-ip&gt;:&lt;dns1-ip&gt;:&lt;ntp0-ip&gt;
+</code></pre>
+
+<p>Most settings are pretty self-explanatory, if you ignore the useless
+ones:</p>
+
+<ul>
+<li><code>&lt;client-ip&gt;</code>: IP address of the server</li>
+<li><code>&lt;gw-ip&gt;</code>: address of the gateway</li>
+<li><code>&lt;netmask&gt;</code>: netmask, in quad notation</li>
+<li><code>&lt;device&gt;</code>: interface name, if multiple available</li>
+<li><code>&lt;autoconf&gt;</code>: how to configure the interface, namely:
+
+<ul>
+<li><code>off</code> or <code>none</code>: no autoconfiguration (static)</li>
+<li><code>on</code> or <code>any</code>: use any protocol (default)</li>
+<li><code>dhcp</code>, essentially like <code>on</code> for all intents and purposes</li>
+</ul>
+</li>
+<li><code>&lt;dns0-ip&gt;</code>, <code>&lt;dns1-ip&gt;</code>: IP address of primary and secondary name
+servers, exported to <code>/proc/net/pnp</code>, can by symlinked to
+<code>/etc/resolv.conf</code></li>
+</ul>
+
+
+<p>We're ignoring the options:</p>
+
+<ul>
+<li><code>&lt;server-ip&gt;</code>: IP address of the NFS server, exported to <code>/proc/net/pnp</code></li>
+<li><code>&lt;hostnname&gt;</code>: Name of the client, typically sent over the DHCP
+requests, which may lead to a DNS record to be created in some
+networks</li>
+<li><code>&lt;ntp0-ip&gt;</code>: exported to <code>/proc/net/ipconfig/ntp_servers</code>, unused by
+the kernel</li>
+</ul>
+
+
+<p>Note that the <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/7/html/networking_guide/sec-configuring_ip_networking_from_the_kernel_command_line">Red Hat manual</a> has a different opinion:</p>
+
+<pre><code>ip=[&lt;server-id&gt;]:&lt;gateway-IP-number&gt;:&lt;netmask&gt;:&lt;client-hostname&gt;:inteface:[dhcp|dhcp6|auto6|on|any|none|off]
+</code></pre>
+
+<p>It's essentially the same (although <code>server-id</code> is weird), and the
+<code>autoconf</code> variable has other settings, so that's a bit odd.</p>
+
+<h1 id="examples">Examples</h1>
+
+<p>For example, this command-line setting:</p>
+
+<pre><code>ip=192.0.2.42::192.0.2.1:255.255.255.0:::off
+</code></pre>
+
+<p>... will set the IP address to 192.0.2.42/24 and the gateway to
+192.0.2.1. This will properly guess the network interface if there's a
+single one.</p>
+
+<p>A DHCP only configuration will look like this:</p>
+
+<pre><code>ip=::::::dhcp
+</code></pre>
+
+<p>Of course, you don't want to type this by hand every time you boot the
+machine. That wouldn't work. You need to configure the kernel
+commandline, and that depends on your boot loader.</p>
+
+<h2 id="grub">GRUB</h2>
+
+<p>With GRUB, you need to edit (on Debian), the file <code>/etc/default/grub</code>
+(ugh) and find a line like:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=
+</code></pre>
+
+<p>and change it to:</p>
+
+<pre><code>GRUB_CMDLINE_LINUX=ip=::::::dhcp
+</code></pre>
+
+<h2 id="systemd-boot-and-uki-setups">systemd-boot and UKI setups</h2>
+
+<p>For <code>systemd-boot</code> UKI setups, it's simpler: just add the setting to
+the <code>/etc/kernel/cmdline</code> file. Don't forget to include anything
+that's non-default from <code>/proc/cmdline</code>.</p>
+
+<p>This assumes that is the <code>Cmdline=@</code> setting in
+<code>/etc/kernel/uki.conf</code>. See <a href="https://anarc.at/blog/2025-08-20-luks-ukify-conversion/">2025-08-20-luks-ukify-conversion</a> for
+my minimal documentation on this.</p>
+
+<h2 id="other-systems">Other systems</h2>
+
+<p>This is perhaps where this is much less portable than it might first
+look, because of course each distribution has its own way of
+configuring those options. Here are some that I know of:</p>
+
+<ul>
+<li><a href="https://wiki.archlinux.org/title/Kernel_parameters">Arch</a> (11 options, mostly <code>/etc/default/grub</code>,
+<code>/boot/loader/entries/arch.conf</code> for <code>systemd-boot</code> or
+<code>/etc/kernel/cmdline</code> for UKI)</li>
+<li><a href="https://fedoramagazine.org/setting-kernel-command-line-arguments-with-fedora-30/">Fedora</a> (mostly <code>/etc/default/grub</code>, may be more <a href="https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/managing_monitoring_and_updating_the_kernel/configuring-kernel-command-line-parameters_managing-monitoring-and-updating-the-kernel">RHEL mentions
+grubby</a>, possibly some <code>systemd-boot</code> things here as well)</li>
+<li><a href="https://wiki.gentoo.org/wiki/Kernel/Command-line_parameters">Gentoo</a> (5 options, mostly <code>/etc/default/grub</code>,
+<code>/efi/loader/entries/gentoo-sources-kernel.conf</code> for <code>systemd-boot</code>,
+or <code>/etc/kernel/install.d/95-uki-with-custom-opts.install</code>)</li>
+</ul>
+
+
+<p>It's interesting that <code>/etc/default/grub</code> is consistent across all
+distributions above, while the <code>systemd-boot</code> setups are <em>all over the
+place</em> (except for the UKI case), while I would have expected those be
+<em>more</em> standard than GRUB.</p>
+
+<h2 id="dropbear-initramfs">dropbear-initramfs</h2>
+
+<p>If <code>dropbear-initramfs</code> is setup, it already <em>requires</em> you to have
+such a configuration, and it might not work out of the box.</p>
+
+<p>This is because, by default, it <em>disables</em> the interfaces configured
+in the kernel after completing its tasks (typically unlocking the
+encrypted disks).</p>
+
+<p>To fix this, you need to <em>disable</em> that "feature":</p>
+
+<pre><code>IFDOWN="none"
+</code></pre>
+
+<p>This will keep <code>dropbear-initramfs</code> from disabling the configured
+interface.</p>
+
+<h1 id="why">Why?</h1>
+
+<p>Traditionally, I've always setup my servers with <code>ifupdown</code> on servers
+and NetworkManager on laptops, because that's essentially the
+default. But on some machines, I've started using <code>systemd-networkd</code>
+because <code>ifupdown</code> has ... issues, particularly with reloading network
+configurations. <code>ifupdown</code> is a old hack, feels like legacy, and is
+Debian-specific.</p>
+
+<p>Not excited about configuring another service, I figured I would try
+something else: just configure the network at boot, through the kernel
+command-line.</p>
+
+<p>I was already doing such configurations for <a href="https://packages.debian.org/unstable/dropbear-initramfs">dropbear-initramfs</a>
+(see <a href="https://wiki.debian.org/DropBear">this documentation</a>), which requires the network the be up
+for unlocking the full-disk encryption keys.</p>
+
+<p>So in a sense, this is a "Don't Repeat Yourself" solution.</p>
+
+<h1 id="caveats">Caveats</h1>
+
+<p>Also known as: "wait, that works?" Yes, it does! That said...</p>
+
+<ol>
+<li><p>This is useful for servers where the network configuration will
+not change after boot. Of course, this won't work on laptops or
+any mobile device.</p></li>
+<li><p>This only works for configuring a single, simple, interface. You
+can't configure multiple interfaces, WiFi, bridges, VLAN, bonding,
+etc.</p></li>
+<li><p>It does support IPv6 and feels like the best way to configure IPv6
+hosts: true zero configuration.</p></li>
+<li><p>It likely does <em>not</em> work with a <em>dual-stack</em> IPv4/IPv6 static
+configuration. It <em>might</em> work with a <em>dynamic</em> dual stack
+configuration, but I doubt it.</p></li>
+<li><p>I don't know what happens when a DHCP lease expires. No daemon
+seems to be running so I assume leases are not renewed, so this is
+more useful for static configurations, which includes server-side
+reserved fixed IP addresses. (A non-renewed lease risks getting
+reallocated to another machine, which would cause an addressing
+conflict.)</p></li>
+<li><p>It will not automatically reconfigure the interface on link
+changes, but <code>ifupdown</code> does not either.</p></li>
+<li><p>It will <em>not</em> write <code>/etc/resolv.conf</code> for you <em>but</em> the <code>dns0-ip</code>
+and <code>dns1-ip</code> do end up in <code>/proc/net/pnp</code> which has a compatible
+syntax, so a common configuration is:</p>
+
+<pre><code>ln -s /proc/net/pnp /etc/resolv.conf
+</code></pre></li>
+<li><p>I have not really tested this <a href="https://db.torproject.org/machines.cgi">at scale</a>: only a single, test
+server at home.</p></li>
+</ol>
+
+
+<p>Yes, that's a lot of caveats, but it happens to cover a <em>lot</em> of
+machines for me, and it works surprisingly well. My main doubts are
+about long-term DHCP behaviour, but I don't see why that would be a
+problem with a statically defined lease.</p>
+
+<h1 id="cleanup">Cleanup</h1>
+
+<p>Once you have this configuration, you don't need <em>any</em> "user" level
+network system, so you can get rid of <em>everything</em>:</p>
+
+<pre><code>apt purge systemd-networkd ifupdown network-manager netplan.io
+</code></pre>
+
+<p>Note that <code>ifupdown</code> (and probably others) leave stray files in (e.g.)
+<code>/etc/network</code> which you might want to cleanup, or keep in case all
+this fails and I have put you in utter misery. Configuration files for
+other packages might also be left behind, I haven't tested this, no
+warranty.</p>
+
+<h1 id="credits">Credits</h1>
+
+<p>This whole idea came from the <a href="https://www.autistici.org/">A/I</a> folks (not to be confused with
+<a href="https://en.wikipedia.org/wiki/Bullshit">AI</a>) who have been doing this forever, thanks!</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 16, 2026 04:18 AM UTC by
+            <a href="https://anarc.at/tag/python-planet/index.rss" class="link link-hover text-primary"
+              >Anarcat</a
+            >
+          </div>
+          <a
+            href="https://anarc.at/blog/2026-02-15-kernel-only-network-configuration/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://efficientcoder.net/python-dark-side/" class="hover:underline"
               >الجانب المظلم لبايثون: استخدامات صادمة لم تكن تعرفها</a
             >
@@ -2439,49 +2752,6 @@ http://*.lan {
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2026/02/05/2026-certified-ai-developer/" class="hover:underline"
-              >Certified AI Developer - A Journey of Growth, Grief, and New Beginning</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>✨ <strong>The Certification Just Arrived!</strong></p>
-<p>I just received word from <a href="https://www.alyra.fr">Alyra</a> – I&rsquo;ve officially completed the <strong>AI Developer Certification</strong>, successfully mastering the fundamentals of <strong>Machine Learning and Deep Learning</strong>! 🎉</p>
-<p>🔗 <a href="https://certificate.alyra.fr/check/CCC770B41BF3381DED42A38EE913A22536A4AA98C780CD71BDD15973CC211356dzd4SC9iajJjUW5ZWDQ4M2NxekVZUjN1U043Q09YcXVianRTVlRDaWFHSE1ja0ht">Verify my certification</a></p>
-<p>These past three months have been nothing short of transformative. Not just technically, but personally too. This certification represents far more than finishing a course — it&rsquo;s about rediscovering mathematics, overcoming personal challenges, and proving to myself that I can learn deeply, even when everything feels impossible.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on February 05, 2026 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2026/02/05/2026-certified-ai-developer/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -2493,8 +2763,8 @@ http://*.lan {
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 7964</a></li>
-    <li><a>Unique Feeds: 380</a></li>
+    <li><a>Total Entries: 8301</a></li>
+    <li><a>Unique Feeds: 387</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
