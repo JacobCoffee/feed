@@ -53,6 +53,427 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.codingthepast.com/2026/04/16/met-api-with-python.html" class="hover:underline"
+              >Exploring the MET API with Python - Francisco Goya's Artworks</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><em>The act of painting is about one heart telling another heart where he found salvation.</em></p>
+
+<p>— Francisco Goya</p>
+
+<p><br /></p>
+
+<p>Francisco Goya is one of my favorite artists. His work has a beautiful darkness that tells a lot about his experience in his time. In this post, we’ll dive into his world using the Metropolitan Museum of Art (MET) application programming interface (API), which gives developers access to data on hundreds of thousands of artworks.</p>
+
+<p><br /></p>
+
+<p>You will learn how to interact with the MET API using Python. We will journey through the process of making HTTP requests, parsing the returned JSON data into a structured <code class="language-plaintext highlighter-rouge">pandas</code> DataFrame, and exploring the collection to extract meaningful insights about Goya’s work.</p>
+
+<p><br /></p>
+
+<h2 id="1-requesting-data-from-the-api">1. Requesting data from the API</h2>
+
+<p><br /></p>
+
+<p>We begin by importing the <code class="language-plaintext highlighter-rouge">requests</code> library, which allows us to send HTTP requests to the MET REST API in Python. We’ll query the <code class="language-plaintext highlighter-rouge">search</code> endpoint to find Goya’s paintings. In API terms, an endpoint is a specific URL used to access a particular resource.</p>
+
+<p><br /></p>
+
+<p>The MET API has four endpoints starting with “https://collectionapi.metmuseum.org/”:</p>
+<ul class="conclusion-list">
+  <li>GET /public/collection/v1/objects returns a listing of all valid <code class="language-plaintext highlighter-rouge">objectID</code> available to use.</li>
+  <li>GET /public/collection/v1/objects/[objectID] returns a record for an object, containing all open access data about that object, including its image (if the image is available under Open Access).</li>
+  <li>GET /public/collection/v1/departments returns a listing of all departments of the museum.</li>
+  <li>GET /public/collection/v1/search returns a listing of all <code class="language-plaintext highlighter-rouge">objectID</code> for objects that match the search query.</li>
+</ul>
+
+<p><br /></p>
+
+<p>You can find more details about each endpoint and its functionality in the <a href="https://metmuseum.github.io/">official MET API documentation</a>.</p>
+
+<div class="text-note-minimal">
+    <span class="material-symbols-outlined">
+        tips_and_updates
+    </span>
+    <span class="text-note-title">&nbsp; </span> 
+    <div class="text-note-content"> A REST (Representational State Transfer) API is a set of rules used to communicate between your computer and the MET server using HTTP methods and endpoints. Note that many APIs require authentication; however, the MET API is public and does not require an API key.
+        
+    </div>
+</div>
+
+<p><br /></p>
+
+<p><span class="material-symbols-outlined" id="copy-button">
+  content_copy
+  <span class="tooltiptext">Copy</span>
+</span></p>
+
+<div id="code-31-1">
+
+<figure class="highlight"><pre><code class="language-python"><span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="n">pd</span>
+
+<span class="n">search_query</span> <span class="o">=</span> <span class="s">"https://collectionapi.metmuseum.org/public/collection/v1/search?hasImages=true&amp;q=Francisco Goya"</span>
+
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="n">search_query</span><span class="p">)</span>
+<span class="n">search_data</span> <span class="o">=</span> <span class="n">response</span><span class="p">.</span><span class="n">json</span><span class="p">()</span>
+
+<span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"Found </span><span class="si">{</span><span class="n">search_data</span><span class="p">[</span><span class="s">'total'</span><span class="p">]</span><span class="si">}</span><span class="s"> artworks for Francisco Goya."</span><span class="p">)</span></code></pre></figure>
+
+</div>
+
+<p><br /></p>
+
+<p>API endpoints can be followed by query parameters that refine our search. In the example above, <code class="language-plaintext highlighter-rouge">hasImages=true</code> filters for objects with images, and <code class="language-plaintext highlighter-rouge">q</code> specifies our search term—in this case, the artist’s name.</p>
+
+<p><br /></p>
+
+<p>The <code class="language-plaintext highlighter-rouge">requests</code> library contains a method called <code class="language-plaintext highlighter-rouge">get()</code>, which we use to send our request to the API, passing our endpoint saved in the string <code class="language-plaintext highlighter-rouge">search_query</code>.</p>
+
+<p><br /></p>
+
+<p>The resulting <code class="language-plaintext highlighter-rouge">response</code> object can then be parsed into a JSON structure using the <code class="language-plaintext highlighter-rouge">.json()</code> method.</p>
+
+<p><br /></p>
+
+<h2 id="2-converting-json-to-a-list-of-painting-ids">2. Converting JSON to a list of painting ids</h2>
+
+<p><br /></p>
+
+<p>While JSON is the standard for data exchange, working with raw JSON can be cumbersome for direct data analysis. In Python, you can think of JSON as a dictionary of keys and values. These values can themselves be other dictionaries, lists, numbers, strings, or booleans. By printing the <code class="language-plaintext highlighter-rouge">search_data</code> object, we can see that it’s a dictionary containing two main keys:</p>
+<ul class="conclusion-list">
+  <li><strong>total</strong>: An integer representing the total number of objects returned.</li>
+  <li><strong>objectIDs</strong>: A list containing the unique IDs of the artworks matching our search.</li>
+</ul>
+
+<p><br /></p>
+
+<p>To retrieve the list of IDs associated with the key “objectIDs” we use the standard dictionary notation <code class="language-plaintext highlighter-rouge">search_data["objectIDs"]</code> and save it to the variable <code class="language-plaintext highlighter-rouge">goya_ids</code>.</p>
+
+<p><br /></p>
+
+<p><span class="material-symbols-outlined" id="copy-button">
+  content_copy
+  <span class="tooltiptext">Copy</span>
+</span></p>
+<div id="code-31-2">
+
+<figure class="highlight"><pre><code class="language-python"><span class="k">print</span><span class="p">(</span><span class="n">search_data</span><span class="p">)</span>
+<span class="n">goya_ids</span> <span class="o">=</span> <span class="n">search_data</span><span class="p">[</span><span class="s">"objectIDs"</span><span class="p">]</span></code></pre></figure>
+
+</div>
+
+<p><br /></p>
+
+<h2 id="3-getting-the-details-of-each-of-goyas-works">3. Getting the details of each of Goya’s works</h2>
+
+<p><br /></p>
+
+<p>To retrieve details for each artwork — such as its title, date, and thematic tags — we need to iterate through the list of IDs and send a request to the <code class="language-plaintext highlighter-rouge">/objects/{objectID}</code> endpoint for each item. We implement this using a for loop that repeats the request for each artwork.</p>
+
+<p><br /></p>
+
+<p><em>(Note: Depending on the number of results, fetching these details can take a few minutes. We use <code class="language-plaintext highlighter-rouge">time.sleep(1)</code> to respect the API’s rate limits and avoid being blocked.)</em></p>
+
+<p><br /></p>
+
+<p><span class="material-symbols-outlined" id="copy-button">
+  content_copy
+  <span class="tooltiptext">Copy</span>
+</span></p>
+
+<div id="code-31-3">
+
+<figure class="highlight"><pre><code class="language-python"><span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">all_objects_data</span> <span class="o">=</span> <span class="p">[]</span>
+
+
+<span class="k">for</span> <span class="n">object_id</span> <span class="ow">in</span> <span class="n">goya_ids</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">obj_response</span> <span class="o">=</span> <span class="n">requests</span><span class="p">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s">"https://collectionapi.metmuseum.org/public/collection/v1/objects/</span><span class="si">{</span><span class="n">object_id</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+        <span class="n">obj_response</span><span class="p">.</span><span class="n">raise_for_status</span><span class="p">()</span> 
+        <span class="n">all_objects_data</span><span class="p">.</span><span class="n">append</span><span class="p">(</span><span class="n">obj_response</span><span class="p">.</span><span class="n">json</span><span class="p">())</span>
+    <span class="k">except</span> <span class="n">requests</span><span class="p">.</span><span class="n">exceptions</span><span class="p">.</span><span class="n">RequestException</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">print</span><span class="p">(</span><span class="sa">f</span><span class="s">"Error for object ID </span><span class="si">{</span><span class="n">object_id</span><span class="si">}</span><span class="s">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s">"</span><span class="p">)</span>
+    
+    <span class="n">time</span><span class="p">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="c1"># Respect the API, one request per second to be safe
+</span>
+<span class="c1"># Convert the gathered data to a DataFrame
+</span><span class="n">goya_df</span> <span class="o">=</span> <span class="n">pd</span><span class="p">.</span><span class="n">json_normalize</span><span class="p">(</span><span class="n">all_objects_data</span><span class="p">)</span>
+
+<span class="c1"># Filter only Goya works
+</span><span class="n">goya_df</span> <span class="o">=</span> <span class="n">goya_df</span><span class="p">[</span><span class="n">goya_df</span><span class="p">[</span><span class="s">'artistDisplayName'</span><span class="p">].</span><span class="nb">str</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="s">'Goya'</span><span class="p">,</span> <span class="n">na</span><span class="o">=</span><span class="bp">False</span><span class="p">)]</span></code></pre></figure>
+
+</div>
+
+<p><br /></p>
+
+<p>We use a <code class="language-plaintext highlighter-rouge">try-except</code> block to ensure the loop continues even if a specific object ID fails to load. We also log any errors to help with debugging.</p>
+
+<p><br /></p>
+
+<p>Finally, we convert the collected data into a Pandas DataFrame using <code class="language-plaintext highlighter-rouge">pd.json_normalize</code>. Since a broad search might return works <em>about</em> Goya or mentioning him in metadata, we filter the DataFrame to ensure the <code class="language-plaintext highlighter-rouge">artistDisplayName</code> actually contains “Goya.”</p>
+
+<p><br /></p>
+
+<p>The resulting DataFrame contains intriguing data about each of his works, including name, year when the painting or drawing was started and finished, descriptive tags and dimensions, among other information. Feel free to explore it. We will continue working with the descriptive tags in the next steps.</p>
+
+<p><br /></p>
+
+<h2 id="4-flattening-nested-json-data">4. Flattening nested JSON data</h2>
+
+<p><br /></p>
+
+<p>For keys whose values are lists or other dictionaries, the resulting columns will contain those respective objects. This happens, for example, with the <code class="language-plaintext highlighter-rouge">tags</code> column. When you have nested elements like this, you can “flatten” them into a tabular format.</p>
+
+<p><br /></p>
+
+<div class="new-image">
+  <div class="card">
+    <img alt="JSON structure" src="/assets/images/lesson_31_01.png" style="height: auto; display: block; margin: 0 auto;" />
+    <p style="text-align: center; font-size: 0.7em; color: grey;">JSON data structure</p>
+  </div>
+</div>
+
+<p><br /></p>
+
+<p>Flattening an element changes the granularity of the data. Whereas before each row represented a single artwork, in the flattened table each row represents an individual tag belonging to one artwork.</p>
+
+<p><br /></p>
+
+<p>To flatten these nested tags, we can use <code class="language-plaintext highlighter-rouge">json_normalize</code> by specifying the element to unnest in the <code class="language-plaintext highlighter-rouge">record_path</code>. We also include the <code class="language-plaintext highlighter-rouge">objectID</code> in the <code class="language-plaintext highlighter-rouge">meta</code> parameter so we don’t lose the relationship between a tag and its original artwork. Later on, we can join this tags table back to our main DataFrame if we want.</p>
+
+<p><br /></p>
+
+<p><span class="material-symbols-outlined" id="copy-button">
+  content_copy
+  <span class="tooltiptext">Copy</span>
+</span></p>
+
+<div id="code-31-4">
+
+<figure class="highlight"><pre><code class="language-python"><span class="n">tags_df</span> <span class="o">=</span> <span class="n">pd</span><span class="p">.</span><span class="n">json_normalize</span><span class="p">(</span>
+    <span class="n">all_objects_data</span><span class="p">,</span>
+    <span class="n">record_path</span><span class="o">=</span><span class="s">'tags'</span><span class="p">,</span>
+    <span class="n">meta</span><span class="o">=</span><span class="p">[</span><span class="s">'objectID'</span><span class="p">]</span>
+<span class="p">)</span></code></pre></figure>
+
+</div>
+
+<p><br /></p>
+
+<h2 id="5-visualizing-the-most-frequent-themes">5. Visualizing the most frequent themes</h2>
+
+<p><br /></p>
+
+<p>The MET API provides a <code class="language-plaintext highlighter-rouge">tags</code> field containing descriptive terms associated with each artwork. To understand the prevailing themes in Goya’s works — famous for documenting the social upheaval and dark realities of his era — we can extract these terms and calculate their frequency.</p>
+
+<p><br /></p>
+
+<p>Once we isolate the individual tags into a new column, we can use <code class="language-plaintext highlighter-rouge">matplotlib</code> to create a horizontal bar plot of the top 10 terms and check if indeed his artwork contained themes related to death and misery.</p>
+
+<p><br /></p>
+
+<p><span class="material-symbols-outlined" id="copy-button">
+  content_copy
+  <span class="tooltiptext">Copy</span>
+</span></p>
+<div id="code-1-5">
+
+<figure class="highlight"><pre><code class="language-python"><span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="n">plt</span>
+
+<span class="c1"># Calculate the frequency of each term for the filtered Goya artworks
+# We filter tags_df to only include IDs present in our filtered goya_df
+</span><span class="n">term_frequency</span> <span class="o">=</span> <span class="n">tags_df</span><span class="p">[</span><span class="n">tags_df</span><span class="p">[</span><span class="s">'objectID'</span><span class="p">].</span><span class="n">isin</span><span class="p">(</span><span class="n">goya_df</span><span class="p">[</span><span class="s">'objectID'</span><span class="p">])][</span><span class="s">'term'</span><span class="p">].</span><span class="n">value_counts</span><span class="p">().</span><span class="n">reset_index</span><span class="p">()</span>
+<span class="n">term_frequency</span><span class="p">.</span><span class="n">columns</span> <span class="o">=</span> <span class="p">[</span><span class="s">'term'</span><span class="p">,</span> <span class="s">'count'</span><span class="p">]</span>
+
+<span class="c1"># Select the top N terms for better readability if there are many unique terms
+# For this example, let's take the top 10 terms
+</span><span class="n">top_terms</span> <span class="o">=</span> <span class="n">term_frequency</span><span class="p">.</span><span class="n">head</span><span class="p">(</span><span class="mi">10</span><span class="p">).</span><span class="n">sort_values</span><span class="p">(</span><span class="n">by</span><span class="o">=</span><span class="s">'count'</span><span class="p">,</span> <span class="n">ascending</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="p">.</span><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span> <span class="mi">8</span><span class="p">))</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">barh</span><span class="p">(</span><span class="n">top_terms</span><span class="p">[</span><span class="s">'term'</span><span class="p">],</span> <span class="n">top_terms</span><span class="p">[</span><span class="s">'count'</span><span class="p">],</span> <span class="n">color</span><span class="o">=</span><span class="s">'#FF6885'</span><span class="p">)</span>
+
+<span class="n">plt</span><span class="p">.</span><span class="n">title</span><span class="p">(</span><span class="s">'Top 10 Most Frequent Terms in Goya Dataset'</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">xlabel</span><span class="p">(</span><span class="s">'Frequency'</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">ylabel</span><span class="p">(</span><span class="s">'Term'</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">xticks</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">14</span><span class="p">)</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">yticks</span><span class="p">(</span><span class="n">fontsize</span><span class="o">=</span><span class="mi">14</span><span class="p">)</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">tight_layout</span><span class="p">()</span>
+<span class="n">plt</span><span class="p">.</span><span class="n">show</span><span class="p">()</span></code></pre></figure>
+
+</div>
+
+<p><br /></p>
+
+<div class="new-image">
+  <div class="card">
+    <img alt="Top 10 Most Frequent Terms in Goya Dataset" src="/assets/images/lesson_31_02.png" style="height: auto; display: block; margin: 0 auto;" />
+    <p style="text-align: center; font-size: 0.7em; color: grey;">Top 10 Most Frequent Terms chart</p>
+  </div>
+</div>
+
+<p><br /></p>
+
+<p>The resulting visualization provides a fascinating window into Goya’s thematic world. Beyond common subjects like “Men,” “Women,” and “Portraits,” we see a strong representation of “Bulls” (reflecting his famous <em>Tauromaquia</em> series) and “Self-portraits.”</p>
+
+<p><br /></p>
+
+<p>Most strikingly, terms like “Death” and “Suffering” appear prominently in the top 10. This data-driven insight confirms Goya’s historical reputation as an artist who didn’t shy away from the darker aspects of the human experience. By quantifying these themes through the MET API, we move from subjective observation to empirical evidence of his artistic focus.</p>
+
+<p><br /></p>
+
+<div class="new-image">
+  <div class="card">
+    <img alt="The sleep of reason produces monsters" src="/assets/images/lesson_31_03.jpg" style="height: auto; display: block; margin: 0 auto;" />
+    <p style="text-align: center; font-size: 0.7em; color: grey;">Plate 43 from "Los Caprichos": The sleep of reason produces monsters (El sueño de la razon produce monstruos)</p>
+  </div>
+</div>
+
+<p><br /></p>
+
+<p>You could also use the main dataset we created to collect a series of images of Goya works. I am thinking of using AI to help me download all images of Goya in the public domain and try to build a model to describe or classify them in Python. Feel free to use the data and let me know about your analysis. Leave your comments or any questions below and happy coding!</p>
+
+<p><br /></p>
+
+<h1 id="conclusions">Conclusions</h1>
+
+<p><br /></p>
+
+<ul class="conclusion-list">
+  <li>The <code class="language-plaintext highlighter-rouge">requests</code> library combined with <code class="language-plaintext highlighter-rouge">pd.json_normalize</code> makes extracting and structuring data from web APIs both seamless and efficient.</li>
+  <li>Navigating public collections like the MET API enables us to perform large-scale data analysis on historical and cultural artifacts.</li>
+  <li>Combining data extraction with clear visualizations (using Matplotlib) provides interpretable insights into an artist’s thematic legacy and creative focus.</li>
+</ul>
+
+<p><br /></p>
+
+<hr />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 16, 2026 12:00 AM UTC by
+            <a href="https://www.codingthepast.com/feed_python_planet.xml" class="link link-hover text-primary"
+              >Bruno Ponne / Coding The Past</a
+            >
+          </div>
+          <a
+            href="https://www.codingthepast.com/2026/04/16/met-api-with-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/apr/15/contributor-covenant-adoption/" class="hover:underline"
+              >Django Has Adopted Contributor Covenant 3</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We’re excited to announce that Django has officially adopted <a href="https://www.contributor-covenant.org/version/3/0/code_of_conduct/">Contributor Covenant 3</a> as our new Code of Conduct! This milestone represents the completion of a careful, community-driven process that began earlier this year.</p>
+<h3 id="s-what-weve-accomplished"><strong>What We’ve Accomplished</strong></h3>
+<p>Back in <a href="https://www.djangoproject.com/weblog/2026/feb/19/2026-coc-update-phase-2/">February, we announced our plan</a> to adopt Contributor Covenant 3 through a transparent, multi-step process. Today, we’re proud to share that we’ve completed all three steps:</p>
+<p><strong>Step 1 (Completed February 2026):</strong> Established a <a href="https://github.com/django/code-of-conduct/blob/main/updates.md">community-driven process</a> for proposing and reviewing changes to our Code of Conduct.</p>
+<p><strong>Step 2 (Completed March 2026):</strong> Updated our <a href="https://www.djangoproject.com/conduct/enforcement-manual/">Enforcement Manual</a>, <a href="https://www.djangoproject.com/conduct/reporting/">Reporting Guidelines</a>, and <a href="https://www.djangoproject.com/conduct/faq/">FAQs</a> to align with Contributor Covenant 3 and incorporate lessons learned from our working group’s experience.</p>
+<p><strong>Step 3 (Completed April 2026):</strong> Adopted the <a href="https://www.contributor-covenant.org/version/3/0/code_of_conduct/">Contributor Covenant 3</a> with Django-specific enhancements.</p>
+<h3 id="s-why-contributor-covenant-3"><strong>Why Contributor Covenant 3?</strong></h3>
+<p>Contributor Covenant 3 represents a significant evolution in community standards, incorporating years of experience from communities around the world. The new version:</p>
+<ul>
+<li><strong>Centers impact over intent</strong>, recognizing that even unintentional harm requires accountability and repair  </li>
+<li><strong>Emphasizes consent and boundaries</strong>, making explicit that community members must respect stated boundaries immediately  </li>
+<li><strong>Addresses modern harassment patterns</strong> like sea-lioning, coordinated harassment, and microaggressions  </li>
+<li><strong>Includes clearer guidance</strong> on enforcement, transparency, and accountability</li>
+</ul>
+<p>By adopting this widely-used standard, Django joins a global community of projects committed to fostering welcoming, inclusive spaces for everyone.</p>
+<h3 id="s-whats-new-in-djangos-code-of-conduct"><strong>What’s New in Django’s Code of Conduct</strong></h3>
+<p>While we’ve adopted Contributor Covenant 3 as our foundation, we’ve also made Django-specific enhancements:</p>
+<ul>
+<li><strong>In-person event guidance</strong>: Added requirements and best practices for Code of Conduct points of contact at Django events  </li>
+<li><strong>Affiliated programs documentation</strong>: Clarified scope and expectations for programs that reference Django’s Code of Conduct  </li>
+<li><strong>Bad-faith reporting provisions</strong>: Added protections against misuse of the reporting process  </li>
+<li><strong>Escalation processes</strong>: Established clear procedures for handling disagreements between working groups  </li>
+<li><strong>Enhanced transparency</strong>: Updated our statistics and reporting to provide better visibility into how we enforce our Code of Conduct</li>
+</ul>
+<p>You can view the complete changelog of changes at our <a href="https://github.com/django/code-of-conduct/blob/main/CHANGELOG.md">Code of Conduct repository</a>.</p>
+<h3 id="s-community-driven-process"><strong>Community-Driven Process</strong></h3>
+<p>This adoption represents months of collaborative work. The Code of Conduct Working Group reviewed community feedback, consulted with the DSF Board, and incorporated insights from our enforcement experience. Each step was completed through pull requests that were open for community review and discussion.</p>
+<p>We’re grateful to everyone who participated in this process—whether by opening issues, commenting on pull requests, joining forum discussions, or simply taking the time to review and understand the changes.</p>
+<h3 id="s-where-to-find-everything"><strong>Where to Find Everything</strong></h3>
+<p>All of our Code of Conduct documentation is available on both djangoproject.com and our GitHub repository:</p>
+<ul>
+<li><strong>Code of Conduct</strong>: <a href="https://www.djangoproject.com/conduct/">djangoproject.com/conduct</a>  </li>
+<li><strong>Reporting Guidelines</strong>: <a href="https://www.djangoproject.com/conduct/reporting/">djangoproject.com/conduct/reporting</a>  </li>
+<li><strong>Enforcement Manual</strong>: <a href="https://www.djangoproject.com/conduct/enforcement-manual/">djangoproject.com/conduct/enforcement-manual</a>  </li>
+<li><strong>FAQs</strong>: <a href="https://www.djangoproject.com/conduct/faq/">djangoproject.com/conduct/faq</a>  </li>
+<li><strong>GitHub Repository</strong>: <a href="https://github.com/django/code-of-conduct">github.com/django/code-of-conduct</a></li>
+</ul>
+<h3 id="s-how-you-can-continue-to-help"><strong>How You Can Continue to Help</strong></h3>
+<p>The Code of Conduct is a living document that will continue to evolve with our community’s needs:</p>
+<ul>
+<li><strong>Propose changes</strong>: Anyone can <a href="https://github.com/django/code-of-conduct/issues/new?template=coc-change-proposal.md">open an issue</a> to suggest improvements  </li>
+<li><strong>Join discussions</strong>: Participate in community conversations on the <a href="https://forum.djangoproject.com">Django forum</a>, <a href="https://chat.djangoproject.com/">Discord</a>, or DSF Slack  </li>
+<li><strong>Report violations</strong>: If you experience or witness a Code of Conduct violation, please <a href="https://www.djangoproject.com/conduct/reporting/">report it</a> to conduct@djangoproject.com  </li>
+<li><strong>Stay informed</strong>: Watch the <a href="https://github.com/django/code-of-conduct">Code of Conduct repository</a> for updates</li>
+</ul>
+<h3 id="s-thank-you"><strong>Thank You</strong></h3>
+<p>Creating a truly welcoming and inclusive community is ongoing work that requires participation from all of us. Thank you for being part of Django’s community and for your commitment to making it a safe, respectful space where everyone can contribute and thrive.</p>
+<p>If you have questions about the new Code of Conduct or our processes, please don’t hesitate to reach out to the Code of Conduct Working Group at conduct@djangoproject.com.</p>
+<hr />
+<p><em>Posted by Dan Ryan on behalf of the Django Code of Conduct Working Group</em></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 15, 2026 08:49 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/apr/15/contributor-covenant-adoption/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/python-variables/" class="hover:underline"
               >Variables in Python: Usage and Best Practices</a
             >
@@ -1391,221 +1812,6 @@ here</a>.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2026/04/stories-from-pycon-us-hotels.html" class="hover:underline"
-              >Stories from the PyCon US Hotels</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><span face="Arial, sans-serif" style="color: #666666; font-size: 15pt;">Friendships, collaborations, and breakthroughs&nbsp;</span></p><span id="docs-internal-guid-cc92111d-7fff-849b-755a-ebd716d2bf11"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">The fun, the learning, and the inspiration don't stop when you walk out of the convention center. Some of the most memorable moments from PyCon US happen in the lobby at 10 pm, laughing with someone you only knew as a username until an hour ago; over breakfast, where a casual conversation turns into a collaboration that lasts years; and on the walks to and from the conference. PyCon US hotels have their own lore.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">We asked people about their experiences and were overwhelmed, it turns out that everyone has a story!</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-style: italic; vertical-align: baseline;">"</span><span face="Arial, sans-serif" style="background-color: white; color: #222222; font-size: 11pt; font-style: italic; vertical-align: baseline;">One story stands out to me beyond getting to know each other and sharing ideas. </span><span face="Arial, sans-serif" style="color: #222222; font-size: 11pt; font-style: italic; vertical-align: baseline;">When I was getting ready to give my first PyCon talk in Montreal, Selena Deckelmann offered to help review my slides and listen to me practice. We spent a few hours on the floor of her hotel room prepping while her very young daughter crawled around on the floor and chewed on my PyCon badge since she was teething. It's still one of my favorite PyCon and PyLadies memories.” - </span><span face="Arial, sans-serif" style="color: #222222; font-size: 11pt; vertical-align: baseline;">Carol Willing, Willing Consulting</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="color: #222222; font-size: 11pt; font-style: italic; vertical-align: baseline;">“The hotel lobby last year turned into a makeshift meetup after the PyLadies Auction. People were having a great time at the auction and kept the energy going in the lobby afterward. Everyone was there, even those who hadn't attended the auction. Luckily, the hotel also sold my favorite chocolate milk in the lobby, so I got to end my evening drinking milk and chatting with Python friends.” </span><span face="Arial, sans-serif" style="color: #222222; font-size: 11pt; vertical-align: baseline;">- Cheuk Ting Ho (the PyLady who loves the auction and karaoke)</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-style: italic; vertical-align: baseline;">"In Pittsburgh a couple of years ago I was having breakfast at the hotel, when a guy I didn't know spotted my Python T-shirt and introduced himself. It was his first PyCon and my 21st, and we ended up having breakfast together. I gave him a few tips on enjoying a PyCon, but it turned out he was also a guitarist, so we spent most of breakfast talking about music and playing guitar.” - </span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Naomi Ceder, former board chair and loooong time PyCon goer</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-style: italic; vertical-align: baseline;">"I ran into Trey Hunner during my first PyCon US in the hotel lobby as a PSF employee. He was running a Cabo game. He immediately welcomed me and showed me how to play. (He’s a great teacher, so I won three rounds in a row!) I also met a bunch of lovely people who have been attending PyCon US for years and years, and I learned that there is almost always a Cabo game in the hotel lobby." </span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">- Deb Nicholson (PSF Executive Director &amp; resident Cabo shark)</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-style: italic; vertical-align: baseline;">“One of my most memorable hotel lobby moments was a chance encounter with Thomas Wouters. We fell into a natural conversation about his work and his deep, genuine pride in the Python Software Foundation community. He spoke warmly about the people who make the community what it is and what it means to him to be part of it. What I had no idea at the time was that just three days later, he would be called up on stage and announced as a Distinguished Service Award recipient — one of the highest honors the Python Software Foundation gives.” - </span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Abigail Dogbe, PSF Board Member</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="background-color: white; color: #222222; font-size: 11pt; font-style: italic; vertical-align: baseline;">“Juggling in the hotel lobby turned into an unexpected highlight of the conference. We had started teaching each other — my fault entirely for bringing the juggling balls — when a teenager and his mom wandered through on their way to see Pearl Jam. The kid's eyes lit up the moment he saw us, so I waved them over and started teaching him. Turns out they'd booked that very hotel hoping to cross paths with the band. He was excited about everything, and she was right there with him, every bit as thrilled.” - </span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Ned Batchelder, Python Core Team and Netflix, Software Engineer</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">And this year, instead of sitting in LA-to-Long Beach traffic, consider staying in the official conference hotel block because there's too much to miss if you're too far away.</span></p><h1 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 20pt; font-weight: 400; vertical-align: baseline;">Real Talk: Why booking a room via PyCon US matters&nbsp;</span></h1><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">If you're planning to attend PyCon US, please consider booking your stay within the official conference hotel block.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">When attendees reserve rooms through the block, it helps the conference meet its contractual commitments with the venue, which directly impacts the overall cost of hosting the event.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Strong participation in the hotel block helps PyCon US:</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Keep registration prices as low as possible while continuing to invest in programs that support our community, like travel grants, accessibility services, and community events.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">When rooms go unfilled in the block, the conference incurs major financial penalties that ultimately make the event more expensive to run for everyone.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">By booking in the hotel block, you are giving back and helping keep PyCon US sustainable and affordable for the entire Python community.</span></p><br /><h1 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 20pt; font-weight: 400; vertical-align: baseline;">PSST! Exclusive swag when you book a room. We can't say more.</span></h1><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">Attendees who book within the official hotel block this year will receive a special mystery swag item. We can't tell you what it is. That's why it's called mystery swag. But we can tell you the only way to get it is to book in the official PyCon US hotel block.&nbsp;</span></p><h1 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 20pt; font-weight: 400; vertical-align: baseline;">Where to stay: official PyCon US 2026 hotel block</span></h1><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;">All hotels are in Long Beach, within easy reach of the Long Beach Convention Center.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">The Westin Long Beach</span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;"> Spacious rooms and great amenities, and the block still has availability. </span><a href="https://us.pycon.org/2026/venue/hotels/"><span face="Arial, sans-serif" style="color: black; font-size: 11pt; vertical-align: baseline;">&nbsp;</span><span face="Arial, sans-serif" style="color: #1155cc; font-size: 11pt; vertical-align: baseline;">Book here</span></a></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">Hyatt Regency Long Beach</span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;"> is the conference headquarters hotel. Closest to the convention center–just about connected. </span><a href="https://us.pycon.org/2026/venue/hotels/"><span face="Arial, sans-serif" style="color: black; font-size: 11pt; vertical-align: baseline;">&nbsp;</span><span face="Arial, sans-serif" style="color: #1155cc; font-size: 11pt; vertical-align: baseline;">Book here</span></a></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span face="Arial, sans-serif" style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">Marriott Long Beach Downtown</span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;"> A solid choice with easy access to the convention center and the waterfront. </span><a href="https://us.pycon.org/2026/venue/hotels/"><span face="Arial, sans-serif" style="color: black; font-size: 11pt; vertical-align: baseline;">&nbsp;</span><span face="Arial, sans-serif" style="color: #1155cc; font-size: 11pt; vertical-align: baseline;">Book here</span></a></p><span face="Arial, sans-serif" style="font-size: 11pt; font-weight: 700; vertical-align: baseline;">Courtyard by Marriott Long Beach Downtown</span><span face="Arial, sans-serif" style="font-size: 11pt; vertical-align: baseline;"> A comfortable, more affordable option still within the block. </span><a href="https://us.pycon.org/2026/venue/hotels/"><span face="Arial, sans-serif" style="color: black; font-size: 11pt; vertical-align: baseline;">&nbsp;</span><span face="Arial, sans-serif" style="color: #1155cc; font-size: 11pt; vertical-align: baseline;">Book here</span></a></span>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 07, 2026 02:30 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2026/04/stories-from-pycon-us-hotels.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/apr/07/security-releases/" class="hover:underline"
-              >Django security releases issued: 6.0.4, 5.2.13, and 4.2.30</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In accordance with <a class="reference external" href="https://docs.djangoproject.com/en/dev/internals/security/">our security release policy</a>, the Django team
-is issuing releases for
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/6.0.4/">Django 6.0.4</a>,
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/5.2.13/">Django 5.2.13</a>, and
-<a class="reference external" href="https://docs.djangoproject.com/en/dev/releases/4.2.30/">Django 4.2.30</a>.
-These releases address the security issues detailed below. We encourage all
-users of Django to upgrade as soon as possible.</p>
-<div class="section" id="s-django-4-2-has-reached-the-end-of-extended-support">
-<h3>Django 4.2 has reached the end of extended support</h3>
-<p>Note that with this release, Django 4.2 has reached the end of extended support. All Django 4.2 users are encouraged to <a class="reference external" href="https://docs.djangoproject.com/en/dev/howto/upgrade-version/">upgrade</a> to Django 5.2 or later to continue receiving fixes for security issues.</p>
-<p>See the <a class="reference external" href="https://www.djangoproject.com/download/#supported-versions">downloads page</a> for a table of supported versions and the future release schedule.</p>
-</div>
-<div class="section" id="s-cve-2026-3902-asgi-header-spoofing-via-underscore-hyphen-conflation">
-<h3>CVE-2026-3902: ASGI header spoofing via underscore/hyphen conflation</h3>
-<p><tt class="docutils literal">ASGIRequest</tt> normalizes header names following WSGI conventions, mapping
-hyphens to underscores. As a result, even in configurations where reverse
-proxies carefully strip security-sensitive headers named with hyphens, such a
-header could be spoofed by supplying a header named with underscores.</p>
-<p>Under WSGI, it is the responsibility of the server or proxy to avoid ambiguous
-mappings. (Django's <tt class="docutils literal">runserver</tt> was patched in CVE-2015-0219.) But
-under ASGI, there is not the same uniform expectation, even if many proxies
-protect against this under default configuration (including <tt class="docutils literal">nginx</tt> via
-<tt class="docutils literal">underscores_in_headers off;</tt>).</p>
-<p>Headers containing underscores are now ignored by <tt class="docutils literal">ASGIRequest</tt>, matching the
-behavior of <tt class="docutils literal">Daphne</tt>, the reference server for ASGI.</p>
-<p>This issue has severity &quot;low&quot; according to the Django Security Policy.</p>
-<p>Thanks to Tarek Nakkouch for the report.</p>
-</div>
-<div class="section" id="s-cve-2026-4277-privilege-abuse-in-genericinlinemodeladmin">
-<h3>CVE-2026-4277: Privilege abuse in <tt class="docutils literal">GenericInlineModelAdmin</tt></h3>
-<p>Add permissions on inline model instances were not validated on submission of
-forged <tt class="docutils literal">POST</tt> data in <tt class="docutils literal">GenericInlineModelAdmin</tt>.</p>
-<p>This issue has severity &quot;low&quot; according to the Django Security Policy.</p>
-<p>Thanks to <a class="reference external" href="mailto:N05ec&#64;LZU-DSLab">N05ec&#64;LZU-DSLab</a> for the report.</p>
-</div>
-<div class="section" id="s-cve-2026-4292-privilege-abuse-in-modeladmin-list-editable">
-<h3>CVE-2026-4292: Privilege abuse in <tt class="docutils literal">ModelAdmin.list_editable</tt></h3>
-<p>Admin changelist forms using <tt class="docutils literal">ModelAdmin.list_editable</tt> incorrectly allowed new
-instances to be created via forged <tt class="docutils literal">POST</tt> data.</p>
-<p>This issue has severity &quot;low&quot; according to the Django Security Policy.</p>
-</div>
-<div class="section" id="s-cve-2026-33033-potential-denial-of-service-vulnerability-in-multipartparser-via-base64-encoded-file-upload">
-<h3>CVE-2026-33033: Potential denial-of-service vulnerability in <tt class="docutils literal">MultiPartParser</tt> via base64-encoded file upload</h3>
-<p>When using <tt class="docutils literal">django.http.multipartparser.MultiPartParser</tt>, multipart uploads
-with <tt class="docutils literal"><span class="pre">Content-Transfer-Encoding:</span> base64</tt> that include excessive whitespace
-may trigger repeated memory copying, potentially degrading performance.</p>
-<p>This issue has severity &quot;moderate&quot; according to the Django Security Policy.</p>
-<p>Thanks to Seokchan Yoon for the report.</p>
-</div>
-<div class="section" id="s-cve-2026-33034-potential-denial-of-service-vulnerability-in-asgi-requests-via-memory-upload-limit-bypass">
-<h3>CVE-2026-33034: Potential denial-of-service vulnerability in ASGI requests via memory upload limit bypass</h3>
-<p>ASGI requests with a missing or understated <tt class="docutils literal"><span class="pre">Content-Length</span></tt> header could
-bypass the <tt class="docutils literal">DATA_UPLOAD_MAX_MEMORY_SIZE</tt> limit when reading
-<tt class="docutils literal">HttpRequest.body</tt>, potentially loading an unbounded request body into
-memory and causing service degradation.</p>
-<p>This issue has severity &quot;low&quot; according to the Django Security Policy.</p>
-<p>Thanks to Superior for the report.</p>
-</div>
-<div class="section" id="s-affected-supported-versions">
-<h3>Affected supported versions</h3>
-<ul class="simple">
-<li>Django main</li>
-<li>Django 6.0</li>
-<li>Django 5.2</li>
-<li>Django 4.2</li>
-</ul>
-</div>
-<div class="section" id="s-resolution">
-<h3>Resolution</h3>
-<p>Patches to resolve the issue have been applied to Django's
-main, 6.0, 5.2, and 4.2 branches.
-The patches may be obtained from the following changesets.</p>
-<div class="section" id="s-cve-2026-3902-asgi-header-spoofing-via-underscore-hyphen-conflation-1">
-<h4>CVE-2026-3902: ASGI header spoofing via underscore/hyphen conflation</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/caf90a971f09323775ed0cacf94eadaf39d040e0">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/a623c3982857e80324448f85c7faf9a6710330ef">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/1cc2a7612f97c109b92415fc11ba9bd0501852e0">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/4412731aa64d62a6dd7edae79e0c15b72666d7ca">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-cve-2026-4277-privilege-abuse-in-genericinlinemodeladmin-1">
-<h4>CVE-2026-4277: Privilege abuse in <tt class="docutils literal">GenericInlineModelAdmin</tt></h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/ef8b25dcc06d158683a5623ce406d561638f4073">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/08a752c1cd8f378b4c64d96c319da23726df6ed3">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/60ffa957c427e10a2eb0fc80d1674a8a8ccc30b0">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/051f3909e820360bbe84a21350e82f4961e3d917">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-cve-2026-4292-privilege-abuse-in-modeladmin-list-editable-1">
-<h4>CVE-2026-4292: Privilege abuse in <tt class="docutils literal">ModelAdmin.list_editable</tt></h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/6afe7ce93964f56e33a29d477c269436f9b60cbf">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/428c48f358c5a0ed5ca2834fb721d615eb2b0e11">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/397c22048244db2cd4bb78f570e6c72a3967bf36">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/abfe1a1c57a57cfaf6dd4a0571c029401a0fe743">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-cve-2026-33033-potential-denial-of-service-vulnerability-in-multipartparser-via-base64-encoded-file-upload-1">
-<h4>CVE-2026-33033: Potential denial-of-service vulnerability in <tt class="docutils literal">MultiPartParser</tt> via base64-encoded file upload</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/7e9885f99cee771b51692fadc5592bdbf19641aa">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/0910af60468216c856dfbcac1177372c225deb76">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/0b467893bdde69a2d23034338e76021a1e4f4322">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/f13c20f81b56108ac477213fa5ada2524b5e5c98">4.2 branch</a></li>
-</ul>
-</div>
-<div class="section" id="s-cve-2026-33034-potential-denial-of-service-vulnerability-in-asgi-requests-via-memory-upload-limit-bypass-1">
-<h4>CVE-2026-33034: Potential denial-of-service vulnerability in ASGI requests via memory upload limit bypass</h4>
-<ul class="simple">
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/953c238058c0ce387a1a41cb491bfc1875d73ad0">main branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/393dbc53e848876fdba92fbf02e10ee6a6eace6b">6.0 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/49e1e2b548999a35a025f9682598946bda9e9921">5.2 branch</a></li>
-<li>On the <a class="reference external" href="https://github.com/django/django/commit/ed4dfda62718a0bb644b80ac8b1d3099861f2295">4.2 branch</a></li>
-</ul>
-</div>
-</div>
-<div class="section" id="s-the-following-releases-have-been-issued">
-<h3>The following releases have been issued</h3>
-<ul class="simple">
-<li>Django 6.0.4 (<a class="reference external" href="https://www.djangoproject.com/download/6.0.4/tarball/">download Django 6.0.4</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/6.0.4/checksum/">6.0.4 checksums</a>)</li>
-<li>Django 5.2.13 (<a class="reference external" href="https://www.djangoproject.com/download/5.2.13/tarball/">download Django 5.2.13</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/5.2.13/checksum/">5.2.13 checksums</a>)</li>
-<li>Django 4.2.30 (<a class="reference external" href="https://www.djangoproject.com/download/4.2.30/tarball/">download Django 4.2.30</a> |
-<a class="reference external" href="https://www.djangoproject.com/download/4.2.30/checksum/">4.2.30 checksums</a>)</li>
-</ul>
-<p>The PGP key ID used for this release is Jacob Walls: <a class="reference external" href="https://github.com/jacobtylerwalls.gpg">131403F4D16D8DC7</a></p>
-</div>
-<div class="section" id="s-general-notes-regarding-security-reporting">
-<h3>General notes regarding security reporting</h3>
-<p>As always, we ask that potential security issues be reported via private email
-to <tt class="docutils literal">security&#64;djangoproject.com</tt>, and not via Django's Trac instance, nor via
-the Django Forum. Please see <a class="reference external" href="https://www.djangoproject.com/security/">our security policies</a> for further information.</p>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 07, 2026 02:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/apr/07/security-releases/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1617,8 +1823,8 @@ the Django Forum. Please see <a class="reference external" href="https://www.dja
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8188</a></li>
-    <li><a>Unique Feeds: 385</a></li>
+    <li><a>Total Entries: 8097</a></li>
+    <li><a>Unique Feeds: 382</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
