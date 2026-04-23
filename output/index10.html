@@ -53,6 +53,238 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="/posts/syncing-fastmail-contacts-with-vdirsyncer/" class="hover:underline"
+              >Syncing Fastmail Contacts with vdirsyncer</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Your contacts data is valuable. Years of accumulated email addresses, phone numbers, and personal information shouldn't be locked away in someone else's cloud service. Even with a trusted provider like <a href="https://www.fastmail.com/">Fastmail</a>, having a local backup and the ability to work with your contacts offline is important.</p>
+<p>This is where <a href="https://github.com/pimutils/vdirsyncer">vdirsyncer</a> comes in. It's a command-line tool that synchronizes calendars and contacts between different storage locations using CardDAV and CalDAV protocols. I use it to sync my Fastmail contacts to my laptop, giving me both a backup and local access to my contact data.</p>
+<h3 id="why-sync-contacts-locally">Why sync contacts locally?</h3>
+<p>There are several good reasons to maintain a local copy of your contacts:</p>
+<ul>
+<li><strong>Data ownership</strong>: You have direct access to your data in a standard format (vCard)</li>
+<li><strong>Backup</strong>: Protection against accidental deletion or service issues</li>
+<li><strong>Offline access</strong>: Query and use contacts without an internet connection</li>
+<li><strong>Integration</strong>: Use your contacts with local tools and scripts</li>
+<li><strong>Privacy</strong>: Keep a copy of your data under your control</li>
+</ul>
+<h3 id="setting-up-vdirsyncer">Setting up vdirsyncer</h3>
+<p>vdirsyncer configuration lives in <code>~/.config/vdirsyncer/config</code>. The setup is straightforward - you define a remote "storage", and a local one, and tell vdirsyncer how to sync between them.</p>
+<p>Here's how my config looks:</p>
+<pre class="language-ini " style="background-color: #2b303b; color: #c0c5ce;"><code class="language-ini"><span style="color: #b48ead;">[general]
+</span><span style="color: #65737e;"># A folder where vdirsyncer can store some metadata about each pair.
+</span><span style="color: #bf616a;">status_path </span><span>= </span><span style="color: #a3be8c;">&quot;~/.vdirsyncer/status/&quot;
+</span><span>
+</span><span style="color: #b48ead;">[pair contacts]
+</span><span style="color: #bf616a;">a </span><span>= </span><span style="color: #a3be8c;">&quot;contacts_local&quot;
+</span><span style="color: #bf616a;">b </span><span>= </span><span style="color: #a3be8c;">&quot;contacts_remote&quot;
+</span><span>
+</span><span style="color: #65737e;"># Synchronize all collections that can be found.
+</span><span style="color: #65737e;"># You need to run `vdirsyncer discover` if new calendars/addressbooks are added
+</span><span style="color: #65737e;"># on the server.
+</span><span style="color: #bf616a;">collections </span><span>= [</span><span style="color: #a3be8c;">&quot;from a&quot;</span><span>, </span><span style="color: #a3be8c;">&quot;from b&quot;</span><span>]
+</span><span>
+</span><span style="color: #65737e;"># Synchronize the &quot;display name&quot; property into a local file (~/.contacts/displayname).
+</span><span style="color: #bf616a;">metadata </span><span>= [</span><span style="color: #a3be8c;">&quot;displayname&quot;</span><span>]
+</span><span>
+</span><span style="color: #65737e;"># To resolve a conflict the following values are possible:
+</span><span style="color: #65737e;">#   `null` - abort when collisions occur (default)
+</span><span style="color: #65737e;">#   `&quot;a wins&quot;` - assume a's items to be more up-to-date
+</span><span style="color: #65737e;">#   `&quot;b wins&quot;` - assume b's items to be more up-to-date
+</span><span style="color: #bf616a;">conflict_resolution </span><span>= </span><span style="color: #d08770;">null
+</span><span>
+</span><span style="color: #b48ead;">[storage contacts_local]
+</span><span style="color: #bf616a;">type </span><span>= </span><span style="color: #a3be8c;">&quot;filesystem&quot;
+</span><span style="color: #bf616a;">path </span><span>= </span><span style="color: #a3be8c;">&quot;~/.contacts/&quot;
+</span><span style="color: #bf616a;">fileext </span><span>= </span><span style="color: #a3be8c;">&quot;.vcf&quot;
+</span><span>
+</span><span style="color: #b48ead;">[storage contacts_remote]
+</span><span style="color: #bf616a;">type </span><span>= </span><span style="color: #a3be8c;">&quot;carddav&quot;
+</span><span style="color: #bf616a;">url </span><span>= </span><span style="color: #a3be8c;">&quot;https://carddav.fastmail.com/&quot;
+</span><span style="color: #bf616a;">username </span><span>= </span><span style="color: #a3be8c;">&quot;&lt;ACCOUNT&gt;&quot;
+</span><span style="color: #bf616a;">password</span><span>.fetch = [</span><span style="color: #a3be8c;">&quot;command&quot;</span><span>, </span><span style="color: #a3be8c;">&quot;secret-tool&quot;</span><span>, </span><span style="color: #a3be8c;">&quot;lookup&quot;</span><span>, </span><span style="color: #a3be8c;">&quot;app_id&quot;</span><span>, </span><span style="color: #a3be8c;">&quot;vdirsyncer&quot;</span><span>]
+</span></code></pre>
+<p>Note that I'm only syncing contact data (CardDAV) at this stage, not calendars (CalDAV) - vdirsyncer can do both though.</p>
+<p>Here I have a remote CardDAV storage that connects to Fastmail's servers, and a local filesystem storage that saves the contacts as individual vCard files. The sync happens bidirectionally, so any changes I make locally get pushed back to Fastmail, and any changes on the server get pulled down.</p>
+<p>The configuration requires your Fastmail username and an <a href="https://www.fastmail.help/hc/en-us/articles/360058752854-App-passwords">app password</a> for authentication. I'm using the <code>password.fetch</code> option here with <a href="https://wiki.gnome.org/Projects/Libsecret">secret-tool</a> to retrieve the password from the system keyring (Gnome keyring in my case). This avoids storing the password in a plain text config file.</p>
+<h3 id="querying-contacts-with-khard">Querying contacts with khard</h3>
+<p>Having a local copy of contacts is nice, but you need a way to query them. <a href="https://github.com/lucc/khard">khard</a> is a command-line contacts manager that works perfectly with vdirsyncer's vCard files.</p>
+<p>With khard, you can search your contacts, view details, and even edit them from the command line. The changes sync back to Fastmail the next time vdirsyncer runs. It's a clean, simple interface for managing contact data without leaving the terminal.</p>
+<h3 id="optimizing-for-email-clients">Optimizing for email clients</h3>
+<p>While khard is great for interactive queries, I also needed a format that <a href="https://aerc-mail.org/">aerc</a> (my terminal-based mail client) could use for address completion. That's where my contacts sync script comes in:</p>
+<pre class="language-python " style="background-color: #2b303b; color: #c0c5ce;"><code class="language-python"><span style="color: #65737e;">#!/usr/bin/env python3
+</span><span>
+</span><span style="color: #b48ead;">import </span><span>subprocess
+</span><span>
+</span><span style="color: #65737e;"># Sync contacts with Fastmail
+</span><span>subprocess.</span><span style="color: #bf616a;">check_call</span><span>([&quot;</span><span style="color: #a3be8c;">vdirsyncer</span><span>&quot;, &quot;</span><span style="color: #a3be8c;">sync</span><span>&quot;])
+</span><span>
+</span><span style="color: #65737e;"># Get email list from khard
+</span><span>result = subprocess.</span><span style="color: #bf616a;">check_output</span><span>(
+</span><span>    [&quot;</span><span style="color: #a3be8c;">khard</span><span>&quot;, &quot;</span><span style="color: #a3be8c;">email</span><span>&quot;, &quot;</span><span style="color: #a3be8c;">--parsable</span><span>&quot;, &quot;</span><span style="color: #a3be8c;">--remove-first-line</span><span>&quot;],
+</span><span>    </span><span style="color: #bf616a;">text</span><span>=</span><span style="color: #d08770;">True</span><span>,
+</span><span>    </span><span style="color: #bf616a;">encoding</span><span>=&quot;</span><span style="color: #a3be8c;">utf8</span><span>&quot;,
+</span><span>)
+</span><span>
+</span><span style="color: #65737e;"># Process output: keep first 2 fields (email address and name) and deduplicate by email address
+</span><span>seen = </span><span style="color: #bf616a;">set</span><span>()
+</span><span>out = []
+</span><span style="color: #b48ead;">for </span><span>line </span><span style="color: #b48ead;">in </span><span>result.</span><span style="color: #bf616a;">splitlines</span><span>():
+</span><span>    fields = line.</span><span style="color: #bf616a;">split</span><span>(&quot;</span><span style="color: #96b5b4;">\t</span><span>&quot;, </span><span style="color: #d08770;">2</span><span>)[:</span><span style="color: #d08770;">2</span><span>]
+</span><span>    </span><span style="color: #b48ead;">if </span><span>not fields:
+</span><span>        </span><span style="color: #b48ead;">continue
+</span><span>    email = fields[</span><span style="color: #d08770;">0</span><span>]
+</span><span>    </span><span style="color: #b48ead;">if </span><span>email not in seen:
+</span><span>        seen.</span><span style="color: #bf616a;">add</span><span>(email)
+</span><span>        out.</span><span style="color: #bf616a;">append</span><span>(&quot;</span><span style="color: #96b5b4;">\t</span><span>&quot;.</span><span style="color: #bf616a;">join</span><span>(fields))
+</span><span>
+</span><span style="color: #b48ead;">with </span><span style="color: #96b5b4;">open</span><span>(&quot;</span><span style="color: #a3be8c;">all.txt</span><span>&quot;, &quot;</span><span style="color: #a3be8c;">wt</span><span>&quot;) </span><span style="color: #b48ead;">as </span><span>f:
+</span><span>    f.</span><span style="color: #bf616a;">write</span><span>(&quot;</span><span style="color: #96b5b4;">\n</span><span>&quot;.</span><span style="color: #bf616a;">join</span><span>(out))
+</span></code></pre>
+<p>This uses khard to dump out all the email addresses and names from the vCard files and produces an easily searchable contact list. Having aerc search this using <a href="https://github.com/BurntSushi/ripgrep">ripgrep</a> is much faster than calling khard for email address completion.</p>
+<h3 id="standardization-matters">Standardization matters</h3>
+<p>One of the best things about this setup is that it's all based on open standards. CardDAV for syncing, vCard for storage, and plain text for the optimized list. There's no proprietary format or vendor lock-in. If I wanted to switch from Fastmail to another provider, or from aerc to another mail client, the pieces would still fit together.</p>
+<p>This approach to contacts management might seem like overkill to some, but for me it strikes the right balance between convenience and control. My contacts are accessible from anywhere via Fastmail's web interface, but I also have a local copy that I can query, backup, and use with local tools. I've been meaning to get this part of my personal life organised for a long time, and I finally have.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 27, 2026 12:00 AM UTC by
+            <a href="http://freshfoo.com/blog/index.atom" class="link link-hover text-primary"
+              >"Menno's Musings"</a
+            >
+          </div>
+          <a
+            href="/posts/syncing-fastmail-contacts-with-vdirsyncer/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/01/your-python-your-voice-join-python.html" class="hover:underline"
+              >Your Python. Your Voice. Join the Python Developers Survey 2026!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This year marks the ninth iteration of the official Python Developers Survey. We intentionally launched the survey in January (later than years prior) so that data collection and results can be completed and shared within the same calendar year. The survey aims to capture the current state of the Python language and its surrounding ecosystem. By comparing the results with last year’s, the community can identify emerging trends and gain deeper insight into how Python continues to evolve.<br /><br />We encourage you to contribute to our community’s knowledge by sharing your experience and perspective. Your participation is valued! The survey should only take you about 10-15 minutes to complete.&nbsp;<br /><br /><a href="https://surveys.jetbrains.com/s3/python-developers-survey-2026" target="_blank">Contribute to the Python Developers Survey 2026!</a><br /><br />This year we aim to reach even more of our community and ensure accurate global representation by highlighting our localization efforts:&nbsp;<br /></p><ul style="text-align: left;"><li>The survey is translated into Chinese, French, German, Japanese, Korean, Portuguese, Russian, Spanish.&nbsp;</li><li>To assist individuals in promoting the survey and encouraging their local communities and professional networks we have created a <a href="https://docs.google.com/document/d/1C3r-dFY5LmklzCnf72vfeehzRqCCDuXzK8xKuwBES1Y/edit?usp=sharing" target="_blank">Promotion Kit</a> with images and social media posts translated into a variety of languages. We hope this promotion kit empowers folks to spread the invitation to respond to the survey within their local communities.</li><li>We’d love it if you’d share one or more of the posts in the Promotion Kit to your social media or any community accounts you manage, as well as share the information in Python related discords, mailing lists, or chats you participate in.</li><li>If you would like to help out with translations you see are missing, please request edit access to the doc and share what language you will be translating to. Translations for promotions into languages the survey may not be translated to is also welcome!&nbsp;</li></ul><p>If you have ideas about what else we can do to get the word out and encourage a diversity of responses, please comment on <a href="https://discuss.python.org/t/your-python-your-voice-join-the-python-developers-survey-2026/105883" target="_blank">the corresponding Discuss thread</a>.&nbsp;<br /><br />The survey is organized in partnership between the <a href="https://www.python.org/psf-landing/" target="_blank">Python Software Foundation</a> and <a href="https://www.jetbrains.com/" target="_blank">JetBrains</a>. After the survey is over, JetBrains will publish the aggregated results and randomly choose 20 winners (among those who complete the survey in its entirety), who will each receive a $100 Amazon Gift Card or a local equivalent.<br /><br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 26, 2026 01:31 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/01/your-python-your-voice-join-python.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://kushaldas.in/posts/replyfast-a-python-module-for-signal.html" class="hover:underline"
+              >replyfast a python module for signal</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <!--
+.. title: replyfast a python module for signal
+.. slug: replyfast-a-python-module-for-signal
+.. date: 2026-01-26T13:16:49+01:00
+.. tags: Blog, Signal, Privacy, Security, Python, Rust
+.. link:
+.. description:
+.. type: text
+-->
+<p><a href="https://github.com/kushaldas/replyfast">replyfast</a> is a Python module to receive and send messages on <a href="https://signal.org/">Signal</a>.</p>
+<p>You can install it via </p>
+<p><code>python3 -m pip install replyfast</code> </p>
+<p>or </p>
+<p><code>uv pip install replyfast</code> </p>
+<p>I have to add Windows builds to CI though.</p>
+<p>I have a <a href="https://github.com/kushaldas/replyfast/blob/main/register.py">script</a> to help you to register as a device, and
+then you can send and receive messages.</p>
+<p>I have a <a href="https://github.com/kushaldas/replyfast/blob/main/examples/demo_bot.py">demo bot</a> which shows both sending and rreceiving messages, and also how to schedule work following the <code>crontab</code> syntaxt.</p>
+<pre><code class="language-Python">    scheduler.register(
+        &quot;*/5 * * * *&quot;,
+        send_disk_usage,
+        args=(client,),
+        name=&quot;disk-usage&quot;,
+    )
+</code></pre>
+<p>This is all possible due to the <a href="https://github.com/whisperfish/presage">presage</a> library written in Rust.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on January 26, 2026 12:16 PM UTC by
+            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
+              >Kushal Das</a
+            >
+          </div>
+          <a
+            href="https://kushaldas.in/posts/replyfast-a-python-module-for-signal.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/467/toads-in-my-ai" class="hover:underline"
               >#467 Toads in my AI</a
             >
@@ -1423,188 +1655,6 @@ the default. You can switch between providers with <tt class="literal"><span cla
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/" class="hover:underline"
-              >How to Switch to ty from Mypy</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Python has supported type hinting for quite a few versions now, starting way back in 3.5. However, Python itself does not enforce type checking. Instead, you need to use an external tool or IDE. The first and arguably most popular is mypy. Microsoft also has a Python type checker that you can use in VS Code [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/">How to Switch to ty from Mypy</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 09, 2026 03:16 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/01/09/how-to-switch-to-ty-from-mypy/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://kushaldas.in/posts/introducing-ektupy.html" class="hover:underline"
-              >Introducing EktuPy</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <!--
-.. title: Introducing EktuPy
-.. slug: introducing-ektupy
-.. date: 2026-01-09T07:49:21+01:00
-.. tags: Blog, Python, Linux, News, Teaching, game, Browser, JavaScript, TypeScript
-.. link:
-.. description:
-.. type: text
--->
-<p>Py (daughter) is now 11 years old, and she spends a lot of time on Scratch,
-makes beautiful and fun things. But, she thinks she is not a programmer as she
-is moving blocks and not typing code like us. I had questions for long time
-about how to move this Scratch generation into programming in general via
-Python. <a href="https://ektupy.org">EktuPy</a> is my probable solution.</p>
-<p><img alt="Home page" src="https://kushaldas.in/images/ektupy/homepage01.png" /></p>
-<p>In simple words, we have an editor to write code in the left, and a Canvas/stage on the left.
-You can do all the similar things you do on scratch here, I have a list of examples in the editor.</p>
-<p><img alt="Hello World" src="https://kushaldas.in/images/ektupy/helloworld.png" /></p>
-<p>We use <a href="https://pyscript.net/">PyScript</a> and thanks to
-<a href="https://astral.sh">Astral</a> we have both <a href="https://docs.astral.sh/ruff/">Ruff</a>
-and <a href="https://docs.astral.sh/ty/">ty</a> for LSP/linting support in the editor
-(using webassembly). The whole code is executing on the browser of the user.</p>
-<p><img alt="Drawing via keyboard" src="https://kushaldas.in/images/ektupy/drawing_withkeyboard.png" /></p>
-<p><img alt="Drawing via pen" src="https://kushaldas.in/images/ektupy/drawing_pen.png" /></p>
-<p><img alt="Pong" src="https://kushaldas.in/images/ektupy/pong.png" /></p>
-<p>Yesterday I took part in the monthly <a href="https://www.youtube.com/watch?v=6Bp_VXowFv4">PyScript Fun call</a>
-because <a href="https://ntoll.org">Nicholas</a> reminded me, had fun to demonstrate it
-there and watched what others are building.</p>
-<p><img alt="Two Sprites" src="https://kushaldas.in/images/ektupy/two_sprites.png" /></p>
-<p>The first time Py pocked around for 1:30 hours, she gave me 11 bugs, and next
-for 5 minutes and asked me to get tutorials, she did not want to read the
-<a href="https://docs.ektupy.org">documentation</a>. So, for every example in the editor
-we have tutorials, not too detailed yet, but good enough to start.</p>
-<p><img alt="Tutorial" src="https://kushaldas.in/images/ektupy/tutorial.png" /></p>
-<p>You can create an account and save your programs. You can share them as public
-from your dashboard, then others can find those in the
-<a href="https://beta.ektupy.org/explore/">explorepage</a> and run the code or remix if they want.</p>
-<p><img alt="Space shooter" src="https://kushaldas.in/images/ektupy/space_shooter.png" /></p>
-<p>I am super nostalgic about <a href="https://beta.ektupy.org/share/8d5bb6a3ecf594cfb9e168ae7f9091b9/">one implementation</a> :)</p>
-<p>Oh, because I think kids may not have to learn about <code>async</code> programming in this
-platform, calls like <code>wait()</code> or <code>ask()</code> or <code>play_sound_until_done()</code> or
-<code>wait_until()</code> are all synchronous for the edtior, and then some AST
-transformer adds the <code>async/await</code> as needed. </p>
-<p>Feel free to try this out, share the link to your kid or teachers/parents you
-know. Let me know how to improve. I will publish the codebase, a
-<a href="https://www.djangoproject.com/">Django</a> application with proper license and
-hopefully we can make it even better togather.</p>
-<p>This project was not possible without all the work done before, including
-Scratch, or <a href="https://codemirror.net/">CodeMirror</a> for the edtior,
-<a href="https://pyscript.net/">PyScript</a> / <a href="https://pyodide.org/en/stable/">PyOdide</a>,
-the bigger Python community and
-<a href="https://en.wikipedia.org/wiki/Claude_(language_model)">Claude/Opus4.5</a> for
-incredicable TypeScript/Javascript help :)</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 09, 2026 06:49 AM UTC by
-            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
-              >Kushal Das</a
-            >
-          </div>
-          <a
-            href="https://kushaldas.in/posts/introducing-ektupy.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wirtel.be/post/2026/01/08/automating-tls-certificate-monitoring-github-actions-certificate-watcher-slack/" class="hover:underline"
-              >Automating TLS Certificate Monitoring with GitHub Actions, certificate_watcher, and Slack</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2 id="introduction">Introduction</h2>
-<p>As a consultant constantly working with clients, I found myself in a familiar predicament: my head was always down, focused on delivering value to customers, but my own infrastructure monitoring was non-existent. I had no simple way to track SSL/TLS certificate expirations across the multiple domains I managed - personal sites, client projects, and community services.</p>
-<p>I needed a solution, but I had several constraints:</p>
-<ol>
-<li><strong>No time for complex setup</strong>: I couldn&rsquo;t afford to spend days installing, configuring, and deploying yet another monitoring service</li>
-<li><strong>Easy maintenance</strong>: Whatever I built had to be low-maintenance - I didn&rsquo;t want another system to babysit</li>
-<li><strong>Transparency and control</strong>: I wanted a simple text file in Git listing the hosts to monitor, so I could see exactly what was being checked and track changes over time</li>
-<li><strong>Zero infrastructure</strong>: No servers to provision, patch, or pay for</li>
-</ol>
-<p>Around this time, a friend named Julien shared his project called <code>certificate_watcher</code>, a lightweight Python tool for checking SSL certificate expiration. I contributed a few patches (if memory serves), and it clicked: what if I could combine this with GitHub Actions and Slack notifications?</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 08, 2026 12:00 AM UTC by
-            <a href="https://wirtel.be/tags/python/index.xml" class="link link-hover text-primary"
-              >Stéphane Wirtel</a
-            >
-          </div>
-          <a
-            href="https://wirtel.be/post/2026/01/08/automating-tls-certificate-monitoring-github-actions-certificate-watcher-slack/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index9.html" class="btn">«</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</button></div></div>
 </div>
@@ -1616,8 +1666,8 @@ incredicable TypeScript/Javascript help :)</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8191</a></li>
-    <li><a>Unique Feeds: 381</a></li>
+    <li><a>Total Entries: 8264</a></li>
+    <li><a>Unique Feeds: 384</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
