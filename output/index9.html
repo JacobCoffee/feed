@@ -53,6 +53,319 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html" class="hover:underline"
+              >Garmin inReach Mini 2 Leaflet checkin map</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We will be trekking the eastern part of the Great Himalaya Trail in Nepal in
+March/April. Details on the route and our plans can be found at
+<a href="https://greathimalayatrail.de">https://greathimalayatrail.de</a>. Our intent is to keep friends and family
+updated on our progress. Given that we'll be hiking in quite remote areas, a
+satellite phone/pager will be our sole means of communication.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/garmin-inreach-mini.png" /></p>
+<p>After the Garmin inReach Mini 3 was released recently, the Inreach Mini 2 was on
+heavy sale. The inReach Mini 2 has all the features I need: satellite messaging,
+check-ins, offline mode with navigation, and track recording.</p>
+<h1>Plans</h1>
+<p>I'm on the Garmin Essential plan for 18 euros per month. It includes 50 free
+text messages or weather requests each month, plus unlimited check-in messages.
+The smaller Enabled plan (10 Euros) is missing the unlimited checkins, while the
+the Standard plan (34 Euros) gives you 150 free messages and unlimited live tracking.
+More details are on the <a href="https://www.garmin.com/de-DE/p/837461/pn/010-04015-SU/">Garmin page</a></p>
+<h1>Messaging</h1>
+<p>There are three different type of messages that you can send:</p>
+<p><strong>Check-In Messages:</strong> There are three preset messages. You can configure the
+recipients at <a href="https://explore.garmin.com">explore.garmin.com</a>. Depending on your Garmin
+subscription, sending check-in messages are free of charge. In the configuration section,
+you can enable the option to include your latitude/longitude and a link to the
+Garmin map in each SMS message. This information is always included for email
+recipients</p>
+<p><strong>Quick Messages:</strong> You can create up to 20 predefined messages so you don’t
+have to type them while you’re on the trail. The number of free messages you
+get depends on your Garmin subscription; any additional messages are billed per
+use. You can create or edit these messages at explore.garmin.com.</p>
+<p><strong>Normal Messages:</strong> In the Garmin Messenger iPhone app, you can type any custom
+message and send it to both SMS and email recipients. These messages are billed
+the same way as quick messages.</p>
+<p>You can configure the system to send all messages to any email/sms recipients. The great
+thing is that the unlimited check-in messages also include latitude/longitude information.
+Here is a sample message.</p>
+<div class="highlight"><pre><span></span>Arrived at Camp
+
+View the location or send a reply to Peter Hoffmann:
+https://inreachlink.com/&lt;unique_code&gt;
+
+Peter Hoffmann sent this message from: Lat 48.996386 Lon 8.468849
+
+Do not reply directly to this message.
+
+This message was sent to you using the inReach two-way satellite communicator with GPS. To learn more, visit http://explore.garmin.com/inreach.
+</pre></div>
+<p>As we do not want to spam all our friends with daily checkins I have build
+a little leaflet-checkin plugin and an imap scraper to pull and visualize
+the checkin/messages.</p>
+<h1>Build your own Tracking with Check-In Messages</h1>
+<p>For battery life reasons, we are not interested in real-time live tracking.<br />
+Instead, I’ve created a small script that checks a dedicated IMAP email account
+for check-in messages and publishes them to a server, which then displays the
+location of our most recent check-in. Sending a check-in once a day or during
+each break when we are in more remote areas—should give our friends enough
+information in case any problems arise.</p>
+<p><img alt="" src="https://peter-hoffmann.com/static/2026/leaflet-checkin-map.png" /></p>
+<p>A straightforward Python script connects to my IMAP server, retrieves all emails from
+the Garmin InReach service, parses the message, timestamp, and latitude/longitude, and
+then updates a <code>positions.json</code> file on my webserver.</p>
+<p>Then a simple static html file with a <a href="https://leafletjs.com">leaflet</a> map pulls
+the <code>positions.json</code> file and displays the messages/checkins on the map.</p>
+<p>A demo of the map is available at:</p>
+<p><a href="https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html">https://hoffmann.github.io/garmin-inreach-checkin-map/html/map.html</a></p>
+<p>and you can checkout the code</p>
+<p><a href="https://github.com/hoffmann/garmin-inreach-checkin-map">https://github.com/hoffmann/garmin-inreach-checkin-map</a></p>
+<div class="highlight"><pre><span></span><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;Poll IMAP inbox for Garmin inReach emails and extract positions into positions.json.&quot;&quot;&quot;</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">email</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">email.utils</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">imaplib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timezone</span>
+
+<span class="n">BOILERPLATE_PREFIXES</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="s2">&quot;View the location&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Do not reply&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;This message was sent&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">POSITIONS_FILE</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;positions.json&quot;</span>
+<span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">imaplib</span><span class="o">.</span><span class="n">IMAP4_SSL</span><span class="p">(</span><span class="n">host</span><span class="p">)</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">login</span><span class="p">(</span><span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">imap</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">):</span>
+    <span class="n">imap</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;INBOX&quot;</span><span class="p">)</span>
+    <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">search</span><span class="p">(</span>
+        <span class="kc">None</span><span class="p">,</span> <span class="s1">'(OR FROM &quot;no.reply.inreach@garmin.com&quot; SUBJECT &quot;inReach message&quot;)'</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[]</span>
+    <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">msg_ids</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">is_multipart</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">msg</span><span class="o">.</span><span class="n">walk</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_type</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;text/plain&quot;</span><span class="p">:</span>
+                <span class="n">charset</span> <span class="o">=</span> <span class="n">part</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+                <span class="k">return</span> <span class="n">part</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">charset</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_content_charset</span><span class="p">()</span> <span class="ow">or</span> <span class="s2">&quot;utf-8&quot;</span>
+        <span class="k">return</span> <span class="n">msg</span><span class="o">.</span><span class="n">get_payload</span><span class="p">(</span><span class="n">decode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">charset</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">):</span>
+    <span class="n">date_str</span> <span class="o">=</span> <span class="n">msg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Date&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">date_str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">parsedate_to_datetime</span><span class="p">(</span><span class="n">date_str</span><span class="p">)</span>
+    <span class="n">dt_utc</span> <span class="o">=</span> <span class="n">dt</span><span class="o">.</span><span class="n">astimezone</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">dt_utc</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%SZ&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">):</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+
+    <span class="c1"># Extract message: first non-empty line</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+        <span class="n">stripped</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">stripped</span><span class="p">:</span>
+            <span class="n">message</span> <span class="o">=</span> <span class="n">stripped</span>
+            <span class="k">break</span>
+
+    <span class="c1"># Check if the message is boilerplate</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">message</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="k">for</span> <span class="n">prefix</span> <span class="ow">in</span> <span class="n">BOILERPLATE_PREFIXES</span><span class="p">):</span>
+        <span class="n">message</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="c1"># Extract lat/lon</span>
+    <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span>
+    <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;Lat\s+([-\d.]+)\s+Lon\s+([-\d.]+)&quot;</span><span class="p">,</span> <span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+        <span class="n">lat</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="n">lon</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_email</span><span class="p">(</span><span class="n">msg_data</span><span class="p">):</span>
+    <span class="n">msg</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">message_from_bytes</span><span class="p">(</span><span class="n">msg_data</span><span class="p">)</span>
+
+    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">parse_timestamp</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">timestamp</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">body</span> <span class="o">=</span> <span class="n">get_text_body</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">body</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">message</span><span class="p">,</span> <span class="n">lat</span><span class="p">,</span> <span class="n">lon</span> <span class="o">=</span> <span class="n">parse_body</span><span class="p">(</span><span class="n">body</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">lat</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">lon</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">entry</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">timestamp</span><span class="p">,</span>
+        <span class="s2">&quot;lat&quot;</span><span class="p">:</span> <span class="n">lat</span><span class="p">,</span>
+        <span class="s2">&quot;lon&quot;</span><span class="p">:</span> <span class="n">lon</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">if</span> <span class="n">message</span><span class="p">:</span>
+        <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;msg&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">message</span>
+    
+
+    <span class="k">return</span> <span class="n">entry</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">load_positions</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">[]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">save_positions</span><span class="p">(</span><span class="n">positions</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">POSITIONS_FILE</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">host</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_HOST&quot;</span><span class="p">)</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_USER&quot;</span><span class="p">)</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;IMAP_PASSWORD&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">all</span><span class="p">([</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">]):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Error: Set IMAP_HOST, IMAP_USER, and IMAP_PASSWORD environment variables.&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">imap</span> <span class="o">=</span> <span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">user</span><span class="p">,</span> <span class="n">password</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">msg_ids</span> <span class="o">=</span> <span class="n">search_inreach_emails</span><span class="p">(</span><span class="n">imap</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Found </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">msg_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> inReach email(s)&quot;</span><span class="p">)</span>
+
+        <span class="n">new_entries</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">msg_id</span> <span class="ow">in</span> <span class="n">msg_ids</span><span class="p">:</span>
+            <span class="n">status</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">imap</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">msg_id</span><span class="p">,</span> <span class="s2">&quot;(RFC822)&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">status</span> <span class="o">!=</span> <span class="s2">&quot;OK&quot;</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">entry</span> <span class="o">=</span> <span class="n">parse_email</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">entry</span><span class="p">:</span>
+                <span class="n">new_entries</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">imap</span><span class="o">.</span><span class="n">logout</span><span class="p">()</span>
+
+    <span class="n">existing</span> <span class="o">=</span> <span class="n">load_positions</span><span class="p">()</span>
+    <span class="n">existing_timestamps</span> <span class="o">=</span> <span class="p">{</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">existing</span><span class="p">}</span>
+
+    <span class="n">added</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">new_entries</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">existing_timestamps</span><span class="p">:</span>
+            <span class="n">existing</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+            <span class="n">existing_timestamps</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+            <span class="n">added</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="n">existing</span><span class="o">.</span><span class="n">sort</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="p">[</span><span class="s2">&quot;timestamp&quot;</span><span class="p">])</span>
+    <span class="n">save_positions</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Added </span><span class="si">{</span><span class="n">added</span><span class="si">}</span><span class="s2"> new position(s) (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">existing</span><span class="p">)</span><span class="si">}</span><span class="s2"> total)&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 13, 2026 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="https://peter-hoffmann.com/2026/garmin-inreach-mini-2-leaflet-checkin-map.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/02/python-is-for-everyone-inside-psfs-d.html" class="hover:underline"
+              >Python is for Everyone: Inside the PSF's D&I Work Group</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/a/AVvXsEjkhgqUDZF7BIsaWJIMrfgV07w_awVOFJdKoIwf2gcrjinWZidBj0W4qNvYDyskySUTJzqGXYkH8gRDhVcyIWzBhJWicGPXxNQg_6NJMzi7QnSUtEF8Z8ZEjUW7uAk2sMChj8wXro1BWmEvMtqJJSqSPuWIZfQU24JroQwb_ng56s0zw_Vr2Q" style="margin-left: 1em; margin-right: 1em;"><img alt="" height="230" src="https://blogger.googleusercontent.com/img/a/AVvXsEjkhgqUDZF7BIsaWJIMrfgV07w_awVOFJdKoIwf2gcrjinWZidBj0W4qNvYDyskySUTJzqGXYkH8gRDhVcyIWzBhJWicGPXxNQg_6NJMzi7QnSUtEF8Z8ZEjUW7uAk2sMChj8wXro1BWmEvMtqJJSqSPuWIZfQU24JroQwb_ng56s0zw_Vr2Q=w510-h230" width="510" /></a></div><div style="background-color: white; margin-top: 0px; text-align: left;"><span style="font-family: helvetica;"></span></div><div style="background-color: white; margin-top: 0px; text-align: left;"><span style="font-family: helvetica;">We are living in a moment where diversity and inclusion work is being actively undermined.&nbsp;</span></div><div style="background-color: white; margin-top: 0px; text-align: left;"><span style="font-family: helvetica;">From policy changes to corporate rollbacks, the gains we’ve fought for are being questioned and dismantled. Having lived in different countries and been part of many diverse communities, I’ve seen firsthand what happens when people feel excluded from spaces they want to be part of. As the chair of the Python Software Foundation’s Diversity &amp; Inclusion Work Group for the past two years, I want to share what we’ve been doing, why it matters, and the incredible people making it happen.&nbsp;</span></div><div style="background-color: white; margin-top: 0px; text-align: left;"><span style="font-family: helvetica;">When I took on this role, I realized how much work the workgroup has already invested in that nobody knew about. This article is a reflection on our journey, the challenges we face, and where we’re heading. I want to share our story because I believe it matters.</span></div><div style="background-color: white; margin-top: 0px; text-align: left;"><h3 id="why-this-matters" style="line-height: 1.2; margin-top: 0px; text-align: left;"><span style="font-family: helvetica; font-size: medium;">Why This Matters</span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">You might be asking yourself: Why invest so much energy in diversity and inclusion work, especially now when it’s being questioned and de-prioritized?</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">But we all know the truth: barriers exist everywhere. A meetup announcement only in English. Documentation that assumes reliable internet. Examples that reference things unfamiliar to most of the world. Code of conduct violations without clear guidance for organizers. Communities wanting to start but not knowing where to begin.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Because the Python community is global, and it should feel that way. When someone discovers Python in Nigeria, Brazil, India, or anywhere else in the world, they should see a community that welcomes them. They should find resources in their language, examples that reflect their context, and people who understand their challenges.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Diversity isn’t just about representation. It’s about making Python better. More approachable. More accessible. Different perspectives lead to better solutions, more creative problem-solving, and software that works for more people. When we only hear from one type of voice, we miss opportunities to improve.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Right now, when diversity and inclusion efforts are being rolled back in many places, it’s tempting to stay quiet. But that’s exactly why we need to speak up about the work we’re doing. The Python Software Foundation made a commitment: to support a diverse and international community of Python programmers. The D&amp;I Work Group exists to make that commitment real, tangible, and actionable.</span></p><hr style="border-bottom-width: 0px; border-color: rgb(0, 0, 0) currentcolor currentcolor; border-left-width: 0px; border-right: 0px; border-style: solid none none; border-top-color: rgb(0, 0, 0); border-top-style: solid; color: inherit; font-family: newsreader, serif; font-size: 25px;" /><h3 id="how-the-diversity-and-inclusion-workgroup-started" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">How The Diversity and Inclusion Workgroup Started</span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">The PSF Board created the Diversity &amp; Inclusion Work Group in 2020 with a clear purpose: to amplify the Python Software Foundation’s mission of supporting a diverse and international community. It was a good idea. People wanted to join.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Members came from different regions around the world, excited to be part of the group and looking forward to creating an impact because all of us, in one way or another, felt something was missing: the need to amplify and embrace diversity through more inclusion.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Most discussions related to diversity and how we could spread awareness. The chats on our Slack channel were active with people sharing different opinions and resources.</span></p><h3 style="line-height: 1.2; margin-top: 0px; text-align: left;"><span><span style="font-family: helvetica; font-size: medium;">PyConUS D&amp;I Panel Discussions</span></span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">We held interesting annual D&amp;I panels where we discussed important topics which are often set aside. In 2022 and 2023 at PyCon US, we spoke about the lack of representation on the board, why the board lacked global representation, the lack of representation from core developers in other parts of the world apart from the US and Europe despite the huge representation of Pythonistas around the world, and how people could contribute to changing that representation.</span></p><p style="margin-top: 0px;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;">PyConUS 2022 D&amp;I Panel Discussion</span></span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Participating D&amp;I Workgroup members:&nbsp;<a href="https://georgiker.com/" style="color: #097d8c;"><span style="font-weight: 700;">Georgi Ker</span></a>,&nbsp;<a href="https://lerner.co.il/" style="color: #097d8c;"><span style="font-weight: 700;">Reuven Lerner</span></a>,&nbsp;<a href="https://tonybaloney.github.io/" style="color: #097d8c;"><span style="font-weight: 700;">Anthony Shaw</span></a>,&nbsp;<a href="https://lorenamesa.com/" style="color: #097d8c;"><span style="font-weight: 700;">Lorena Mesa</span></a></span></p></div><div style="background-color: white; margin-top: 0px; text-align: left;"><div><span><div><span><div class="separator" style="clear: both; text-align: center;"></div><br /><span style="font-family: helvetica;"><br /></span></span></div><div><span><h4 style="margin-top: 0px; text-align: left;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;">PyConUS 2023 D&amp;I Panel Discussion</span></span></h4><p style="margin-top: 0px;"><span style="font-family: helvetica;">Participating D&amp;I Workgroup members:&nbsp;<a href="https://marlenemhangami.com/" style="color: #097d8c;"><span style="font-weight: 700;">Marlene Mhangami</span></a>,&nbsp;<a href="https://deboraazevedo.github.io/" style="color: #097d8c;"><span style="font-weight: 700;">Débora Azevedo</span></a>,&nbsp;<a href="https://iqbalabdullah.net/" style="color: #097d8c;"><span style="font-weight: 700;">Iqbal Abdullah</span></a>,&nbsp;<a href="https://georgiker.com/" style="color: #097d8c;"><span style="font-weight: 700;">Georgi Ker</span></a></span></p><div class="separator" style="clear: both; text-align: center;"></div><p style="margin-top: 0px;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;"><br /></span></span></p><p style="margin-top: 0px;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;">PyConUS 2024 D&amp;I Panel Discussion</span></span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">In 2024, we invited different Python community leaders:&nbsp;<a href="https://github.com/mesrenyamedogbe/" style="color: #097d8c;"><span style="font-weight: 700;">Abigail Mesrenyame Dogbe</span></a>,&nbsp;<a href="https://dinama.id/" style="color: #097d8c;"><span style="font-weight: 700;">Dima Dinama</span></a>,<a href="https://bento.me/julesbrlm/" style="color: #097d8c;"><span style="font-weight: 700;">Jules Juliano Barros Lima</span></a>,&nbsp;<a href="https://github.com/sleepypioneer/" style="color: #097d8c;"><span style="font-weight: 700;">Jessica Greene</span></a>, and&nbsp;<a href="https://github.com/sleepypioneer/" style="color: #097d8c;"><span style="font-weight: 700;">Mason Egger</span></a>, who shared about their work, their involvement, and their challenges as community leaders.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Participating D&amp;I Workgroup members:&nbsp;<a href="https://deboraazevedo.github.io/" style="color: #097d8c;"><span style="font-weight: 700;">Débora Azevedo</span></a>,&nbsp;<a href="https://georgiker.com/" style="color: #097d8c;"><span style="font-weight: 700;">Georgi Ker</span></a></span></p><div class="separator" style="clear: both; text-align: center;"></div><p style="margin-top: 0px;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;"><br /></span></span></p><p style="margin-top: 0px;"><span style="font-weight: 700;"><span style="font-family: helvetica; font-size: medium;">PyConUS 2025 D&amp;I Panel Discussion</span></span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">In 2025, due to political changes happening around the world, we invited&nbsp;<a href="https://maureira.dev/" style="color: #097d8c;"><span style="font-weight: 700;">Cristián Maureira-Fredes</span></a>,&nbsp;<a href="https://kjaymiller.com/" style="color: #097d8c;"><span style="font-weight: 700;">Jay Miller</span></a>, and&nbsp;<a href="https://www.naomiceder.tech/" style="color: #097d8c;"><span style="font-weight: 700;">Naomi Ceder</span></a>&nbsp;to the D&amp;I Workgroup panel to talk about “The Work Still Matters: Inclusion, Access, and Community in 2025.”</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Participating D&amp;I Workgroup members:&nbsp;<a href="https://allabarbalat.com/" style="color: #097d8c;"><span style="font-weight: 700;">Alla Barbalat</span></a>,&nbsp;<a href="https://www.linkedin.com/in/keanyaphelps/" style="color: #097d8c;"><span style="font-weight: 700;">Keanya Phelps</span></a></span></p><div class="separator" style="clear: both; text-align: center;"></div><br /><p style="margin-top: 0px;"><span style="font-family: helvetica;">The panels were great. The discussions in our workgroup were great. But something was still not going right.</span></p><hr style="border-bottom-width: 0px; border-color: rgb(0, 0, 0) currentcolor currentcolor; border-left-width: 0px; border-right: 0px; border-style: solid none none; border-top-color: rgb(0, 0, 0); border-top-style: solid; color: inherit; font-family: newsreader, serif; font-size: 25px;" /><h3 id="building-a-global-work-group" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;"></span></h3><h3 id="building-a-global-work-group" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Building a Global Work Group</span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">In 2024, when I took on the role of chair, the D&amp;I Work Group was at a crossroads. The PSF Board had created it to amplify the Foundation’s mission, and there was genuine interest from the community, but without a clear direction or structure, momentum had faded. People wanted to join, but they didn’t know what the group would actually&nbsp;<i>do</i>.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">I knew we needed two things: a clear purpose and genuine diversity in our membership. Not just diversity as an abstract goal, but real representation from the regions where Python communities were thriving.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">I started by doing research that I could share with the rest of the workgroup members. I went through the Python.org calendar, cataloging events and projects happening around the world. What I found was that Python communities were active everywhere (as expected), but they weren’t really represented in our Work Group’s leadership. I identified regional gaps and proposed a structure that would ensure fair representation: North America, South America, Africa, Asia, Oceania, the Middle East, and Europe.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">The current representation as of October 2024 across regions is as follows:</span></p><ul style="margin-top: 0px;"><li><span style="font-family: helvetica;">North America: 3</span></li><li><span style="font-family: helvetica;">South America: 3</span></li><li><span style="font-family: helvetica;">Asia: 3</span></li><li><span style="font-family: helvetica;">Europe: 3</span></li><li><span style="font-family: helvetica;">Africa: 3</span></li><li><span style="font-family: helvetica;">Oceania: 1</span></li><li><span style="font-family: helvetica;">Middle East: 2</span></li></ul><p style="margin-top: 0px;"><span style="font-family: helvetica;">It is important to note that each member has the freedom to choose which region they represent. As a D&amp;I Workgroup, we do not dictate regional representation. This decision is entirely up to the individual, ensuring that members represent the region where they feel most connected or comfortable. We also shared which countries would be represented in which region to be explicit for interested parties.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">We launched a public outreach campaign to the community. People applied, and the group voted to bring in new members. For the first time, we had a WorkGroup that truly reflected the global Python community.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">But diverse perspectives meant many different ideas. In two workshop sessions, we listed every initiative people wanted to pursue, grouped them by theme, discussed priorities, and filtered down to three focused initiatives we could realistically accomplish with volunteer time and resources.</span></p><h3 style="font-family: dosis, sans-serif; line-height: 1.2; margin-top: 0px; text-align: left;"><span style="font-size: medium;">These three initiatives are:</span></h3><ol style="margin-top: 0px;"><li><span style="font-family: helvetica;"><span style="font-weight: 700;">Concentrate on Outreach to Communities</span>&nbsp;- Creating resources and templates to help communities improve their D&amp;I efforts</span></li><li><span style="font-family: helvetica;"><span style="font-weight: 700;">How to Setup a Local Python Community</span>&nbsp;- A comprehensive guide for organizers starting new user groups</span></li><li><span style="font-family: helvetica;"><span style="font-weight: 700;">Continue Collecting Survey Feedback from the Python Community</span>&nbsp;- Gathering data to understand where we need to focus</span></li></ol><p style="margin-top: 0px;"><span style="font-family: helvetica;">The three initiatives we’re working on aren’t abstract goals. They’re about giving people the tools and support they need to build inclusive communities where they are. And of course, there are many other things we would like to work on. But filtering down to what we can concentrate on right now will give us better results, and we will continue to move on and work on the others as we progress.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">We meet twice monthly across different time zones. We noticed that monthly meetings aren’t frequent enough, coordination is challenging, and volunteer time is limited. But we’re learning and adapting.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">This wasn’t just about having good ideas. It was about creating a sustainable framework where a volunteer group could actually make progress.</span></p><hr style="border-bottom-width: 0px; border-color: rgb(0, 0, 0) currentcolor currentcolor; border-left-width: 0px; border-right: 0px; border-style: solid none none; border-top-color: rgb(0, 0, 0); border-top-style: solid; color: inherit; font-family: newsreader, serif; font-size: 25px;" /><h3 id="meet-the-members-of-the-workgroup" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;"></span></h3><h3 id="meet-the-members-of-the-workgroup" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Meet the Members of the Workgroup</span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">The heart of the D&amp;I Work Group is the people who show up, month after month, to do this work. They come from different regions, different backgrounds, and different parts of the Python ecosystem. We have 19 active members representing all regions and a PSF staff member included.</span></p><h4 id="welcoming-new-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Welcoming New Members</span></h4><p style="margin-top: 0px;"><span style="font-family: helvetica;">We’re excited to welcome our five new members:&nbsp;<span style="font-weight: 700;"><a href="https://www.linkedin.com/in/itskpflow/"><span style="color: #45818e;">Kalyan Prasad</span><span style="color: #0b5394;">,</span></a></span>&nbsp;representing Asia,&nbsp;<span style="font-weight: 700;"><a href="https://juliobs.com/"><span style="color: #45818e;">Julio Batista Silva</span></a><a href="https://juliobs.com/" style="color: black;">&nbsp;</a></span>representing Europe,&nbsp;<span style="font-weight: 700;"><a href="https://www.linkedin.com/in/abhijeet-mote/"><span style="color: #45818e;">Abhijeet Mote</span></a><a href="https://www.linkedin.com/in/abhijeet-mote/" style="color: black;">&nbsp;</a></span>representing North America,&nbsp;<span style="font-weight: 700;"><a href="https://seyramtheresa.medium.com/"><span style="color: #45818e;">Theresa Seyram Agbenyegah</span></a></span>&nbsp;and&nbsp;<span style="font-weight: 700;"><a href="https://www.linkedin.com/in/emmanuel-ugwu-b58b80223"><span style="color: #45818e;">Emmanuel Ugwu</span></a></span>&nbsp;representing Africa. They will bring fresh perspectives and energy to our work.</span></p><h4 id="thanking-our-former-members" style="font-family: dosis, sans-serif; line-height: 1.2; margin-top: 0px;"><span style="font-size: medium;">Thanking our Former Members</span></h4><p style="margin-top: 0px;"><span style="font-family: helvetica;">We also want to acknowledge and thank our former members who have contributed to the D&amp;I Work Group:<span style="color: #3d85c6;">&nbsp;<span style="font-weight: 700;"><a href="https://github.com/guel-codes">Miguel Johnson</a></span></span>,&nbsp;<span style="font-weight: 700;"><a href="https://marlenemhangami.com/"><span style="color: #45818e;">Marlene Mhangami</span></a></span>&nbsp;,&nbsp;<span style="color: #45818e; font-weight: 700;"><a href="">Tereza Iofciu</a></span><span style="color: #45818e;">,</span><span style="color: #3d85c6;">&nbsp;<span style="font-weight: 700;"><a href="https://iqbalabdullah.net/">Iqbal Abdullah</a></span></span>,Cynthia Xin, Mariam Haji and Boluwaji Akinlade. Their dedication helped shape what this group has become, and we’re grateful for everything they contributed.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Our current members:</span></p><h4 id="south-america-3-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">South America (3 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Débora Azevedo" src="https://georgiker.com/images/blog/debra.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Juliana Barros Lima" src="https://georgiker.com/images/blog/jules.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Karolina Ladino Puerto" src="https://georgiker.com/images/blog/Karo.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://github.com/deboraazevedo"><span style="color: #45818e; font-family: helvetica;">Débora Azevedo</span></a></span></li><li><span style="font-weight: 700;"><a href="https://bento.me/julesbrlm"><span style="color: #45818e; font-family: helvetica;">Juliana Barros Lima (Jules)</span></a></span></li><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/karobotco/"><span style="color: #45818e; font-family: helvetica;">Karolina Ladino Puerto</span></a></span></li></ul><h4 id="north-america-4-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">North America (4 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Keanya Phelps" src="https://georgiker.com/images/blog/keanya.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Alla Barbalat" src="https://georgiker.com/images/blog/alla.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Marie Nordin" src="https://georgiker.com/images/blog/marie.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Abhijeet Mote" src="https://georgiker.com/images/blog/abhijeet.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/keanyaphelps/"><span style="color: #45818e; font-family: helvetica;">Keanya Phelps</span></a></span></li><li><span style="font-weight: 700;"><a href="https://allabarbalat.com/"><span style="color: #45818e; font-family: helvetica;">Alla Barbalat</span></a></span></li><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/mariecnordin/"><span style="color: #45818e; font-family: helvetica;">Marie Nordin - PSF Staff</span></a></span></li><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/abhijeet-mote/"><span style="color: #45818e; font-family: helvetica;">Abhijeet Mote - New member!</span></a></span></li></ul><h4 id="asia-3-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Asia (3 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Sayantika Banik" src="https://georgiker.com/images/blog/saya.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Georgi Ker" src="https://georgiker.com/images/blog/georgi.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Kalyan Prasad" src="https://georgiker.com/images/blog/Kalyan1.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://github.com/sayantikabanik"><span style="color: #45818e; font-family: helvetica;">Sayantika Banik</span></a></span></li><li><span style="font-weight: 700;"><a href="https://georgiker.com/"><span style="color: #45818e; font-family: helvetica;">Georgi Ker</span></a></span></li><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/itskpflow/"><span style="color: #45818e; font-family: helvetica;">Kalyan Prasad - New member!</span></a></span></li></ul><h4 id="europe-3-members" style="line-height: 1.2; margin-top: 0px; text-align: left;"><span style="font-family: helvetica; font-size: medium;">Europe (3 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Jimena Escobar Bermúdez" src="https://georgiker.com/images/blog/Jimena.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Filipe Laíns" src="https://georgiker.com/images/blog/Filipe.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Julio Batista Silva" src="https://georgiker.com/images/blog/Julio.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://www.getmanfred.com/perfil/jimena"><span style="color: #45818e; font-family: helvetica;">Jimena Escobar Bermúdez</span></a></span></li><li><span style="font-weight: 700;"><a href="https://ffy00.github.io/"><span style="color: #45818e; font-family: helvetica;">Filipe Laíns</span></a></span></li><li><span style="font-weight: 700;"><a href="https://juliobs.com/"><span style="color: #45818e; font-family: helvetica;">Julio Batista Silva - New member!</span></a></span></li></ul><h4 id="middle-east-2-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Middle East (2 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Reuven Lerner" src="https://georgiker.com/images/blog/reuven.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Ali Tavallaie" src="https://georgiker.com/images/blog/Ali.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://lerner.co.il/"><span style="color: #45818e; font-family: helvetica;">Reuven Lerner</span></a></span></li><li><span style="font-weight: 700;"><a href="https://github.com/tavallaie"><span style="color: #45818e; font-family: helvetica;">Ali Tavallaie</span></a></span></li></ul><h4 id="africa-3-member" style="font-family: dosis, sans-serif; line-height: 1.2; margin-top: 0px;"><span style="font-size: medium;">Africa (3 member)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Mannie Young" src="https://georgiker.com/images/blog/Mannie.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Theresa Seyram Agbenyega" src="https://georgiker.com/images/blog/Theresa.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Emmanuel Ugwu" src="https://georgiker.com/images/blog/Emmanuel.png" style="border: 0px; height: auto; vertical-align: middle;" /></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://www.mannieyoung.com/"><span style="color: #45818e; font-family: helvetica;">Mannie Young</span></a></span></li><li><span style="font-weight: 700;"><a href="https://seyramtheresa.medium.com/"><span style="color: #45818e; font-family: helvetica;">Theresa Seyram Agbenyegah - New member!</span></a></span></li><li><span style="font-weight: 700;"><a href="https://www.linkedin.com/in/emmanuel-ugwu-b58b80223"><span style="color: #45818e; font-family: helvetica;">Emmanuel Ugwu - New member!</span></a></span></li></ul><h4 id="oceania-1-members" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Oceania (1 members)</span></h4><table style="border-collapse: collapse; color: black; font-family: newsreader, serif; font-size: 25px;"><thead style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th><th style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"></th></tr></thead><tbody style="border-style: solid; border-width: 0px;"><tr style="border-style: solid; border-width: 0px;"><td style="border-color: inherit; border-style: solid; border-width: 0px; text-align: center;"><img alt="Nathan Bransby" src="https://georgiker.com/images/blog/nathan.png" style="border: 0px; height: auto; vertical-align: middle;" /></td><td style="border-color: inherit; border-style: solid; border-width: 0px;"></td><td style="border-color: inherit; border-style: solid; border-width: 0px;"></td></tr></tbody></table><ul style="margin-top: 0px;"><li><span style="font-weight: 700;"><a href="https://github.com/Nathan-Bransby-NMT"><span style="color: #45818e; font-family: helvetica;">Nathan Bransby</span></a></span></li></ul><h4 id="psf-staff-member" style="font-family: dosis, sans-serif; line-height: 1.2; margin-top: 0px; text-align: left;"><span style="font-size: medium;"><br /></span></h4><h4 id="psf-staff-member" style="font-family: dosis, sans-serif; line-height: 1.2; margin-top: 0px; text-align: left;"><span style="font-size: medium;">PSF Staff Member</span></h4><p style="margin-top: 0px;"><span style="font-family: helvetica;">We also have&nbsp;<span style="font-weight: 700;"><a href="https://www.linkedin.com/in/mariecnordin/"><span style="color: #45818e;">Marie Nordin - PSF Staff</span></a></span>&nbsp;from the PSF staff as a voting member of the workgroup. Marie provides crucial support and coordination, helping bridge our initiatives with the broader PSF mission and ensuring our work has the resources and visibility it needs to succeed. Her dedicated support and active participation have been instrumental in helping us move from discussion to action.</span></p><hr style="border-bottom-width: 0px; border-color: rgb(0, 0, 0) currentcolor currentcolor; border-left-width: 0px; border-right: 0px; border-style: solid none none; border-top-color: rgb(0, 0, 0); border-top-style: solid; color: inherit; font-family: newsreader, serif; font-size: 25px;" /><h3 id="looking-forward" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;"></span></h3><h3 id="looking-forward" style="line-height: 1.2; margin-top: 0px;"><span style="font-family: helvetica; font-size: medium;">Looking Forward</span></h3><p style="margin-top: 0px;"><span style="font-family: helvetica;">The D&amp;I Work Group can’t do this work alone. Real change happens when every Python developer, every community organizer, every person writing documentation or teaching a workshop thinks about inclusion in their own context.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">You don’t need to join a work group to make a difference. You can:</span></p><ul style="margin-top: 0px;"><li><span style="font-family: helvetica;"><span style="font-weight: 700;">In your local community</span>: Start a Python meetup in your area. Make it beginner-friendly. Announce it in multiple languages if your region is multilingual. Choose accessible venues.</span></li><li><span style="font-family: helvetica;"><span style="font-weight: 700;">In your workplace</span>: Mentor someone from a different background. Share knowledge with junior developers. Advocate for diverse hiring and inclusive team practices.</span></li><li><span style="font-family: helvetica;"><span style="font-weight: 700;">In your open source projects</span>: Write clear documentation. Add examples that reflect different use cases. Make your contribution guidelines welcoming to newcomers. Consider what barriers might prevent someone from contributing.</span></li><li><span style="font-family: helvetica;"><span style="font-weight: 700;">In your daily work</span>: Question assumptions. When you write code examples, ask: “Would this make sense to someone who doesn’t share my context?” When you organize an event, ask: “Who might feel excluded, and how can I change that?”</span></li></ul><p style="margin-top: 0px;"><span style="font-family: helvetica;">We all know that Python’s success isn’t just about the language. It’s about the community. And that’s the hard truth. The more diverse that community is, the more use cases we discover, the more creative solutions we find, the more people benefit from what we build together.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">Diversity and inclusion work isn’t a side project or a “nice-to-have”. It’s how we ensure Python remains a language for everyone, everywhere. It’s how we make sure the next generation of developers (wherever they are, whatever their background) sees Python as a community they can be part of.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">The work is hard. The progress is slow, and it’s often invisible. But it matters. Every small action compounds. Every person who chooses to be intentional about inclusion makes it easier for the next person.</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">That’s what keeps us going in the workgroup. That’s why we show up every month. If you want to learn more about the D&amp;I Work Group, get involved, or share your own experiences with building inclusive communities, you can write to us at&nbsp;<a href="mailto:diversity-inclusion-wg@python.org" style="color: #097d8c;">diversity-inclusion-wg@python.org</a>.&nbsp;</span></p><p style="margin-top: 0px;"><span style="font-family: helvetica;">We’re always learning, and we’d love to hear from you<span style="font-family: newsreader, serif;">.</span></span></p></span></div></span></div></div><p></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on February 12, 2026 12:53 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/02/python-is-for-everyone-inside-psfs-d.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://efficientcoder.net/python-unpacking-secrets/" class="hover:underline"
               >أسرار تفكيك العناصر في بايثون: دليلك لإتقان Unpacking</a
             >
@@ -2346,283 +2659,6 @@ The <code>ProcessPoolExecutor</code> requires a <code>positive number</code> or 
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2026/1/31/pi/" class="hover:underline"
-              >Pi: The Minimal Agent Within OpenClaw</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>If you haven&#8217;t been living under a rock, you will have noticed this week that a
-project of my friend Peter <a href="https://en.wikipedia.org/wiki/OpenClaw">went viral on the
-internet</a>.  It went by many names. The
-most recent one is <a href="https://openclaw.ai/">OpenClaw</a> but in the news you might
-have encountered it as ClawdBot or MoltBot depending on when you read about it.
-It is an agent connected to a communication channel of your choice that <a href="https://lucumr.pocoo.org/2025/7/3/tools/">just
-runs code</a>.</p>
-<p>What you might be less familiar with is that what&#8217;s under the hood of OpenClaw
-is a little coding agent called <a href="https://github.com/badlogic/pi-mono/">Pi</a>. And
-Pi happens to be, at this point, the coding agent that I use almost exclusively.
-Over the last few weeks I became more and more of a shill for the little agent.
-After I gave a talk on this recently, I realized that I did not actually write
-about Pi on this blog yet, so I feel like I might want to give some context on
-why I&#8217;m obsessed with it, and how it relates to OpenClaw.</p>
-<p>Pi is written by <a href="https://mariozechner.at/">Mario Zechner</a> and unlike Peter, who
-aims for &#8220;sci-fi with a touch of madness,&#8221; <sup class="footnote-ref" id="fnref-1"><a href="#fn-1">1</a></sup> Mario is very grounded.  Despite
-the differences in approach, both OpenClaw and Pi follow the same idea: LLMs are
-really good at writing and running code, so embrace this.  In some ways I think
-that&#8217;s not an accident because Peter got me and Mario hooked on this idea, and
-agents last year.</p>
-<h2>What is Pi?</h2>
-<p>So Pi is a coding agent.  And there are many coding agents.  Really, I think you
-can pick effectively anyone off the shelf at this point and you will be able to
-experience what it&#8217;s like to do agentic programming.  In reviews on this blog
-I&#8217;ve positively talked about AMP and one of the reasons I resonated so much with
-AMP is that it really felt like it was a product built by people who got both
-addicted to agentic programming but also had tried a few different things to see
-which ones work and not just to build a fancy UI around it.</p>
-<p>Pi is interesting to me because of two main reasons:</p>
-<ul>
-<li>First of all, it has a tiny core. It has the shortest system prompt of any
-agent that I&#8217;m aware of and it only has four tools: Read, Write, Edit, Bash. </li>
-<li>The second thing is that it makes up for its tiny core by providing an
-extension system that also allows extensions to persist state into sessions,
-which is incredibly powerful. </li>
-</ul>
-<p>And a little bonus: Pi itself is written like excellent software. It doesn&#8217;t
-flicker, it doesn&#8217;t consume a lot of memory, it doesn&#8217;t randomly break, it is
-very reliable and it is written by someone who takes great care of what goes
-into the software.</p>
-<p>Pi also is a collection of little components that you can build your own agent
-on top.  That&#8217;s how OpenClaw is built, and that&#8217;s also how I built my own little
-Telegram bot and how Mario built his
-<a href="https://github.com/badlogic/pi-mono/tree/main/packages/mom">mom</a>.  If you want
-to build your own agent, connected to something, Pi when pointed to itself and
-mom, will conjure one up for you.</p>
-<h2>What&#8217;s Not In Pi</h2>
-<p>And in order to understand what&#8217;s in Pi, it&#8217;s even more important to understand
-what&#8217;s not in Pi, why it&#8217;s not in Pi and more importantly: why it won&#8217;t be in
-Pi.  The most obvious omission is support for MCP.  There is no MCP support in
-it. While you could build an extension for it, you can also do what OpenClaw
-does to support MCP which is to use
-<a href="https://github.com/steipete/mcporter">mcporter</a>. mcporter exposes MCP calls via
-a CLI interface or TypeScript bindings and maybe your agent can do something
-with it.  Or not, I don&#8217;t know :)</p>
-<p>And this is not a lazy omission.  This is from the philosophy of how Pi works.
-Pi&#8217;s entire idea is that if you want the agent to do something that it doesn&#8217;t
-do yet, you don&#8217;t go and download an extension or a skill or something like
-this. You ask the agent to extend itself.  It celebrates the idea of code
-writing and running code.</p>
-<p>That&#8217;s not to say that you cannot download extensions.  It is very much
-supported. But instead of necessarily encouraging you to download someone else&#8217;s
-extension, you can also point your agent to an already existing extension, say
-like, build it like the thing you see over there, but make these changes to it
-that you like.</p>
-<h2>Agents Built for Agents Building Agents</h2>
-<p>When you look at what Pi and by extension OpenClaw are doing, there is an
-example of software that is malleable like clay.  And this sets certain
-requirements for the underlying architecture of it that are actually in many
-ways setting certain constraints on the system that really need to go into the
-core design.</p>
-<p>So for instance, Pi&#8217;s underlying AI SDK is written so that a session can really
-contain many different messages from many different model providers. It
-recognizes that the portability of sessions is somewhat limited between model
-providers and so it doesn&#8217;t lean in too much into any model-provider-specific
-feature set that cannot be transferred to another.</p>
-<p>The second is that in addition to the model messages it maintains custom
-messages in the session files which can be used by extensions to store state or
-by the system itself to maintain information that either not at all is sent to
-the AI or only parts of it.</p>
-<p>Because this system exists and extension state can also be persisted to disk, it
-has built-in hot reloading so that the agent can write code, reload, test it and
-go in a loop until your extension actually is functional.  It also ships with
-documentation and examples that the agent itself can use to extend itself.  Even
-better: sessions in Pi are trees.  You can branch and navigate within a session
-which opens up all kinds of interesting opportunities such as enabling workflows
-for making a side-quest to fix a broken agent tool without wasting context in
-the main session.  After the tool is fixed, I can rewind the session back to
-earlier and Pi summarizes what has happened on the other branch.</p>
-<p>This all matters because for instance if you consider how MCP works, on most
-model providers, tools for MCP, like any tool for the LLM, need to be loaded
-into the system context or the tool section thereof on session start.  That
-makes it very hard to impossible to fully reload what tools can do without
-trashing the complete cache or confusing the AI about how prior invocations work
-differently.</p>
-<h2>Tools Outside The Context</h2>
-<p>An extension in Pi can register a tool to be available to the LLM to call and
-every once in a while I find this useful. For instance, despite my criticism of
-how Beads is implemented, I do think that giving an agent access to a to-do list
-is a very useful thing. And I do use an agent-specific issue tracker that works
-locally that I had my agent build itself. And because I wanted the agent to also
-manage to-dos, in this particular case I decided to give it a tool rather than a
-CLI.  It felt appropriate for the scope of the problem and it is currently the
-only additional tool that I&#8217;m loading into my context.</p>
-<p>But for the most part all of what I&#8217;m adding to my agent are either skills or
-TUI extensions to make working with the agent more enjoyable for me.  Beyond
-slash commands, Pi extensions can render custom TUI components directly in the
-terminal: spinners, progress bars, interactive file pickers, data tables,
-preview panes.  The TUI is flexible enough that Mario proved you can <a href="https://x.com/badlogicgames/status/2008702661093454039">run Doom
-in it</a>.  Not practical,
-but if you can run Doom, you can certainly build a useful dashboard or debugging
-interface.</p>
-<p>I want to highlight some of my extensions to give you an idea of what&#8217;s
-possible.  While you can use them unmodified, the whole idea really is that you
-point your agent to one and remix it to your heart&#8217;s content.</p>
-<h3><a href="https://github.com/mitsuhiko/agent-stuff/blob/main/extensions/answer.ts"><code>/answer</code></a></h3>
-<p>I <a href="/2025/12/17/what-is-plan-mode/">don&#8217;t use plan mode</a>.  I encourage the agent
-to ask questions and there&#8217;s a productive back and forth.  But I don&#8217;t like
-structured question dialogs that happen if you give the agent a question tool.
-I prefer the agent&#8217;s natural prose with explanations and diagrams interspersed.</p>
-<p>The problem: answering questions inline gets messy.  So <code>/answer</code> reads the
-agent&#8217;s last response, extracts all the questions, and reformats them into a
-nice input box.</p>
-<img alt="The /answer extension showing a question dialog" src="/static/pi-answer.png" style="width: 100%;" />
-<h3><a href="https://github.com/mitsuhiko/agent-stuff/blob/main/extensions/todos.ts"><code>/todos</code></a></h3>
-<p>Even though I criticize <a href="https://github.com/steveyegge/beads">Beads</a> for its
-implementation, giving an agent a to-do list is genuinely useful.  The <code>/todos</code>
-command brings up all items stored in <code>.pi/todos</code> as markdown files.  Both the
-agent and I can manipulate them, and sessions can claim tasks to mark them as in
-progress.</p>
-
-<h3><a href="https://github.com/mitsuhiko/agent-stuff/blob/main/extensions/review.ts"><code>/review</code></a></h3>
-<p>As more code is written by agents, it makes little sense to throw unfinished
-work at humans before an agent has reviewed it first.  Because Pi sessions are
-trees, I can branch into a fresh review context, get findings, then bring fixes
-back to the main session.</p>
-<img alt="The /review extension showing review preset options" src="/static/pi-review.png" style="width: 100%;" />
-<p>The UI is modeled after Codex which provides easy to review commits, diffs,
-uncommitted changes, or remote PRs.  The prompt pays attention to things I care
-about so I get the call-outs I want (eg: I ask it to call out newly added
-dependencies.)</p>
-<h3><a href="https://github.com/mitsuhiko/agent-stuff/blob/main/extensions/control.ts"><code>/control</code></a></h3>
-<p>An extension I experiment with but don&#8217;t actively use.  It lets one Pi agent send
-prompts to another.  It is a simple multi-agent system without complex
-orchestration which is useful for experimentation.</p>
-<h3><a href="https://github.com/mitsuhiko/agent-stuff/blob/main/extensions/files.ts"><code>/files</code></a></h3>
-<p>Lists all files changed or referenced in the session.  You can reveal them in
-Finder, diff in VS Code, quick-look them, or reference them in your prompt.
-<code>shift+ctrl+r</code> quick-looks the most recently mentioned file which is handy when
-the agent produces a PDF.</p>
-<p>Others have built extensions too: <a href="https://github.com/nicobailon/pi-subagents">Nico&#8217;s subagent
-extension</a> and
-<a href="https://www.npmjs.com/package/pi-interactive-shell">interactive-shell</a> which
-lets Pi autonomously run interactive CLIs in an observable TUI overlay.</p>
-<h2>Software Building Software</h2>
-<p>These are all just ideas of what you can do with your agent.  The point of it
-mostly is that none of this was written by me, it was created by the agent to my
-specifications.  I told Pi to make an extension and it did.  There is no MCP, there are
-no community skills, nothing.  Don&#8217;t get me wrong, I use tons of skills.  But
-they are hand-crafted by my clanker and not downloaded from anywhere.  For
-instance I fully replaced all my CLIs or MCPs for browser automation with a
-<a href="https://github.com/mitsuhiko/agent-stuff/blob/main/skills/web-browser/SKILL.md">skill that just uses
-CDP</a>.
-Not because the alternatives don&#8217;t work, or are bad, but because this is just
-easy and natural.  The agent maintains its own functionality.</p>
-<p>My agent has <a href="https://github.com/mitsuhiko/agent-stuff/tree/main/skills">quite a few
-skills</a> and crucially
-I throw skills away if I don&#8217;t need them.  I for instance gave it a skill to
-read Pi sessions that other engineers shared, which helps with code review.  Or
-I have a skill to help the agent craft the commit messages and commit behavior I
-want, and how to update changelogs.  These were originally slash commands, but
-I&#8217;m currently migrating them to skills to see if this works equally well.  I
-also have a skill that hopefully helps Pi use <code>uv</code> rather than <code>pip</code>, but I also
-added a custom extension to intercept calls to <code>pip</code> and <code>python</code> to redirect
-them to <code>uv</code> instead.</p>
-<p>Part of the fascination that working with a minimal agent like Pi gave me is
-that it makes you live that idea of using software that builds more software.
-That taken to the extreme is when you remove the UI and output and connect it
-to your chat.  That&#8217;s what OpenClaw does and given its tremendous growth,
-I really feel more and more that this is going to become our future in one
-way or another.</p>
-<div class="footnotes">
-<ol>
-<li id="fn-1">
-<p><a href="https://x.com/steipete/status/2017313990548865292">https://x.com/steipete/status/2017313990548865292</a><a class="footnote" href="#fnref-1">&#8617;</a></p></li>
-</ol>
-</div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 31, 2026 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2026/1/31/pi/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/base-image-python-docker-images/" class="hover:underline"
-              >The best Docker base image for your Python application (February 2026)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>When you’re building a Docker image for your Python application, you’re building on top of an existing image—and there are many possible choices for the resulting container.
-There are OS images like Ubuntu, and there are the many different variants of the <code class="language-plaintext highlighter-rouge">python</code> base image.
-And now there’s a new choice, installing Python using <code class="language-plaintext highlighter-rouge">uv</code>, which allows you to use any base image you’d like.</p>
-
-<p>Which one should you use?
-Which one is better?
-There are many choices, and it may not be obvious which is the best for your situation.</p>
-
-<p>So to help you make a choice that fits your needs, in this article I’ll go through some of the relevant criteria, and suggest some reasonable defaults that will work for most people.</p>
-
-
-   <a href="https://pythonspeed.com/articles/base-image-python-docker-images/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on January 30, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/base-image-python-docker-images/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -2634,8 +2670,8 @@ There are many choices, and it may not be obvious which is the best for your sit
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8253</a></li>
-    <li><a>Unique Feeds: 378</a></li>
+    <li><a>Total Entries: 8168</a></li>
+    <li><a>Unique Feeds: 382</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
