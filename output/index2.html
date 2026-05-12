@@ -53,6 +53,468 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/use-codex-cli-enhance-your-python-projects/" class="hover:underline"
+              >Use Codex CLI to Enhance Your Python Projects</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn how to use Codex CLI to add features to Python projects directly from your terminal, without needing a browser or IDE plugins.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 05, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/use-codex-cli-enhance-your-python-projects/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.listendata.com/2026/05/automate-cloudflare-usage-monitoring.html" class="hover:underline"
+              >How to Automate Cloudflare Usage Monitoring</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>If you are using Cloudflare products like Workers, R2, or D1, you have probably checked the dashboard more times than you would like.</p>
+<p>It works, but it is manual, repetitive, and not very scalable. What if you could just run a script and instantly see your usage?That is exactly what we will do here.</p>
+
+<h2>Why automate Cloudflare usage tracking?</h2>
+<p>Cloudflare gives you powerful analytics, but:</p>
+<ul>
+  <li>You have to open the dashboard every time</li>
+  <li>You cannot easily combine data across services</li>
+  <li>Tracking trends daily or hourly becomes tedious</li>
+</ul>
+
+<p>With the following python script, you can solve this by automating:</p>
+<ul>
+  <li>Workers usage: requests, errors, CPU time</li>
+  <li>R2 usage: reads, writes, total requests per bucket</li>
+  <li>D1 usage: queries, rows read and written per database</li>
+</ul>
+
+<h2>Steps to Automate Tracking for Workers, R2 & D1</h2>
+<h3>1. Install dependency</h3>
+<pre><code>pip install requests</code></pre>
+
+<h3>2. Get your API credentials</h3>
+<p>From your Cloudflare dashboard:</p>
+<ul>
+  <li>Create an API token with Account Analytics Read</li>
+  <li>Copy your CF_API_TOKEN and CF_ACCOUNT_ID</li>
+</ul>
+
+<h3>3. Run Python Code</h3>
+<p>You can either set environment variables for API token and account ID like shown below or paste them directly inside the script if you prefer.</p>
+<pre><code>export CF_API_TOKEN="your_token_here"
+export CF_ACCOUNT_ID="your_account_id"</code></pre>
+
+<pre> <code>
+import os
+import requests
+from datetime import datetime, timezone, timedelta
+
+HAS_TABULATE = False
+
+# ─── CONFIG ──────────────────────────────────────────────────────────────────
+CF_API_TOKEN  = os.getenv("CF_API_TOKEN",  "xxxxxxxxxxxxxxxxxxx")
+CF_ACCOUNT_ID = os.getenv("CF_ACCOUNT_ID", "xxxxxxxxxxxxxxxxxxx")
+
+GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql"
+REST_BASE   = "https://api.cloudflare.com/client/v4"
+
+HEADERS = {
+    "Authorization": f"Bearer {CF_API_TOKEN}",
+    "Content-Type":  "application/json",
+}
+
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
+
+def iso(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def fmt_bytes(b: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(b) < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+def print_table(title: str, rows: list[dict], keys: list[str] | None = None):
+    print(f"\n{'─'*60}")
+    print(f"  {title}")
+    print(f"{'─'*60}")
+    if not rows:
+        print("  (no data)")
+        return
+    keys = keys or list(rows[0].keys())
+    header = "  " + " | ".join(f"{k:<20}" for k in keys)
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+    for row in rows:
+        print("  " + " | ".join(f"{str(row.get(k,'')):<20}" for k in keys))
+
+def gql(query: str, variables: dict = None) -> dict:
+    payload = {"query": query}
+    if variables:
+        payload["variables"] = variables
+    r = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    if errors := data.get("errors"):
+        raise RuntimeError(f"GraphQL errors: {errors}")
+    return data["data"]
+
+def rest_get(path: str, params: dict = None) -> dict:
+    r = requests.get(f"{REST_BASE}{path}", headers=HEADERS, params=params, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+# ─── 3. WORKERS USAGE (GraphQL) ───────────────────────────────────────────────
+
+def get_workers_usage(days: int = 30):
+    print(f"\nWORKERS USAGE  (last {days} days)")
+    now   = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    query = """
+    query WorkersUsage($accountId: String!, $start: String!, $end: String!) {
+      viewer {
+        accounts(filter: {accountTag: $accountId}) {
+          workersInvocationsAdaptive(
+            limit: 10000
+            filter: {datetime_geq: $start, datetime_leq: $end}
+            ) {
+              sum {
+                requests
+                errors
+                subrequests
+              }
+              quantiles {
+                cpuTimeP50
+                cpuTimeP99
+              }
+              dimensions {
+                scriptName
+              }
+            }
+        }
+      }
+    }
+    """
+    try:
+        data = gql(query, {"accountId": CF_ACCOUNT_ID,
+                            "start": iso(start), "end": iso(now)})
+        records = (data["viewer"]["accounts"][0]
+                       .get("workersInvocationsAdaptive", []))
+        rows = []
+        for rec in records:
+            s = rec.get("sum", {})
+            q = rec.get("quantiles", {})
+            rows.append({
+                "Script":       rec["dimensions"].get("scriptName", "(unnamed)"),
+                "Requests":     f"{s.get('requests', 0):,}",
+                "Errors":       f"{s.get('errors', 0):,}",
+                "CPU ms":       f"{(q.get('cpuTimeP50') or 0) / 1_000:.1f}",
+                "CPU P99 ms":   f"{(q.get('cpuTimeP99') or 0) / 1_000:.1f}",
+            })
+        rows.sort(key=lambda r: int(r["Requests"].replace(",", "")), reverse=True)
+        print_table("Workers Invocations by Script",
+                    rows, ["Script", "Requests", "Errors", "CPU ms", "CPU P99 ms"])
+    except Exception as e:
+        print(f"  Workers data unavailable: {e}")
+
+# ─── 4. R2 STORAGE & OPERATIONS (GraphQL) ────────────────────────────────────
+
+def get_r2_usage(days: int = 30):
+    print(f"\nR2 STORAGE & OPERATIONS  (last {days} days)")
+    now   = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    query = """
+    query R2Usage($accountId: String!, $start: String!, $end: String!) {
+      viewer {
+        accounts(filter: {accountTag: $accountId}) {
+          r2OperationsAdaptiveGroups(
+            limit: 10000
+            filter: {datetime_geq: $start, datetime_leq: $end}
+          ) {
+            sum {
+              requests
+            }
+            dimensions {
+              bucketName
+              actionType
+            }
+          }
+        }
+      }
+    }
+  """
+    try:
+        data = gql(query, {"accountId": CF_ACCOUNT_ID,
+                            "start": iso(start), "end": iso(now)})
+        records = (data["viewer"]["accounts"][0]
+                       .get("r2OperationsAdaptiveGroups", []))
+
+        # Aggregate per bucket
+        buckets: dict[str, dict] = {}
+        for rec in records:
+            name = rec["dimensions"].get("bucketName", "(unknown)")
+            action = (rec["dimensions"].get("actionType", "") or "").lower()
+            s    = rec.get("sum", {})
+            if name not in buckets:
+                buckets[name] = {"requests": 0, "reads": 0, "writes": 0}
+            buckets[name]["requests"] += s.get("requests", 0)
+
+            # Classify operations into reads vs writes based on common R2 action types
+            if any(k in action for k in ("get", "read", "head", "list")):
+                buckets[name]["reads"] += s.get("requests", 0)
+            if any(k in action for k in ("put", "post", "write", "delete")):
+                buckets[name]["writes"] += s.get("requests", 0)
+
+        rows = [{"Bucket": k,
+                 "Requests": f"{v['requests']:,}",
+                 "Reads": f"{v['reads']:,}",
+                 "Writes": f"{v['writes']:,}"}
+                for k, v in sorted(buckets.items(),
+                                   key=lambda x: x[1]["requests"], reverse=True)]
+        print_table("R2 Usage by Bucket", rows, ["Bucket", "Requests", "Reads", "Writes"])
+    except Exception as e:
+        print(f"  R2 data unavailable: {e}")
+
+# ─── 5. D1 DATABASE USAGE (GraphQL) ──────────────────────────────────────────
+
+def get_d1_usage(days: int = 30):
+    print(f"\nD1 DATABASE USAGE  (last {days} days)")
+    now   = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    # 1. Fetch database names via REST API to map IDs to friendly names
+    db_names = {}
+    try:
+        res = rest_get(f"/accounts/{CF_ACCOUNT_ID}/d1/database")
+        db_names = {db["uuid"]: db["name"] for db in res.get("result", []) if "uuid" in db}
+    except Exception:
+        pass
+
+    # 2. Query GraphQL with datetime filters to match dashboard's precise windows
+    query = """
+    query D1Usage($accountId: String!, $start: String!, $end: String!) {
+      viewer {
+        accounts(filter: {accountTag: $accountId}) {
+          d1AnalyticsAdaptiveGroups(
+            limit: 1000
+            filter: {datetime_geq: $start, datetime_leq: $end}
+          ) {
+            sum {
+              readQueries
+              writeQueries
+              rowsRead
+              rowsWritten
+            }
+            dimensions {
+              databaseId
+            }
+          }
+        }
+      }
+    }
+    """
+    try:
+        data = gql(query, {"accountId": CF_ACCOUNT_ID,
+                            "start": iso(start), "end": iso(now)})
+        records = (data["viewer"]["accounts"][0]
+                       .get("d1AnalyticsAdaptiveGroups", []))
+
+        db_totals: dict[str, dict] = {}
+        for rec in records:
+            db_id = rec["dimensions"].get("databaseId", "?")
+            s = rec.get("sum", {})
+            if db_id not in db_totals:
+                db_totals[db_id] = {"reads": 0, "writes": 0, "rowsRead": 0, "rowsWritten": 0}
+            
+            db_totals[db_id]["reads"] += (s.get("readQueries") or 0)
+            db_totals[db_id]["writes"] += (s.get("writeQueries") or 0)
+            db_totals[db_id]["rowsRead"] += (s.get("rowsRead") or 0)
+            db_totals[db_id]["rowsWritten"] += (s.get("rowsWritten") or 0)
+
+        rows = [{
+            "Database":    db_names.get(db_id, db_id[:18]),
+            "Read Rows":   f"{totals['rowsRead']:,}",
+            "Write Rows":  f"{totals['rowsWritten']:,}",
+            "Queries":     f"{totals['reads'] + totals['writes']:,}",
+        } for db_id, totals in sorted(db_totals.items(),
+                                      key=lambda item: item[1]["rowsRead"] + item[1]["rowsWritten"],
+                                      reverse=True)]
+
+        print_table("D1 Usage by Database (Billable Metrics)",
+                    rows, ["Database", "Read Rows", "Write Rows", "Queries"])
+    except Exception as e:
+        print(f"  D1 data unavailable: {e}")
+
+
+# ─── 7. SPENDING SUMMARY ─────────────────────────────────────────────────────
+
+# ─── MAIN ─────────────────────────────────────────────────────────────────────
+
+def main():
+    print("=" * 60)
+    print("  Cloudflare Billing & Usage Tracker")
+    print(f"  Account: {CF_ACCOUNT_ID[:8]}…")
+    print(f"  Run at:  {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    print("=" * 60)
+
+    get_workers_usage(days=1)
+    get_r2_usage(days=1)
+    get_d1_usage(days=1)
+
+if __name__ == "__main__":
+    main()
+
+</code></pre>
+
+<p>After running the code above, you will see output like this:</p>
+<div class="pre-header">Output</div>
+<pre>
+============================================================
+  Cloudflare Billing & Usage Tracker
+  Account: exxxxxxxxxx…
+  Run at:  2026-05-05 13:35 UTC
+============================================================
+
+WORKERS USAGE  (last 1 days)
+
+────────────────────────────────────────────────────────────
+  Workers Invocations by Script
+────────────────────────────────────────────────────────────
+  Script               | Requests             | Errors               | CPU ms               | CPU P99 ms          
+  ----------------------------------------------------------------------------------------------------------------
+  t-analysis           | 36,780               | 0                    | 17.1                 | 137.8               
+  notify---purge       | 46                   | 0                    | 0.6                  | 11.7                
+  d1-example           | 35                   | 0                    | 2.0                  | 11.9                
+
+R2 STORAGE & OPERATIONS  (last 1 days)
+
+────────────────────────────────────────────────────────────
+  R2 Usage by Bucket
+────────────────────────────────────────────────────────────
+  Bucket               | Requests             | Reads                | Writes              
+  -----------------------------------------------------------------------------------------
+  stocks               | 38,746               | 29,987               | 8,759               
+  tradedata            | 6,875                | 6,875                | 0                   
+  etfs                 | 1,612                | 1,127                | 485                 
+  logos                | 620                  | 620                  | 0                   
+                       | 8                    | 8                    | 0                   
+
+D1 DATABASE USAGE  (last 1 days)
+
+────────────────────────────────────────────────────────────
+  D1 Usage by Database (Billable Metrics)
+────────────────────────────────────────────────────────────
+  Database             | Read Rows            | Write Rows           | Queries             
+  -----------------------------------------------------------------------------------------
+  cxxxx-xxx-xxxxxxxx   | 28,166,287           | 3,715                | 8,372               
+
+</pre><div class="blogger-post-footer">This post appeared first on <a href="https://www.listendata.com/">ListenData</a></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 05, 2026 01:42 PM UTC by
+            <a href="https://www.listendata.com/feeds/posts/default/-/Python" class="link link-hover text-primary"
+              >ListenData</a
+            >
+          </div>
+          <a
+            href="https://www.listendata.com/2026/05/automate-cloudflare-usage-monitoring.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/python-application-layouts/" class="hover:underline"
+              >Quiz: Python Application Layouts: A Reference</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Test your knowledge of Python project layouts for one-off scripts, installable packages, internal packages, and Django and Flask web applications.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 05, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/python-application-layouts/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pycon.blogspot.com/2026/05/everything-you-always-wanted-to-know.html" class="hover:underline"
               >Everything You Always Wanted to Know About Sprints!</a
             >
@@ -769,46 +1231,6 @@ to write the code to analyze and scrape Google Trends.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/factory-method-python/" class="hover:underline"
-              >Quiz: The Factory Method Pattern and Its Implementation in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Check your grasp of the Factory Method pattern in Python: when to use it, the roles involved, and how to implement a flexible object factory.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 01, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/factory-method-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lukeplant.me.uk/blog/posts/inverse-sapir-whorf-and-programming-languages/" class="hover:underline"
               >Inverse Sapir-Whorf and programming languages</a
             >
@@ -915,8 +1337,8 @@ to write the code to analyze and scrape Google Trends.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-for-data-analysis/" class="hover:underline"
-              >Quiz: Using Python for Data Analysis</a
+            <a href="https://www.pythonguis.com/tutorials/streamlit-buttons/" class="hover:underline"
+              >Streamlit Buttons — Making things happen with Streamlit buttons</a
             >
           </h2>
           
@@ -925,20 +1347,20 @@ to write the code to analyze and scrape Google Trends.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            Test your understanding of a data analysis workflow in Python, from cleansing raw data with pandas to spotting insights with regression.
+            Streamlit is a popular choice for creating interactive web applications in Python. With its simple syntax and intuitive interface, developers can quickly create visually appealing dashboards.
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 30, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
+            Posted on May 01, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
             >
           </div>
           <a
-            href="https://realpython.com/quizzes/python-for-data-analysis/"
+            href="https://www.pythonguis.com/tutorials/streamlit-buttons/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1336,8 +1758,8 @@ the expectations of the story are not high.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycoders.com/issues/732" class="hover:underline"
-              >Issue #732: Web Scraping, Altair Charts, OpenAI's API, and More (2026-04-28)</a
+            <a href="https://www.pythonguis.com/faq/actions-in-one-thread-changing-data-in-another/" class="hover:underline"
+              >Actions in one thread changing data in another — How to communicate between threads and windows in PyQt6</a
             >
           </h2>
           
@@ -1346,106 +1768,20 @@ the expectations of the story are not high.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p> <span>#732 – APRIL 28, 2026</span><br /> <span><a href="https://pycoders.com/issues/732/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16354/feed" target="_blank"><code>browser-use</code> vs. Playwright: Which to Pick for Web Scraping?</a></h3> <p style="margin-bottom: 0;"> Follow along in this walk-through building a Hacker News synthesizer with browser-use, then see it fail on a harder Newegg scraping task. Includes a side-by-side comparison with Playwright and a breakdown of when each tool is the right call.<br /> <span><a href="https://pycoders.com/link/16354/feed" target="_blank">CODECUT.AI</a> • Shared by <a href="https://pycoders.com/link/16351/feed" target="_blank">Khuyen Tran</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16343/feed" target="_blank">Altair: Declarative Charts With Python</a></h3> <p style="margin-bottom: 0;"> Build interactive Python charts the declarative way with Altair. Map data to visual properties and add linked selections. No JavaScript required.<br /> <span><a href="https://pycoders.com/link/16343/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16325/feed" target="_blank">Positron: The Data Science IDE from Posit PBC</a></h3> <a href="https://pycoders.com/link/16325/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/0eabf4213cfed6fb9f8ad2aeedf5005d" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Positron is a free IDE built for Python data science. AI assistance, interactive data frames, Jupyter notebooks, and instant app deployment, all in one place. Stop context-switching. Start shipping. <a href="https://pycoders.com/link/16325/feed" target="_blank">Download free.</a><br /> <span><a href="https://pycoders.com/link/16325/feed" target="_blank">POSIT PBC</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16339/feed" target="_blank">Leverage OpenAI&rsquo;s API in Your Python Projects</a></h3> <p style="margin-bottom: 0;"> Learn how to use the ChatGPT API with Python&rsquo;s openai library to send prompts, control AI behavior with roles, and get structured outputs.<br /> <span><a href="https://pycoders.com/link/16339/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">course</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16341/feed" target="_blank">Quiz: Leverage OpenAI&rsquo;s API in Your Python Projects</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16341/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16344/feed" target="_blank">Python Software Foundation Fellow Members for Q1 2026!</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16344/feed" target="_blank">PYTHON SOFTWARE FOUNDATION</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16335/feed" target="_blank">PEP 708: Extending the Repository API to Mitigate Dependency Confusion Attacks (Rejected)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16335/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16347/feed" target="_blank">PEP 806: Mixed Sync/Async Context Managers With Precise Async Marking (Rejected)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16347/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16352/feed" target="_blank">PEP 833: Freezing the HTML Simple Repository API (Draft)</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16352/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16334/feed" target="_blank">Fixing a Memory &ldquo;Leak&rdquo; From Python 3.14&rsquo;s Incremental Garbage Collection</a></h3> <p style="margin-bottom: 0;"> Adam encountered an out-of-memory error while migrating a client project to Python 3.14. The issue occurred when running Django’s database migration command on a limited-resource server, and seemed to be caused by the new incremental garbage collection algorithm in Python 3.14.<br /> <span><a href="https://pycoders.com/link/16334/feed" target="_blank">ADAM JOHNSON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16342/feed" target="_blank">Logging to File and to Textual Console</a></h3> <p style="margin-bottom: 0;"> When writing TUI applications in Textual you can&rsquo;t just print out your debug info since the terminal is controlled by the framework. This article shows you how to log and use Textual&rsquo;s built-in debug console.<br /> <span><a href="https://pycoders.com/link/16342/feed" target="_blank">MIKE DRISCOLL</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16326/feed" target="_blank">Beyond Basic RAG: Build Persistent AI Agents</a></h3> <p style="margin-bottom: 0;"> Master next-gen AI with Python notebooks for agentic reasoning, memory engineering, and multi-agent orchestration. Scale apps using production-ready patterns for LangChain, LlamaIndex, and high-performance vector search. <a href="https://pycoders.com/link/16326/feed" target="_blank">Explore &amp; Star on GitHub.</a><br /> <span><a href="https://pycoders.com/link/16326/feed" target="_blank">ORACLE</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16353/feed" target="_blank">Read the Docs Now Supports <code>uv</code> Natively</a></h3> <p style="margin-bottom: 0;"> Popular open source documentation site Read the Docs has announced they now support native <code>uv</code> in <code>.readthedocs.yaml</code> for Python dependency installation. Learn how to use it in your configurations<br /> <span><a href="https://pycoders.com/link/16353/feed" target="_blank">READ THE DOCS</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16332/feed" target="_blank">PyTexas 2026 Recap</a></h3> <p style="margin-bottom: 0;"> Per-talk notes from PyTexas 2026 in Austin: Hynek on domain modeling, Dawn Wages on specialization, MCP security, PEP 810 lazy imports, free-threading, Ruff, ty, uv, supply chain.<br /> <span><a href="https://pycoders.com/link/16332/feed" target="_blank">BERNÁT GÁBOR</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16338/feed" target="_blank">The Carbon Footprint of Wagtail AI</a></h3> <p style="margin-bottom: 0;"> One of the package maintainers for Wagtail AI shares his method for measuring the carbon impact of the different AI tasks users can do and goes over the initial results.<br /> <span><a href="https://pycoders.com/link/16338/feed" target="_blank">WAGTAIL.ORG</a> • Shared by Meagen Voss</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16329/feed" target="_blank">Gemini CLI vs Claude Code: Which to Choose for Python Tasks</a></h3> <p style="margin-bottom: 0;"> Gemini CLI vs Claude Code: compare setup, performance, code quality, and cost to find the right Python AI coding tool for your workflow.<br /> <span><a href="https://pycoders.com/link/16329/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16328/feed" target="_blank">Learn the Agentic Coding Workflow That Actually Works on Real Projects</a></h3> <p style="margin-bottom: 0;"> 65% of Python developers are stuck using AI for small tasks that fall apart on anything real. This 2-day live course (May 6-7 via Zoom) walks you through building a complete Python CLI app with Claude Code, from an empty directory to a shipped project on GitHub.<br /> <span><a href="https://pycoders.com/link/16328/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16331/feed" target="_blank">Implementing OpenTelemetry in FastAPI</a></h3> <p style="margin-bottom: 0;"> Learn how you can observe your FastAPI web apps with OpenTelemetry, including how to integrate it and why it is important.<br /> <span><a href="https://pycoders.com/link/16331/feed" target="_blank">SIGNOZ.IO</a> • Shared by <a href="https://pycoders.com/link/16349/feed" target="_blank">Dhruv Ahuja</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16356/feed" target="_blank">Building a Python Library in 2026</a></h3> <p style="margin-bottom: 0;"> So you want to build a Python library in 2026? Here&rsquo;s everything you need to know about the state of the art.<br /> <span><a href="https://pycoders.com/link/16356/feed" target="_blank">STEPHEN IF</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16346/feed" target="_blank">Local Usage PyPI Alternative With Vulnerability Scanning</a></h3> <p style="margin-bottom: 0;"> Very interesting project<br /> <span><a href="https://pycoders.com/link/16346/feed" target="_blank">GITHUB.COM/RUSTEDBYTES</a> • Shared by Yehor Smoliakov</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16340/feed" target="_blank">typeform: Type-Safe UI/CLI Generator Powered by Pydantic</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16340/feed" target="_blank">GITHUB.COM/STHITAPRAJNAS</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16336/feed" target="_blank">vibescore: One-Command Quality Score for Any Python Project</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16336/feed" target="_blank">GITHUB.COM/STEF41</a> • Shared by Anonymous</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16337/feed" target="_blank">dash: Data Apps &amp; Dashboards for Python</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16337/feed" target="_blank">GITHUB.COM/PLOTLY</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16350/feed" target="_blank">profiling-explorer: Table-Based Profile Exploration Tool</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/16350/feed" target="_blank">GITHUB.COM/ADAMCHAINZ</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16348/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> April 29, 2026<br /> <span><a href="https://pycoders.com/link/16348/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16330/feed" target="_blank">PyCamp Spain 2026</a></h3> <p style="margin-bottom: 0;"> April 30 to May 4, 2026<br /> <span><a href="https://pycoders.com/link/16330/feed" target="_blank">PYCAMP.ES</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16355/feed" target="_blank">PyDelhi User Group Meetup</a></h3> <p style="margin-bottom: 0;"> May 2, 2026<br /> <span><a href="https://pycoders.com/link/16355/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16333/feed" target="_blank">PyBodensee Monthly Meetup</a></h3> <p style="margin-bottom: 0;"> May 4, 2026<br /> <span><a href="https://pycoders.com/link/16333/feed" target="_blank">PYBODENSEE.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/16345/feed" target="_blank">IndyPy: Lightning Talks</a></h3> <p style="margin-bottom: 0;"> May 5 to May 6, 2026<br /> <span><a href="https://pycoders.com/link/16345/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #732.<br /><a href="https://pycoders.com/issues/732/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/732/open/feed" width="1" /> 
-        <hr />
-        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
+            I have a main window that starts background threads (e.g., handling GPIO data). From the main window I open secondary windows using buttons. When I press a button in a secondary window, I can't change anything in the background threads. But if I press a button in the main window, everything works. How do I communicate between a secondary window and a thread that was started from the main window?
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 28, 2026 07:30 PM UTC by
-            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
-              >PyCoder’s Weekly</a
+            Posted on April 29, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
             >
           </div>
           <a
-            href="https://pycoders.com/issues/732"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/apr/28/renew-your-pycharm-license-and-support-django/" class="hover:underline"
-              >Renew Your PyCharm License and Support Django</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Only a few days remain to support the Django Software Foundation through our annual JetBrains fundraiser.</p>
-<p>You can now use the offer for <strong>new purchases and annual renewals</strong>. If your PyCharm Professional subscription expires this year, this is a great time to renew or extend it for up to 12 months.</p>
-<p>Get <strong>30% off PyCharm Professional</strong>, and <strong>100% of proceeds from qualifying purchases and renewals go to the DSF</strong> to help fund Django Fellows, community programs, events, and the future of Django.</p>
-<p>👉 <strong>Offer ends May 1:</strong> <a href="https://www.djangoproject.com/weblog/2026/apr/16/pycharm-django-annual-fundraiser/">Learn more about the fundraiser</a></p>
-<p>👉 <strong>Claim 30% off here:</strong> <a href="https://www.jetbrains.com/pycharm/promo/support-django/">Get the JetBrains offer</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 28, 2026 07:20 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/apr/28/renew-your-pycharm-license-and-support-django/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/testing-your-code-with-pythons-unittest/" class="hover:underline"
-              >Testing Your Code With Python's unittest</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to use Python's unittest framework to write unit tests for your code, including test cases, fixtures, and test suites.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 28, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/testing-your-code-with-pythons-unittest/"
+            href="https://www.pythonguis.com/faq/actions-in-one-thread-changing-data-in-another/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1465,8 +1801,8 @@ the expectations of the story are not high.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8224</a></li>
-    <li><a>Unique Feeds: 380</a></li>
+    <li><a>Total Entries: 8194</a></li>
+    <li><a>Unique Feeds: 381</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
