@@ -53,869 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/" class="hover:underline"
-              >Correcting OpenStreetMap wrong tag values</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>As a hobbyist consumer of OSM data to render maps, I find wrong tags annoying. Bad values mean that the 
-resulting map is wrong or incomplete, so less useful. I decided to attack the most egregious ones, which
-include typos, street names instead of type and some other errors. The idea is to attack the long tail 
-first, so I'm not blocked because the next batch of errors (objects with exactly the same error) looks
-too big (yes, OCD).</p>
-<p>So I hacked a small python script to help me find and edit them:</p>
-<div class="code"><pre class="code literal-block"><span class="ch">#! /usr/bin/env python3</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">psycopg2</span>
-
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-    <span class="n">db</span> <span class="o">=</span> <span class="n">psycopg2</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">dbname</span><span class="o">=</span><span class="s1">'europe'</span><span class="p">)</span>
-    <span class="n">cursor</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
-
-    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
-<span class="s1">        SELECT</span>
-<span class="s1">            count(*) AS count,</span>
-<span class="s1">            highway</span>
-<span class="s1">        FROM planet_osm_line</span>
-<span class="s1">        WHERE</span>
-<span class="s1">            highway IS NOT NULL</span>
-<span class="s1">        GROUP BY highway</span>
-<span class="s1">        ORDER BY count ASC</span>
-<span class="s1">    '''</span><span class="p">)</span>
-    <span class="n">data</span> <span class="o">=</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()</span>
-
-    <span class="k">for</span> <span class="n">count</span><span class="p">,</span> <span class="n">highway</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"next </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">highway</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-
-        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
-<span class="s1">            SELECT osm_id</span>
-<span class="s1">            FROM planet_osm_line</span>
-<span class="s1">            WHERE</span>
-<span class="s1">                highway = </span><span class="si">%s</span>
-<span class="s1">        '''</span><span class="p">,</span> <span class="p">(</span><span class="n">highway</span><span class="p">,</span> <span class="p">))</span>
-
-        <span class="k">for</span> <span class="p">(</span><span class="n">osm_id</span><span class="p">,</span> <span class="p">)</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">():</span>
-            <span class="k">if</span> <span class="n">osm_id</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
-                <span class="c1"># in rendering DBs, this is a relation</span>
-                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?relation=</span><span class="si">{</span><span class="o">-</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
-            <span class="k">else</span><span class="p">:</span>
-                <span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">(</span><span class="sa">f</span><span class="s2">"librewolf -P default 'https://www.openstreetmap.org/edit?way=</span><span class="si">{</span><span class="n">osm_id</span><span class="si">}</span><span class="s2">'"</span><span class="p">)</span>
-
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">'__main__'</span><span class="p">:</span>
-    <span class="n">main</span><span class="p">()</span>
-</pre></div>
-
-<p>It <em>is</em> quite inefficient, but what I want is to edit the errors, not to write a script :) This requires
-a rendering database, which I already have locally :)</p>
-<p>From here the workflow is:</p>
-<ul>
-<li>Analyze the type of error.<ul>
-<li>This includes looking at the history of the object.</li>
-</ul>
-</li>
-<li>Search the wiki.</li>
-<li>Correct the error or leave a note.</li>
-<li>Find the original changeset and leave a note if needed.</li>
-<li>Add any details to te changeset if needed.</li>
-</ul>
-<p>In my machine, finding the long tail, and finding each set of errors takes one minute, so I was launching 
-two at the same time. One of the things to notice is that if the object you try to edit does no exists 
-anymore, you get and edit view of the whole planet.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 04, 2026 10:16 AM UTC by
-            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
-              >Marcos Dione</a
-            >
-          </div>
-          <a
-            href="https://www.grulic.org.ar/~mdione/glob/posts/correcting-openstreetmap-wrong-tag-values/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/" class="hover:underline"
-              >Absurd In Production</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>About five months ago I wrote about <a href="/2025/11/3/absurd-workflows/">Absurd</a>, a
-durable execution system we built for our own use at Earendil, sitting entirely
-on top of Postgres and Postgres alone.  The pitch was simple: you don&#8217;t need a
-<a href="https://hatchet.run/">separate</a> <a href="https://www.inngest.com/">service</a>, <a href="https://useworkflow.dev/">a
-compiler plugin</a>, or <a href="https://temporal.io/">an entire
-runtime</a> to get durable workflows.  You need a SQL file
-and a thin SDK.</p>
-<p>Since then we&#8217;ve been running it in production, and I figured it&#8217;s worth
-sharing what the experience has been like.  The short version: the design
-held up, the system has been a pleasure to work with, and other people seem
-to agree.</p>
-<h2>A Quick Refresher</h2>
-<p>Absurd is a durable execution system that lives entirely inside Postgres.
-The core is a single SQL file
-(<a href="https://github.com/earendil-works/absurd/blob/main/sql/absurd.sql">absurd.sql</a>)
-that defines stored procedures for task management, checkpoint storage, event
-handling, and claim-based scheduling.  On top of that sit thin SDKs (currently
-<a href="https://www.npmjs.com/package/absurd-sdk">TypeScript</a>,
-<a href="https://pypi.org/project/absurd-sdk/">Python</a> and an experimental
-<a href="https://github.com/earendil-works/absurd/tree/main/sdks/go/absurd">Go</a> one)
-that make the system ergonomic in your language of choice.</p>
-<p>The model is straightforward: you register tasks, decompose them into steps,
-and each step acts as a checkpoint.  If anything fails, the task retries from
-the last completed step.  Tasks can sleep, wait for external events, and
-suspend for days or weeks.  All state lives in Postgres.</p>
-<p>If you want the full introduction, the <a href="/2025/11/3/absurd-workflows/">original blog
-post</a> covers the fundamentals.  What follows here
-is what we&#8217;ve learned since.</p>
-<h2>What Changed</h2>
-<p>The project got multiple releases over the last five months.  Most of the
-changes are things you&#8217;d expect from a system that people actually started
-depending on: hardened claim handling, watchdogs that terminate broken workers,
-deadlock prevention, proper lease management, event race conditions, and all the
-edge cases that only show up when you&#8217;re running real workloads.</p>
-<p>A few things worth calling out specifically.</p>
-<p><strong>Decomposed steps.</strong>  The original design only had <code>ctx.step()</code>, where you pass
-in a function and get back its checkpointed result.  That works well for many
-cases but not all.  Sometimes you need to know whether a step already ran before
-deciding what to do next.  So we added <code>beginStep()</code> / <code>completeStep()</code>, which
-give you a handle you can inspect before committing the result.  This turned out
-to be very useful for modeling intentional failures and conditional logic.
-This in particular is necessary when working with &#8220;before call&#8221; and &#8220;after call&#8221;
-type hook APIs.</p>
-<p><strong>Task results.</strong>  You can now spawn a task, go do other things, and later
-come back to fetch or await its result.  This sounds obvious in hindsight, but
-the original system was purely fire-and-forget.  Having proper result inspection
-made it possible to use Absurd for things like spawning child tasks from within
-a parent workflow and waiting for them to finish.  This is particularly useful
-for debugging with agents too.</p>
-<p><strong><a href="https://earendil-works.github.io/absurd/tools/absurdctl/">absurdctl</a>.</strong>  We built this out as a proper CLI tool.  You can initialize
-schemas, run migrations, create queues, spawn tasks, emit events, retry failures
-from the command line.  It&#8217;s installable via <code>uvx</code> or as a standalone binary.
-This has been invaluable for debugging production issues.  When something is
-stuck, being able to just <code>absurdctl dump-task --task-id=&lt;id&gt;</code> and see exactly
-where it stopped is a very different experience from digging through logs.</p>
-<p><strong><a href="https://earendil-works.github.io/absurd/tools/habitat/">Habitat</a>.</strong>  A small Go application that serves up a web dashboard for
-monitoring tasks, runs, checkpoints, and events.  It connects directly to
-Postgres and gives you a live view of what&#8217;s happening.  It&#8217;s simple, but it&#8217;s
-the kind of thing that makes the system more enjoyable for humans.</p>
-<p><strong>Agent integration.</strong>  Since Absurd was originally built for agent workloads,
-we added a bundled skill that coding agents can discover and use to debug
-workflow state via <code>absurdctl</code>.  There&#8217;s also a documented pattern for making
-<a href="https://pi.dev/">pi</a> agent turns durable by logging each message as a
-checkpoint.</p>
-<h2>What Held Up</h2>
-<p>The thing I&#8217;m most pleased about is that the core design didn&#8217;t need to change
-all that much.  The fundamental model of tasks, steps, checkpoints, events, and
-suspending is still exactly what it was initially.  We added features around it,
-but nothing forced us to rethink the basic abstractions.</p>
-<p>Putting the complexity in SQL and keeping the SDKs thin turned out to be a
-genuinely good call.  The TypeScript SDK is about 1,400 lines.  The Python SDK
-is about 1,900 but most of this comes from the complexity of supporting colored
-functions.  Compare that to Temporal&#8217;s Python SDK at around 170,000 lines.  It
-means the SDKs are easy to understand, easy to debug, and easy to port.  When
-something goes wrong, you can read the entire SDK in an afternoon and understand
-what it does.</p>
-<p>The checkpoint-based replay model also aged well.  Unlike systems that require
-deterministic replay of your entire workflow function, Absurd just loads the
-cached step results and skips over completed work.  That means your code doesn&#8217;t
-need to be deterministic outside of steps.  You can call <code>Math.random()</code> or
-<code>datetime.now()</code> in between steps and things still work, because only the step
-boundaries matter.  In practice, this makes it much easier to reason about
-what&#8217;s safe and what isn&#8217;t.</p>
-<p>Pull-based scheduling was the right choice too.  Workers pull tasks from
-Postgres as they have capacity.  There&#8217;s no coordinator, no push mechanism, no
-HTTP callbacks.  That makes it trivially self-hostable and means you don&#8217;t have
-to think about load management at the infrastructure level.</p>
-<h2>What Might Not Be Optimal</h2>
-<p>I had some discussions with folks about whether the right abstraction should have been
-a <a href="https://www.distributed-async-await.io/specification/programming-model/durable-promise-specification">durable
-promise</a>.
-It&#8217;s a very appealing idea, but it turns out to be much more complex to
-implement in practice.  It&#8217;s however in theory also more powerful.  I did make
-some attempts to see what absurd would look like if it was based on durable
-promises but so far did not get anywhere with it.  It&#8217;s however an experiment
-that I think would be fun to try!</p>
-<h2>What We Use It For</h2>
-<p>The primary use case is still agent workflows.  An agent is essentially a loop
-that calls an LLM, processes tool results, and repeats until it decides it&#8217;s
-done.  Each iteration becomes a step, and each step&#8217;s result is checkpointed.
-If the process dies on iteration 7, it restarts and replays iterations 1 through
-6 from the store, then continues from 7.</p>
-<p>But we&#8217;ve found it useful for a lot of other things too.  All our crons just
-dispatch distributed workflows with a pre-generated deduplication key from the
-invocation.  We can have two cron processes running and they will only trigger
-one absurd task invocation.  We also use it for background processing that needs
-to survive deploys.  Basically anything where you&#8217;d otherwise build your own
-retry-and-resume logic on top of a queue.</p>
-<h2>What&#8217;s Still Missing</h2>
-<p>Absurd is deliberately minimal, but there are things I&#8217;d like to see.</p>
-<p>There&#8217;s no built-in scheduler.  If you want cron-like behavior, you run your own
-scheduler loop and use idempotency keys to deduplicate.  That works, and we have
-a <a href="https://earendil-works.github.io/absurd/patterns/cron/">documented pattern for
-it</a>, but it would be
-nice to have something more integrated.</p>
-<p>There&#8217;s no push model.  Everything is pull.  If you need an HTTP endpoint to
-receive webhooks and wake up tasks, you build that yourself.  I think that&#8217;s the
-right default as push systems are harder to operate and easier to overwhelm but
-there are cases where it would be convenient.  In particular there are quite a
-few agentic systems where it would be super nice to have webhooks natively
-integrated (wake on incoming POST request).  I definitely don&#8217;t want to have
-this in the core, but that sounds like the kind of problem that could be a nice
-adjacent library that builds on top of absurd.</p>
-<p>The biggest omission is that it does not support partitioning yet.  That&#8217;s
-unfortunate because it makes cleaning up data more expensive than it has to be.
-In theory supporting partitions would be pretty simple.  You could have weekly
-partitions and then detach and delete them when they expire.  The only thing
-that really stands in the way of that is that Postgres does not have a
-convenient way of actually doing that.</p>
-<p>The hard part is not partitioning itself, it&#8217;s partition lifecycle management under
-real workloads.  If a worker inserts a row whose <code>expires_at</code> lands in a month
-without a partition, the insert fails and the workflow crashes.  So you need a
-separate maintenance loop that always creates future partitions far enough ahead
-for sleeps/retries, and does that for every queue.</p>
-<p>On the delete side, the safe approach is <code>DETACH PARTITION CONCURRENTLY</code>, but
-getting that to run from <code>pg_cron</code> doesn&#8217;t work because it cannot be run within a
-transaction, but <code>pg_cron</code> runs everything in one.</p>
-<p>I don&#8217;t think it&#8217;s an unsolvable problem, but it&#8217;s one I have not found a good
-solution for and I would love <a href="https://github.com/earendil-works/absurd/issues/4">to get input
-on</a>.</p>
-<h2>Does Open Source Still Matter?</h2>
-<p>This brings me a bit to a meta point on the whole thing which is what the point
-of Open Source libraries in the age of agentic engineering is.  Durable
-Execution is now something that plenty of startups sell you.  On the other hand
-it&#8217;s also something that an agent would build you and people might not even look
-for solutions any more.  It&#8217;s kind of … weird?</p>
-<p>I don&#8217;t think a durable execution library can support a company, I really
-don&#8217;t.  On the other hand I think it&#8217;s just complex enough of a problem that it
-could be a good Open Source project void of commercial interests.  You do need a
-bit of an ecosystem around it, particularly for UI and good DX for debugging,
-and that&#8217;s hard to get from a throwaway implementation.</p>
-<p>I don&#8217;t think we have squared this yet, but it&#8217;s already much better to use than
-a few months ago.</p>
-<p>If you&#8217;re using Absurd, thinking about it, or building adjacent ideas, I&#8217;d love
-your feedback. Bug reports, rough edges, design critiques, and contributions are
-all very welcome—this project has gotten better every time someone poked at it
-from a different angle.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 04, 2026 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2026/04/haciendo-historia-celebrating-pycon-uss.html" class="hover:underline"
-              >¡Haciendo Historia! Celebrating PyCon US’s First-Ever Spanish-Language Keynote</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <span id="docs-internal-guid-643cab50-7fff-28c2-aea7-60dadeb1ad68"><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b id="docs-internal-guid-77cb2ca8-7fff-88d2-a193-ee0637fc814c" style="font-weight: normal;"><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial; font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon US has always been about more than just a programming language; it’s about the incredible, global community that builds, supports, and innovates with it. This year at PyCon US 2026 in Long Beach, we are thrilled to celebrate a remarkable milestone for our community: </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">our very first Spanish-language keynote address</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, delivered by the brilliant Pablo Galindo Salgado!</span></span></p></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial;">Meet Your Keynote Speaker: Pablo Galindo Salgado</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b><span style="font-family: arial; font-size: small;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">If you’ve used Python recently, you’ve benefited from </span><a href="https://pablogsal.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Pablo’s work</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Pablo works on the Python team at </span><a href="https://www.hudsonrivertrading.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Hudson River Trading</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> and is a </span><a href="https://devguide.python.org/core-team/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">CPython core developer</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. He is currently serving his 6th term on the </span><a href="https://github.com/python/steering-council" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Steering Council</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> and served as the release manager for Python 3.10 and 3.11.</span></p><p dir="ltr" style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">But his background isn't just in software engineering—Pablo is a Theoretical Physicist specializing in general relativity and black hole physics! (He also has a cat, though he assures us that his cat does not write any code).</span></p><p dir="ltr" style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">With his deep technical expertise and unique scientific perspective, Pablo is uniquely positioned to deliver an unforgettable keynote. But what makes this moment even more special is the language in which it will be delivered.</span></p></span></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Why a Spanish Keynote Matters to PyCon US</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b><span style="font-family: arial; font-size: small;"><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Currently, about </span><a href="https://data.census.gov/table/ACSST1Y2024.S1601?q=language" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">14% of the US population</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> speaks Spanish. PyCon US has proudly hosted the </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon Charlas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, a dedicated track of talks presented entirely in Spanish, since 2018. The Charlas have been a phenomenal success, highlighting the deep well of talent within the Spanish-speaking Pythonista community across Latin America, Europe, the United States, Africa (looking at you, Equatorial Guinea), and beyond.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The Charlas has evolved from a small day with a handful of talks to an official track with 2 full days of talks! But we believe we could do more.</span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Elevating a Spanish-language presentation to the </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Keynote Stage</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> is a significant step for PyCon US for several reasons:</span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Reflecting our Global Community:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> Python is a truly global language, and its developer base is wonderfully diverse. By placing a Spanish-language talk on the main stage, PyCon US is reflecting the reality of our worldwide community. We want to remind folks that top-tier technical leadership and innovation happen in every language.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Amplifying the Charlas Track:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> Moving from the Charlas track to the Keynote stage bridges the gap between our English and Spanish programming. It exposes the broader PyCon US audience to the vibrancy of our Spanish-speaking community, and we hope it encourages more cross-cultural collaboration and networking.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Encourage the Spanish-speaking community</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">: A few initiatives have been developed around the Python ecosystem supporting the Spanish-speaking community, like the </span><a href="https://docs.python.org/es/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">official translation of the Python documentation</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. This initiative has been adding more and more people, so if you are interested, make sure to check out the </span><a href="https://python-docs-es.readthedocs.io/es/3.14/CONTRIBUTING.html" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">contribution guide</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! We also encourage you to check out the </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python en Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> community hub, which has gathered many Spanish-speaking communities around the world. You can also come visit the Python en </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> booth in the PyCon US Expo Hall!<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Motivating other language-focused communities:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> If the Spanish-speaking community managed to get here, we have no doubt that in the future we could have even more languages in our beloved conference. Let us know which language you’d like to see follow these steps!</span></p></span></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial;">Join Us for This Historic Moment</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial; font-size: small;"><span style="font-weight: normal;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;">Whether you are a native Spanish speaker, you've been practicing your </span><span style="font-style: italic; vertical-align: baseline;">español</span><span style="vertical-align: baseline;"> on some apps, or you just want to experience a fantastic technical talk through the magic of live translation and community spirit, you will not want to miss this.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;">So charge up your phone, pack a set of headphones so you can use the live translation service and get ready to give a massive, warm welcome to Pablo Galindo Salgado. </span><span style="font-style: italic; vertical-align: baseline;">¡Nos vemos en Long Beach!</span><span style="vertical-align: baseline;"> (See you in Long Beach!)</span></p><span style="vertical-align: baseline;">*** </span><span style="font-style: italic; vertical-align: baseline;">To learn more about Pablo and our other incredible keynote speakers, head over to the</span><a href="https://us.pycon.org/2026/about/keynote-speakers/"><span style="color: black; font-style: italic; vertical-align: baseline;"> </span><span style="color: #1155cc; font-style: italic; vertical-align: baseline;">PyCon US 2026 Keynote Speakers page</span></a><span style="font-style: italic; vertical-align: baseline;">.
-
-</span></span><b id="docs-internal-guid-37da6964-7fff-dd90-4d50-8b5c5d6e4f60" style="font-weight: normal;"><span><a name="more"></a></span><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt; text-align: justify;"><br /></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt; text-align: justify;"></p><h2><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Título: ¡Haciendo historia! Celebrando la primera keynote en español de PyCon US</span></h2><p></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon US siempre ha sido mucho más que un lenguaje de programación; se trata de la increíble comunidad global que lo construye, lo apoya y lo impulsa. Este año, en PyCon US 2026 en Long Beach, estamos emocionados de celebrar un hito extraordinario para nuestra comunidad: ¡nuestra primera keynote en español, presentada por el brillante Pablo Galindo Salgado!</span></p><p></p></b></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: small;">Conoce a tu keynote speaker: Pablo Galindo Salgado</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b style="font-weight: normal;"><span style="font-family: arial; font-size: small;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Si has usado Python recientemente, probablemente te has beneficiado del </span><a href="https://pablogsal.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">trabajo de Pablo</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Actualmente forma parte del equipo de Python en</span><a href="https://www.hudsonrivertrading.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;"> Hudson River Trading</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> y es </span><a href="https://devguide.python.org/core-team/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">desarrollador core de CPython</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Además, está cumpliendo su sexto mandato en el </span><a href="https://github.com/python/steering-council" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Steering Council</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> y fue release manager de Python 3.10 y 3.11.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Pero su trayectoria no se limita a la ingeniería de software: ¡Pablo también es físico teórico especializado en relatividad general y física de agujeros negros! (Y sí, también tiene un gato, aunque asegura que no programa).</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Con su sólida experiencia técnica y su perspectiva científica única, Pablo está más que preparado para ofrecer una keynote inolvidable. Pero lo que hace este momento aún más especial es el idioma en el que será presentada.</span></p><p></p></span></b></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Por qué una keynote en español es importante para PyCon US</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b style="font-weight: normal;"><span style="font-family: arial;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Actualmente, aproximadamente el </span><a href="https://data.census.gov/table/ACSST1Y2024.S1601?q=language" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">14% de la población de Estados Unidos habla español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Desde 2018, PyCon US ha sido anfitrión de PyCon Charlas, un track dedicado completamente a presentaciones en español. Este espacio ha sido un éxito rotundo, mostrando el enorme talento de la comunidad Python hispanohablante en América Latina, Europa, Estados Unidos, África (sí, Guinea Ecuatorial 👀) y más allá.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-size: small;">Las Charlas han evolucionado desde un pequeño conjunto de presentaciones en un solo día hasta convertirse en un track oficial de ¡dos días completos! Pero creemos que podemos ir aún más lejos.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-size: small;">Llevar una presentación en español al escenario principal es un paso importante por varias razones:</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Reflejar nuestra comunidad global</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Python es un lenguaje verdaderamente global, con una comunidad diversa y vibrante. Al incluir una keynote en español, PyCon US refleja esta realidad y reconoce que la innovación y el liderazgo técnico existen en todos los idiomas.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Amplificar el track de Charlas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Este paso conecta el track de Charlas con el escenario principal, acercando a toda la audiencia de PyCon US a la riqueza de la comunidad hispanohablante y fomentando más colaboración e intercambio cultural.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Impulsar a la comunidad hispanohablante</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Existen iniciativas dentro del ecosistema Python que apoyan a la comunidad en español, como la </span><a href="https://docs.python.org/es/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">traducción oficial de la documentación de Python</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Este esfuerzo sigue creciendo, así que si te interesa contribuir, ¡no dudes en revisar la </span><a href="https://python-docs-es.readthedocs.io/es/3.14/CONTRIBUTING.html" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">guía de contribución</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">!</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">También te invitamos a conocer el hub de </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python en Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, que reúne comunidades de todo el mundo, y a visitar su booth en el Expo Hall de PyCon US.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Motivar a otras comunidades lingüísticas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Si la comunidad hispanohablante logró este paso, estamos seguros de que en el futuro veremos más idiomas en nuestra conferencia. ¡Cuéntanos cuál te gustaría ver próximamente!</span></span></p><p style="font-size: medium;"></p></span></b></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Acompáñanos en este momento histórico</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial;"><span style="font-weight: normal;"><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">Ya sea que hables español nativo, estés practicando con alguna app o simplemente quieras disfrutar de una excelente charla técnica con traducción en vivo y el espíritu de la comunidad, no querrás perderte este momento.</span></span></p><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">Carga tu teléfono, lleva tus audífonos para usar el servicio de traducción en vivo y prepárate para darle una gran bienvenida a Pablo Galindo Salgado.</span></span></p><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">¡Nos vemos en Long Beach!</span></span></p><p dir="ltr" style="font-size: medium; line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"></p><p dir="ltr" style="font-size: medium; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="font-style: italic; vertical-align: baseline;">Para conocer más sobre Pablo y otros increíbles keynote speakers, visita la página de </span><a href="https://us.pycon.org/2026/about/keynote-speakers/"><span style="color: #1155cc; font-style: italic; vertical-align: baseline;">Keynote Speakers de PyCon US 2026.</span></a></p><br /></span><span style="font-size: medium; font-weight: normal;"><span style="font-style: italic; vertical-align: baseline;"></span></span></span></h3><h2><span style="font-weight: normal;"><span style="font-family: Arial, sans-serif; font-size: 11pt; font-style: italic; vertical-align: baseline;">
-</span></span></h2></span>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 03, 2026 09:20 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2026/04/haciendo-historia-celebrating-pycon-uss.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://death.andgravity.com/reader-3-22" class="hover:underline"
-              >reader 3.22 released – new web app</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Hi there!</p>
-<p>I'm happy to announce version 3.22 of <strong><a class="external" href="https://github.com/lemon24/reader">reader</a></strong>, a Python feed reader library.</p>
-<h2 id="what-s-new">What's new?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#what-s-new" title="permalink">#</a></span></h2>
-<p>Here are the highlights since <a class="internal" href="https://death.andgravity.com/reader-3-20">reader 3.20</a>.</p>
-<h3 id="new-feed-reader-web-app">New feed reader web app<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#new-feed-reader-web-app" title="permalink">#</a></span></h3>
-<p>The new <a class="external" href="https://reader.readthedocs.io/en/latest/app.html">web application</a> is done!
-Features include:</p>
-<ul>
-<li>add / list / filter / delete feeds</li>
-<li>list / filter articles</li>
-<li>mark articles as read / (un)important</li>
-<li>article view</li>
-<li>custom feed titles</li>
-<li>dark mode</li>
-</ul>
-<p>In the next releases,
-I'll be adding back features already present in the <a class="external" href="https://reader.readthedocs.io/en/latest/app.html#legacy-web-app">legacy web app</a>,
-stuff like <a class="external" href="https://reader.readthedocs.io/en/latest/guide.html#full-text-search">full-text search</a>, <a class="external" href="https://reader.readthedocs.io/en/latest/guide.html#resource-tags">tags</a>, <a class="external" href="https://reader.readthedocs.io/en/latest/plugins.html#readtime">read time</a>, <a class="external" href="https://reader.readthedocs.io/en/latest/plugins.html#enclosure-tags">MP3 tag fixing</a>, and more.</p>
-<p>This is building towards
-a <strong>hosted version of <em>reader</em></strong>,
-which should take the pain out of self-hosting,
-while still leaving it as an option;
-more to follow soon™.
-(Meanwhile,
-if this sounds like something you'd like to use,
-<a class="internal" href="https://death.andgravity.com/about#contact">get in touch</a>.)</p>
-<p>For now, here are some screenshots:</p>
-<div class="columns"><div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="main page (dark mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/entries.png" /><figcaption class="figure-caption text-center text-small">
-main page (dark mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-<div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="more filters (light mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/entries-filters-light.png" /><figcaption class="figure-caption text-center text-small">
-more filters (light mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-<div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="feed page (dark mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/feed.png" /><figcaption class="figure-caption text-center text-small">
-feed page (dark mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-</div>
-
-<div class="columns"><div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="feeds page (dark mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/feeds.png" /><figcaption class="figure-caption text-center text-small">
-feeds page (dark mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-<div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="article view (light mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/entry-image-light.png" /><figcaption class="figure-caption text-center text-small">
-article view (light mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-<div class="column col-sm-6 col-xs-12">
-
-<figure class="figure">
-<img alt="article view (dark mode)" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-22/entry.png" /><figcaption class="figure-caption text-center text-small">
-article view (dark mode)
-</figcaption>
-</figure>
-
-
-
-</div>
-</div>
-
-<h3 id="config-and-plugin-loading">Config and plugin loading<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#config-and-plugin-loading" title="permalink">#</a></span></h3>
-<p>Part of the hosted <em>reader</em> work,
-I've unified how <a class="external" href="https://reader.readthedocs.io/en/latest/config.html">configuration</a> and <a class="external" href="https://reader.readthedocs.io/en/latest/plugins.html">plugins</a> are loaded
-across <a class="external" href="https://reader.readthedocs.io/en/latest/api.html#reader.make_reader">make_reader()</a>, the <a class="external" href="https://reader.readthedocs.io/en/latest/cli.html">command-line interface</a>, and the web app,
-by using <a class="external" href="https://click.palletsprojects.com/">Click</a> to parse and validate configuration
-(it's not as wrong as it sounds, I promise).</p>
-<p>As a consequence,
-the config file format changed from YAML to TOML
-and follows the shape of the CLI,
-and a few commands and environment variables were renamed;
-no other breaking changes are expected in the foreseeable future.</p>
-<h3 id="scheduled-updates-by-default">Scheduled updates by default<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#scheduled-updates-by-default" title="permalink">#</a></span></h3>
-<p>Both <a class="external" href="https://reader.readthedocs.io/en/latest/api.html#reader.Reader.update_feeds">update_feeds()</a> and the CLI now limit
-<a class="external" href="https://reader.readthedocs.io/en/latest/guide.html#scheduled">how often feeds get updated</a> by default;
-while this is a minor compatibility break,
-the previous behavior was arguably a bug –
-doing the right thing should not be opt-in.</p>
-<p>Also, <em>reader</em> now honors the Cache-Control max-age and Expires HTTP headers
-when updating feeds,
-in addition to Retry-After.</p>
-<h3 id="ai-contributions">AI contributions<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#ai-contributions" title="permalink">#</a></span></h3>
-<p>Finally, <em>reader</em> now has an <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html#ai-contributions">AI contributions</a> policy;
-tl;dr: they are banned, for now.</p>
-<p>The reasoning is two-fold.
-First, after a few low-effort contributions,
-I decided I don't have time for this.
-Second, there are various issues
-surrounding LLMs I don't want to bother with;
-for more details,
-see the <a class="external" href="https://web.archive.org/web/20260307194456/https://book.servo.org/contributing/getting-started.html#ai-contributions">Servo</a>, <a class="external" href="https://web.archive.org/web/20260211125214/https://devguide.python.org/getting-started/generative-ai/">CPython</a>, and <a class="external" href="https://web.archive.org/web/20260302012029/https://www.llvm.org/docs/AIToolPolicy.html">LLVM</a> policies.</p>
-<p>I am open to revisiting this later (I'll do so on my own, though, thank you).</p>
-<hr />
-<p>That's it for now.
-For more details, see the full <a class="external" href="https://reader.readthedocs.io/en/stable/changelog.html#version-3-22">changelog</a>.</p>
-<p><strong>Want to contribute?</strong>
-Check out the <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html">docs</a> and the <a class="external" href="https://reader.readthedocs.io/en/latest/dev.html#roadmap">roadmap</a>.</p>
-<p><strong>Learned something new today?</strong> Share it with others, it really helps! <span class="text-large">
-<span class="share-icons">
-<a class="share-icon pycoders color" href="https://pycoders.com/submissions" target="_blank">PyCoder's Weekly</a>
-<a class="share-icon hacker-news color" href="https://news.ycombinator.%63%6f%6d/submitlink?u=https%3A//death.andgravity.com/reader-3-22&amp;t=reader%203.22%20released%20%E2%80%93%20new%20web%20app">HN</a>
-<a class="share-icon bluesky color" href="https://bsky.%61%70%70/intent/compose?text=reader%203.22%20released%20%E2%80%93%20new%20web%20app%20https%3A//death.andgravity.com/reader-3-22">Bluesky</a>
-<!--
-<a
-    class="share-icon reddit color"
-    href="https://www.reddit.%63%6f%6d/%73%75%62%6d%69%74?url=https%3A//death.andgravity.com/reader-3-22&title=reader%203.22%20released%20%E2%80%93%20new%20web%20app"
->Reddit</a>
--->
-<a class="share-icon linkedin color" href="https://www.linkedin.%63%6f%6d/sharing/share-offsite/?url=https%3A//death.andgravity.com/reader-3-22">linkedin</a>
-<a class="share-icon twitter color" href="https://twitter.%63%6f%6d/%73%68%61%72%65?text=reader%203.22%20released%20%E2%80%93%20new%20web%20app&amp;url=https%3A//death.andgravity.com/reader-3-22&amp;via=_andgravity">Twitter</a>
-</span>
-</span></p>
-
-<h2 id="what-is-reader">What is <em>reader</em>?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#what-is-reader" title="permalink">#</a></span></h2>
-<p><strong>reader</strong> takes care
-of the core functionality required by a feed reader,
-so you can focus on what makes <strong>yours</strong> different.</p>
-<p><img alt="reader in action" class="img-responsive" src="https://death.andgravity.com/_file/reader-2-0/reader.png" />
-<em>reader</em> allows you to:</p>
-<ul>
-<li>retrieve, store, and manage <strong>Atom</strong>, <strong>RSS</strong>, and <strong>JSON</strong> feeds</li>
-<li>mark articles as read or important</li>
-<li>add arbitrary tags/metadata to feeds and articles</li>
-<li>filter feeds and articles</li>
-<li>full-text search articles</li>
-<li>get statistics on feed and user activity</li>
-<li>write plugins to extend its functionality</li>
-</ul>
-<p>...all these with:</p>
-<ul>
-<li>a stable, clearly documented API</li>
-<li>excellent test coverage</li>
-<li>fully typed Python</li>
-</ul>
-<p>To find out more, check out the <a class="external" href="https://github.com/lemon24/reader">GitHub repo</a> and the <a class="external" href="https://reader.readthedocs.io/en/stable/">docs</a>,
-or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tutorial.html">tutorial</a> a try.</p>
-<h2 id="why-use-a-feed-reader-library">Why use a feed reader library?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#why-use-a-feed-reader-library" title="permalink">#</a></span></h2>
-<p>Have you been unhappy with existing feed readers and wanted to make your own, but:</p>
-<ul>
-<li>never knew where to start?</li>
-<li>it seemed like too much work?</li>
-<li>you don't like writing backend code?</li>
-</ul>
-<p>Are you already working with <a class="external" href="https://feedparser.readthedocs.io/en/latest/">feedparser</a>, but:</p>
-<ul>
-<li>want an easier way to store, filter, sort and search feeds and entries?</li>
-<li>want to get back type-annotated objects instead of dicts?</li>
-<li>want to restrict or deny file-system access?</li>
-<li>want to change the way feeds are retrieved by using <a class="external" href="https://requests.readthedocs.io">Requests</a>?</li>
-<li>want to also support <a class="external" href="https://jsonfeed.org/">JSON Feed</a>?</li>
-<li>want to support custom information sources?</li>
-</ul>
-<p>... while still supporting all the feed types feedparser does?</p>
-<p>If you answered yes to any of the above, <em>reader</em> can help.</p>
-<h2 id="the-reader-philosophy">The <em>reader</em> philosophy<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-22#the-reader-philosophy" title="permalink">#</a></span></h2>
-<ul>
-<li><em>reader</em> is a library</li>
-<li><em>reader</em> is for the long term</li>
-<li><em>reader</em> is extensible</li>
-<li><em>reader</em> is stable (within reason)</li>
-<li><em>reader</em> is simple to use; API matters</li>
-<li><em>reader</em> features work well together</li>
-<li><em>reader</em> is tested</li>
-<li><em>reader</em> is documented</li>
-<li><em>reader</em> has minimal dependencies</li>
-</ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 02, 2026 06:00 PM UTC by
-            <a href="https://death.andgravity.com/_feed/index/_tags/python.xml" class="link link-hover text-primary"
-              >death and gravity</a
-            >
-          </div>
-          <a
-            href="https://death.andgravity.com/reader-3-22"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/04/02/python-pop-quiz-number-explosion/" class="hover:underline"
-              >Python Pop Quiz – Number Explosion</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>You will sometimes come across examples of code that use one or two asterisks. Depending on how the asterisks are used, they can mean different things to Python. Check your understanding of what a single asterisk means in the following quiz! The Quiz What will be the output if you run this code? numbers = [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/04/02/python-pop-quiz-number-explosion/">Python Pop Quiz &#8211; Number Explosion</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 02, 2026 12:29 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/04/02/python-pop-quiz-number-explosion/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-march-2026-release/" class="hover:underline"
-              >Python in Visual Studio Code – March 2026 Release</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The March 2026 release of the Python and Jupyter extensions for Visual Studio Code is now available. Keep on reading to learn more!</p>
-<p>The post <a href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-march-2026-release/">Python in Visual Studio Code &#8211; March 2026 Release</a> appeared first on <a href="https://devblogs.microsoft.com/python">Microsoft for Python Developers Blog</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 02, 2026 12:27 AM UTC by
-            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
-              >Python Engineering at Microsoft</a
-            >
-          </div>
-          <a
-            href="https://devblogs.microsoft.com/python/python-in-visual-studio-code-march-2026-release/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/543/deep-agents-langchains-sdk-for-agents-that-plan-and-delegate" class="hover:underline"
-              >#543: Deep Agents: LangChain's SDK for Agents That Plan and Delegate</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            When you type a question into ChatGPT, the model only has what you typed to work with. But tools like Claude Code can plan, iterate, test, and recover from mistakes. They work more like we do. The difference is the agent harness: Planning tools, file system access, sub-agents, and carefully crafted system prompts that turn a raw LLM into something genuinely capable. Sydney Runkle is back on Talk Python representing LangChain and their new open source library, Deep Agents: A framework for building your own deep agents with plain Python functions, middleware hooks, and MCP support. This is how the magic works under the hood.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 01, 2026 05:20 PM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/543/deep-agents-langchains-sdk-for-agents-that-plan-and-delegate"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/pytest-import-file-mismatch" class="hover:underline"
-              >pytest "import file mismatch"</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Make sure your test files in a pytest tested project sit in directories with a __init__.py
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 01, 2026 01:20 PM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/pytest-import-file-mismatch"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-news-april-2026/9179" class="hover:underline"
-              >Tryton News April 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div>  </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/2/2f89e212780d698640fc58f076bddaf6272b0b24.jpeg" title="Photo: Pexels, Artem Podrez"><img alt="A Woman Doing an Experiment" height="500" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/2/2f89e212780d698640fc58f076bddaf6272b0b24_2_281x500.jpeg" title="Photo: Pexels, Artem Podrez" width="281" /></a></div><p></p>
-
-<p>During the last month we focused on fixing bugs, improving the behaviour of things, speeding-up performance issues - building on the changes from <a href="https://discuss.tryton.org/t/tryton-release-7-8/">our last release</a>. We also added some new features which we would like to introduce to you in this newsletter.</p>
-<p>For an in depth overview of the <a href="https://bugs.tryton.org/">Tryton issues please take a look at our issue tracker </a> or see the issues and merge requests <a href="https://code.tryton.org/tryton/-/labels">filtered by label</a>.</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--sales-purchase">Sales, Purchases and Projects</h3>
-<p>Now we add the <a href="https://bugs.tryton.org/14581">support for the <em>pick-up delivery method</em> from Shopify</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14671">add a <em>number</em> field to the project work efforts, based on a default sequence</a>.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/c0625ed0d3bbce798479ba45977d807f1bdd2df0">use the party lang functionality to set the language for the taxes and and chats</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14417">add support for gift card products on Shopify</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14651">add a field that indicates if an invoice is sent via Peppol</a> to help on filtering.</p>
-<p>Now we <a href="https://bugs.tryton.org/14649">unpublish products from the web-shops when they are deactivated</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14646">allow the <em>Peppol admin</em> access group to create incoming documents</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14633">improve the address schema for web-shop usage</a> and add <code>attn</code> to Party Addresses.</p>
-<p>We now allow to <a href="https://bugs.tryton.org/14632"><em>copy the resources</em> from sale rental to its invoices</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14663">move the <em>Purchase Lines</em> in its own tab on the Production form</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14622">allow the <em>manual method</em> on sale</a>.</p>
-<p>Now the <a href="https://bugs.tryton.org/14619">sale is always confirmed when a Shopify order has payment terms.</a></p>
-<h3 id="heading--accounting">Accounting, Invoicing and Payments</h3>
-<p>Now we <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3157">set the <em>related-to</em> field of an <em>account statement line</em> to <code>invoice</code></a> when the statement line overpays an invoice.</p>
-<p>We now <a href="https://bugs.tryton.org/14708">filter the <em>MIME-type</em> of the additional documents in UBL to the ones which are allowed by the specification</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14670">forbid a zero amount in <em>draft</em> state and also <em>processing</em> state for manual payments</a>.</p>
-<p>We now <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3105">accrue and allocate rounding errors</a> when using multiple taxes to calculate correct total amounts.</p>
-<p>Now we <a href="https://bugs.tryton.org/11317">allow <em>cash-rounding</em> with the opposite method</a>.</p>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/b47cc24db6cc3188bfad0875ba6baea01e4c810c">add <em>UNECE codes</em> to Belgian taxes</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14573"><br />
-add the <em>VAT exemption code</em> on tax for electronic invoices in the EU</a>.</p>
-<p>We now <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3057/commits">add payment means to invoices to be used in UBL and UNCEFACT</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14582">add an optional account to the list of payable/receivable lines</a> to be able to reconcile lines with the same accounts.</p>
-<h3 id="heading--stock">Stock, Production and Shipments</h3>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/10536a0481df1a97a2938164b1d40b34f16864a9">implemented the management of ethanol in stock</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14665">set the default locations when adding manually stock moves to production</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/12436">add a <em>reference</em> field on quality inspections</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14586">add a wizard to pack shipments</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/13899">add the <em>Stock Cancellation</em> access group that allows to <em>cancel</em> shipments and productions in the states <em>running</em> or <em>done</em></a>.</p>
-<h3 id="heading--ui">User Interface</h3>
-<p>As a first step to add labels inside the widgets, we now <a href="https://code.tryton.org/tryton/-/commit/23864f40889b98437552817331c138d3fc296159">add a generic management for the label style in form widgets</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/13898">strip the user field from white-space characters in the login window</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14151">add a new right drop-down menu in SAO, including <em>Logout</em> and <em>Help</em> menu items</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14613">add a visual hint on widgets of modified fields</a>.</p>
-<h2 id="heading--new-modules">New Modules</h2>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/135b2deba12f75e4852e7bb87958484c05ff8c3c">support the common European requirements for excise products</a>.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/f81dbbc1f34731269bd5014b996124a49c89df0a?merge_request_iid=3074">add the <code>sale_project_task</code> module</a> which creates tasks for services sold.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/24c543face12a80343d640b18c808baff6f8cf6d">add the <code>account_payment_check</code> module</a> which manages and prints checks.</p>
-<h2 id="heading--new-releases">New Releases</h2>
-<p>We released bug fixes for the currently maintained <a href="https://discuss.tryton.org/t/release-process/395">long term support series</a> <a href="https://code.tryton.org/tryton/-/commits/branch/7.0">7.0</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/6.0">6.0</a>, and for the penultimate series <a href="https://code.tryton.org/tryton/-/commits/branch/7.8">7.8</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/7.6">7.6</a>.</p>
-<h2 id="heading--security">Security</h2>
-Please update your systems to take care of a security related bug we found last month.
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<p>We now <a href="https://bugs.tryton.org/14412">use cookies to store authentication informations in Sao</a>.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/4d15f132eb365eb172d935c1c80306e66d3b2bb2">order the cron logs by descending ID</a> to show the last cron-runs first.</p>
-<h2 id="heading--developer">Changes for Implementers and Developers</h2>
-<p>Now we <a href="https://bugs.tryton.org/14625">allow to specify subdirectories in the <code>tryton.cfg</code> file and include them when activating a module</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14243">replace the <em>ShopifyAPI</em> library by <em>shopifyapp</em></a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14712">add a contextual <code>_log</code> key to force the logging of events</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14667">add <code>notify_user</code> to <code>ModelStorage</code> to store them in an efficient way at<br />
-the end of the transaction</a>.</p>
-<p>Now we <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3123">add a deprecation warning when a new API version for Stripe is available</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14656">show missing modules when running tests</a>.</p>
-<p>Now we <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3118">remove the obsolete methods <code>dump_values</code> and <code>load_values</code> in <code>ir.ModelData</code></a>.</p>
-<p>We now <a href="https://bugs.tryton.org/14591">also check the button states when testing access</a>.</p>
-<p>Now we introduced the <a href="https://docs.tryton.org/latest/server/ref/fields.html#trytond.model.fields.Binary.queue_for_removal">option <code>model.fields.Binary.queue_for_removal</code></a> which makes it possible to <a href="https://bugs.tryton.org/13861">remove a file from the <code>filestore</code> on setting a binary field to <code>None</code></a>.</p>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/fc096a08b4c39347fd8183ffcf6b1038aedbd5c9">make the retrieval of metadata via documentation build very quiet</a>.</p>
-<p>Now <a href="https://code.tryton.org/tryton/-/commit/24668633fde60fd24123c6a9040e456621ce1fae">we remove the default import of wizards in our cookicutter module<br />
-template</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/10901">upgrade to Psycopg 3</a>.</p>
-<p>We now <a href="https://foss.heptapod.net/tryton/tryton/-/merge_requests/3137">upgrade our setup to <code>pyproject</code> using <code>hatchling</code> as build-system</a>.</p>
-<p>Now we <a href="https://bugs.tryton.org/14313">replace <code>C3.js</code> by its fork <code>billboard.js</code> as it seems better maintained</a>.</p>
-<p>We now <a href="https://bugs.tryton.org/13566">remove the Sao dependency to <em>bower</em></a>.</p>
-<p>Now we <a href="https://code.tryton.org/tryton/-/commit/b8d376d240da59d08999de3fe7ee0d584c7cce1c">remove the <em>internal name</em> from the <em>record name</em></a> of the <a href="https://docs.tryton.org/latest/server/ref/fields.html#trytond.model.fields.Field"><code>trytond.model.fields</code></a>.</p>
-<p>We now implement a <a href="https://code.tryton.org/tryton/-/commit/fd225b2320567d5e99debc19ccdc4090a179dc10">recursive search for unused XML views</a> in our tests.</p>
-<h2 id="heading--translation">Changes for Translators</h2>
-<p>Now the <a href="https://bugs.tryton.org/14623">translation mechanism in Tryton does find the translations of type <code>view</code></a>.</p>
-            <p><small>3 posts - 3 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-news-april-2026/9179">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 01, 2026 06:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-news-april-2026/9179"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/courses/adding-python-to-path/" class="hover:underline"
               >Adding Python to PATH</a
             >
@@ -1020,47 +157,6 @@ template</a>.</p>
           </div>
           <a
             href="https://pycon.blogspot.com/2026/03/support-pyladies-donate-to-pyladies.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/03/30/vibe-coding-pong-with-python-and-pygame/" class="hover:underline"
-              >Vibe Coding Pong with Python and pygame</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Pong is one of the first computer games ever created, way back in 1972. If you have never heard of Pong, you can think of it as a kind of &#8220;tennis&#8221; game. There are two paddles, on each side of the screen. They move up and down. The goal is to bounce a ball between [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/03/30/vibe-coding-pong-with-python-and-pygame/">Vibe Coding Pong with Python and pygame</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 30, 2026 12:29 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/03/30/vibe-coding-pong-with-python-and-pygame/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1398,47 +494,6 @@ template</a>.</p>
           </div>
           <a
             href="https://www.rosehosting.com/blog/how-to-install-pip-on-ubuntu-26-04/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/03/24/the-python-show-python-illustrated/" class="hover:underline"
-              >The Python Show – Python Illustrated</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>In this episode, we hear from two sisters who put together a beginner&#8217;s book about Python. The unique hook for their book is that one sister wrote the text while the other did the illustrations. Listen in as we learn about these incredible sisters and how they got into software programming, writing, and technical education. [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/03/24/the-python-show-python-illustrated/">The Python Show &#8211; Python Illustrated</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 24, 2026 05:59 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/03/24/the-python-show-python-illustrated/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1921,6 +976,506 @@ would love to hear about them.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162" class="hover:underline"
+              >Release 0.8.0 of mt940</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the release of the version 0.8.0 of <a href="https://pypi.org/project/mt940/"><code>mt940</code></a>.</p>
+<p><code>mt940</code> is a library to parse <a href="https://en.wikipedia.org/wiki/MT940">MT940</a> files. MT940 is a specific <a href="https://en.wikipedia.org/wiki/SWIFT_message_types">SWIFT message type</a> used by the <a href="https://en.wikipedia.org/wiki/SWIFT">SWIFT</a> network to send and receive end-of-day <a href="https://en.wikipedia.org/wiki/Bank_account_statement">bank account statements</a>.</p>
+<p>In addition to bug-fixes, this release contains the following improvements:</p>
+<ul>
+<li>Upgrade to pyproject</li>
+<li>Add fund code to transaction</li>
+<li>Remove support for Python older than 3.9</li>
+</ul>
+<p>mt940 is available on PyPI: <a href="https://pypi.org/project/mt940/0.8.0/">mt940 0.8.0</a>.</p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 09:33 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-0-8-0-of-mt940/9162"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-0-4-0-of-febelfin-coda/9161" class="hover:underline"
+              >Release 0.4.0 of febelfin-coda</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the release of the version 0.4.0 of <a href="https://pypi.org/project/febelfin-coda/"><code>febelfin-coda</code></a>.</p>
+<p><code>febelfin-coda</code> is a library to parse <a href="http://downloads.tryton.org/standards/coda-2.6.pdf">CODA files</a>. This bank standard (also called CODA) specifies the lay-out for the electronic files, by banks to customers, of the account transactions and the information concerning the enclosures in connection with the movement.</p>
+<p>In addition to bug-fixes, this release contains the following improvements:</p>
+<ul>
+<li>Upgrade to pyproject</li>
+<li>Add support for Python 3.13 and 3.14</li>
+<li>Remove support for Python older than 3.9</li>
+</ul>
+<p>febelfin-coda is available on PyPI: <a href="https://pypi.org/project/febelfin-coda/0.4.0/">febelfin-coda 0.4.0</a>.</p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-4-0-of-febelfin-coda/9161">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 09:29 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-0-4-0-of-febelfin-coda/9161"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-0-2-0-of-aeb43/9160" class="hover:underline"
+              >Release 0.2.0 of aeb43</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the release of the version 0.2.0 of <a href="https://pypi.org/project/aeb43/"><code>aeb43</code></a>.</p>
+<p><code>aeb43</code> is a library to parse AEB43 files. AEB43 is a standard, fixed-length 80-character file format used by Spanish banks for transmitting bank statements, transaction details, and account balances.</p>
+<p>In addition to bug-fixes, this release contains the following improvements:</p>
+<ul>
+<li>Upgrade to pyproject</li>
+<li>Add support for Python 3.13 and 3.14</li>
+<li>Remove support for Python older than 3.9</li>
+</ul>
+<p>aeb43 is available on PyPI: <a href="https://pypi.org/project/aeb43/0.2.0/">aeb43 0.2.0</a>.</p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-2-0-of-aeb43/9160">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 09:24 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-0-2-0-of-aeb43/9160"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159" class="hover:underline"
+              >Release 0.12.0 of Relatorio</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the release of <a href="https://pypi.org/project/relatorio/">Relatorio</a> version 0.12.0.</p>
+<p>Relatorio is a templating library mainly for <a href="http://opendocument.xml.org/">OpenDocument </a> using also OpenDocument as source format.</p>
+<p>In addition to bug-fixes, this release contains the following improvements:</p>
+<ul>
+<li>Upgrade to pyproject</li>
+<li>Add support for Python 3.13 and 3.14</li>
+<li>Remove support for Python older than 3.9</li>
+</ul>
+<p>The package is available at <a class="inline-onebox" href="https://pypi.org/project/relatorio/0.12.0/">relatorio · PyPI</a><br />
+The documentation is available at <a class="inline-onebox" href="https://docs.tryton.org/relatorio/0.12.0/">Relatorio — A templating library able to output odt and pdf files</a></p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 09:16 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-0-12-0-of-relatorio/9159"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai" class="hover:underline"
+              >#474 Astral to join OpenAI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include Starlette 1.0.0, Astral to join OpenAI, , and Fire and forget (or never) with Python’s asyncio.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 23, 2026 08:00 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.europython.eu/humans-of-ep-niklas/" class="hover:underline"
+              >Humans of EuroPython: Niklas Mertsch</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>EuroPython runs on people power&#x2014;real people giving their time to make it happen. No flashy titles, just real work: setting up rooms, guiding speakers, helping attendees find their way, or making sure everyone feels welcome. Some help run sessions, others support accessibility needs or troubleshoot the Wi-Fi.&#xa0;</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 22, 2026 01:53 PM UTC by
+            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
+              >EuroPython</a
+            >
+          </div>
+          <a
+            href="https://blog.europython.eu/humans-of-ep-niklas/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-1-7-0-of-python-sql/9157" class="hover:underline"
+              >Release 1.7.0 of python-sql</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the release of the version 1.7.0 of <a href="https://pypi.org/project/python-sql/">python-sql</a>.</p>
+<p>python-sql is a library to write SQL queries in a pythonic way. It is mainly developed for <a href="https://www.tryton.org/">Tryton</a> but it has no external dependencies and is agnostic to any framework or SQL database.</p>
+<p>In addition to bug-fixes, this release contains the following improvements:</p>
+<ul>
+<li>Upgrade to pyproject</li>
+<li>Add support for array operators</li>
+<li>Remove the parentheses around the unary and binary operators</li>
+<li>Use the ordinal number as aliases for GROUP BY</li>
+<li>Check the coherence of the aliases of GROUP BY and ORDER BY expressions</li>
+<li>Do not use parameter for EXTRACT field</li>
+<li>Remove support for Python older than 3.9</li>
+</ul>
+<p>python-sql is available on PyPI: <a href="https://pypi.org/project/python-sql/1.7.0/">python-sql 1.7.0</a>.</p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-1-7-0-of-python-sql/9157">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 22, 2026 09:18 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-1-7-0-of-python-sql/9157"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/541/monty-python-in-rust-for-ai" class="hover:underline"
+              >#541: Monty - Python in Rust for AI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            When LLMs write code to accomplish a task, that code has to actually run somewhere. And right now, the options aren't great. Spin up a sandboxed container and you're paying a full second of cold start overhead plus the complexity of another service. Let the LLM loose on your actual machine and... well, you'd better be watching. On this episode, I sit down with Samuel Colvin, creator of Pydantic, now at 10 billion downloads, to explore Monty, a Python interpreter written from scratch in Rust, purpose-built to run LLM-generated code. It starts in microseconds, is completely sandboxed by design, and can even serialize its entire state to a database and resume later. We dig into why this deliberately limited interpreter might be exactly what the AI agent era needs.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 19, 2026 07:38 PM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/541/monty-python-in-rust-for-ai"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/learning-paths/llm-application-development-python/" class="hover:underline"
+              >Learning Path: LLM Application Development With Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Build LLM-powered applications in Python. Call model APIs, craft prompts, add retrieval-augmented generation, create AI agents, and connect via MCP.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 19, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/learning-paths/llm-application-development-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://discuss.tryton.org/t/release-0-1-0-of-hatch-tryton/9154" class="hover:underline"
+              >Release 0.1.0 of hatch-tryton</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are proud to announce the first release of the version 0.1.0 of <a href="https://pypi.org/project/hatch-tryton/">hatch-tryton</a>.</p>
+<p><code>hatch-tryton</code> is a <a href="https://pypi.org/project/hatchling/">hatchling</a> plugin that manages <a href="https://www.tryton.org/">Tryton</a> dependencies.</p>
+<p>We will rely on this tool to upgrade Tryton’s packages to <code>pyproject.toml</code> for future releases.</p>
+<p>hatch-tryton is available on PyPI as <a href="https://pypi.org/project/hatch-tryton/0.1.0/">hatch-tryton 0.1.0</a></p>
+            <p><small>2 posts - 2 participants</small></p>
+            <p><a href="https://discuss.tryton.org/t/release-0-1-0-of-hatch-tryton/9154">Read full topic</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 19, 2026 10:18 AM UTC by
+            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
+              >Tryton News</a
+            >
+          </div>
+          <a
+            href="https://discuss.tryton.org/t/release-0-1-0-of-hatch-tryton/9154"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nicolaiarocci.com/eve-2.3.0/" class="hover:underline"
+              >Eve 2.3.0</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://pypi.org/project/Eve/2.3.0/">Eve v2.3</a> was just released on PyPI. It adds <code>optimize_pagination_for_speed</code>, a resource-level setting that allows granular control, overriding the equivalent global option that goes by the same name. Many thanks to Emanuele Di Giacomo for <a href="https://github.com/pyeve/eve/pull/1569">contributing</a> to the project.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on March 19, 2026 09:38 AM UTC by
+            <a href="http://nicolaiarocci.com/tags/python/index.xml" class="link link-hover text-primary"
+              >Nicola Iarocci</a
+            >
+          </div>
+          <a
+            href="https://nicolaiarocci.com/eve-2.3.0/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1932,8 +1487,8 @@ would love to hear about them.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8331</a></li>
-    <li><a>Unique Feeds: 384</a></li>
+    <li><a>Total Entries: 8054</a></li>
+    <li><a>Unique Feeds: 374</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
