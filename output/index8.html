@@ -53,6 +53,245 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/" class="hover:underline"
+              >Absurd In Production</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>About five months ago I wrote about <a href="/2025/11/3/absurd-workflows/">Absurd</a>, a
+durable execution system we built for our own use at Earendil, sitting entirely
+on top of Postgres and Postgres alone.  The pitch was simple: you don&#8217;t need a
+<a href="https://hatchet.run/">separate</a> <a href="https://www.inngest.com/">service</a>, <a href="https://useworkflow.dev/">a
+compiler plugin</a>, or <a href="https://temporal.io/">an entire
+runtime</a> to get durable workflows.  You need a SQL file
+and a thin SDK.</p>
+<p>Since then we&#8217;ve been running it in production, and I figured it&#8217;s worth
+sharing what the experience has been like.  The short version: the design
+held up, the system has been a pleasure to work with, and other people seem
+to agree.</p>
+<h2>A Quick Refresher</h2>
+<p>Absurd is a durable execution system that lives entirely inside Postgres.
+The core is a single SQL file
+(<a href="https://github.com/earendil-works/absurd/blob/main/sql/absurd.sql">absurd.sql</a>)
+that defines stored procedures for task management, checkpoint storage, event
+handling, and claim-based scheduling.  On top of that sit thin SDKs (currently
+<a href="https://www.npmjs.com/package/absurd-sdk">TypeScript</a>,
+<a href="https://pypi.org/project/absurd-sdk/">Python</a> and an experimental
+<a href="https://github.com/earendil-works/absurd/tree/main/sdks/go/absurd">Go</a> one)
+that make the system ergonomic in your language of choice.</p>
+<p>The model is straightforward: you register tasks, decompose them into steps,
+and each step acts as a checkpoint.  If anything fails, the task retries from
+the last completed step.  Tasks can sleep, wait for external events, and
+suspend for days or weeks.  All state lives in Postgres.</p>
+<p>If you want the full introduction, the <a href="/2025/11/3/absurd-workflows/">original blog
+post</a> covers the fundamentals.  What follows here
+is what we&#8217;ve learned since.</p>
+<h2>What Changed</h2>
+<p>The project got multiple releases over the last five months.  Most of the
+changes are things you&#8217;d expect from a system that people actually started
+depending on: hardened claim handling, watchdogs that terminate broken workers,
+deadlock prevention, proper lease management, event race conditions, and all the
+edge cases that only show up when you&#8217;re running real workloads.</p>
+<p>A few things worth calling out specifically.</p>
+<p><strong>Decomposed steps.</strong>  The original design only had <code>ctx.step()</code>, where you pass
+in a function and get back its checkpointed result.  That works well for many
+cases but not all.  Sometimes you need to know whether a step already ran before
+deciding what to do next.  So we added <code>beginStep()</code> / <code>completeStep()</code>, which
+give you a handle you can inspect before committing the result.  This turned out
+to be very useful for modeling intentional failures and conditional logic.
+This in particular is necessary when working with &#8220;before call&#8221; and &#8220;after call&#8221;
+type hook APIs.</p>
+<p><strong>Task results.</strong>  You can now spawn a task, go do other things, and later
+come back to fetch or await its result.  This sounds obvious in hindsight, but
+the original system was purely fire-and-forget.  Having proper result inspection
+made it possible to use Absurd for things like spawning child tasks from within
+a parent workflow and waiting for them to finish.  This is particularly useful
+for debugging with agents too.</p>
+<p><strong><a href="https://earendil-works.github.io/absurd/tools/absurdctl/">absurdctl</a>.</strong>  We built this out as a proper CLI tool.  You can initialize
+schemas, run migrations, create queues, spawn tasks, emit events, retry failures
+from the command line.  It&#8217;s installable via <code>uvx</code> or as a standalone binary.
+This has been invaluable for debugging production issues.  When something is
+stuck, being able to just <code>absurdctl dump-task --task-id=&lt;id&gt;</code> and see exactly
+where it stopped is a very different experience from digging through logs.</p>
+<p><strong><a href="https://earendil-works.github.io/absurd/tools/habitat/">Habitat</a>.</strong>  A small Go application that serves up a web dashboard for
+monitoring tasks, runs, checkpoints, and events.  It connects directly to
+Postgres and gives you a live view of what&#8217;s happening.  It&#8217;s simple, but it&#8217;s
+the kind of thing that makes the system more enjoyable for humans.</p>
+<p><strong>Agent integration.</strong>  Since Absurd was originally built for agent workloads,
+we added a bundled skill that coding agents can discover and use to debug
+workflow state via <code>absurdctl</code>.  There&#8217;s also a documented pattern for making
+<a href="https://pi.dev/">pi</a> agent turns durable by logging each message as a
+checkpoint.</p>
+<h2>What Held Up</h2>
+<p>The thing I&#8217;m most pleased about is that the core design didn&#8217;t need to change
+all that much.  The fundamental model of tasks, steps, checkpoints, events, and
+suspending is still exactly what it was initially.  We added features around it,
+but nothing forced us to rethink the basic abstractions.</p>
+<p>Putting the complexity in SQL and keeping the SDKs thin turned out to be a
+genuinely good call.  The TypeScript SDK is about 1,400 lines.  The Python SDK
+is about 1,900 but most of this comes from the complexity of supporting colored
+functions.  Compare that to Temporal&#8217;s Python SDK at around 170,000 lines.  It
+means the SDKs are easy to understand, easy to debug, and easy to port.  When
+something goes wrong, you can read the entire SDK in an afternoon and understand
+what it does.</p>
+<p>The checkpoint-based replay model also aged well.  Unlike systems that require
+deterministic replay of your entire workflow function, Absurd just loads the
+cached step results and skips over completed work.  That means your code doesn&#8217;t
+need to be deterministic outside of steps.  You can call <code>Math.random()</code> or
+<code>datetime.now()</code> in between steps and things still work, because only the step
+boundaries matter.  In practice, this makes it much easier to reason about
+what&#8217;s safe and what isn&#8217;t.</p>
+<p>Pull-based scheduling was the right choice too.  Workers pull tasks from
+Postgres as they have capacity.  There&#8217;s no coordinator, no push mechanism, no
+HTTP callbacks.  That makes it trivially self-hostable and means you don&#8217;t have
+to think about load management at the infrastructure level.</p>
+<h2>What Might Not Be Optimal</h2>
+<p>I had some discussions with folks about whether the right abstraction should have been
+a <a href="https://www.distributed-async-await.io/specification/programming-model/durable-promise-specification">durable
+promise</a>.
+It&#8217;s a very appealing idea, but it turns out to be much more complex to
+implement in practice.  It&#8217;s however in theory also more powerful.  I did make
+some attempts to see what absurd would look like if it was based on durable
+promises but so far did not get anywhere with it.  It&#8217;s however an experiment
+that I think would be fun to try!</p>
+<h2>What We Use It For</h2>
+<p>The primary use case is still agent workflows.  An agent is essentially a loop
+that calls an LLM, processes tool results, and repeats until it decides it&#8217;s
+done.  Each iteration becomes a step, and each step&#8217;s result is checkpointed.
+If the process dies on iteration 7, it restarts and replays iterations 1 through
+6 from the store, then continues from 7.</p>
+<p>But we&#8217;ve found it useful for a lot of other things too.  All our crons just
+dispatch distributed workflows with a pre-generated deduplication key from the
+invocation.  We can have two cron processes running and they will only trigger
+one absurd task invocation.  We also use it for background processing that needs
+to survive deploys.  Basically anything where you&#8217;d otherwise build your own
+retry-and-resume logic on top of a queue.</p>
+<h2>What&#8217;s Still Missing</h2>
+<p>Absurd is deliberately minimal, but there are things I&#8217;d like to see.</p>
+<p>There&#8217;s no built-in scheduler.  If you want cron-like behavior, you run your own
+scheduler loop and use idempotency keys to deduplicate.  That works, and we have
+a <a href="https://earendil-works.github.io/absurd/patterns/cron/">documented pattern for
+it</a>, but it would be
+nice to have something more integrated.</p>
+<p>There&#8217;s no push model.  Everything is pull.  If you need an HTTP endpoint to
+receive webhooks and wake up tasks, you build that yourself.  I think that&#8217;s the
+right default as push systems are harder to operate and easier to overwhelm but
+there are cases where it would be convenient.  In particular there are quite a
+few agentic systems where it would be super nice to have webhooks natively
+integrated (wake on incoming POST request).  I definitely don&#8217;t want to have
+this in the core, but that sounds like the kind of problem that could be a nice
+adjacent library that builds on top of absurd.</p>
+<p>The biggest omission is that it does not support partitioning yet.  That&#8217;s
+unfortunate because it makes cleaning up data more expensive than it has to be.
+In theory supporting partitions would be pretty simple.  You could have weekly
+partitions and then detach and delete them when they expire.  The only thing
+that really stands in the way of that is that Postgres does not have a
+convenient way of actually doing that.</p>
+<p>The hard part is not partitioning itself, it&#8217;s partition lifecycle management under
+real workloads.  If a worker inserts a row whose <code>expires_at</code> lands in a month
+without a partition, the insert fails and the workflow crashes.  So you need a
+separate maintenance loop that always creates future partitions far enough ahead
+for sleeps/retries, and does that for every queue.</p>
+<p>On the delete side, the safe approach is <code>DETACH PARTITION CONCURRENTLY</code>, but
+getting that to run from <code>pg_cron</code> doesn&#8217;t work because it cannot be run within a
+transaction, but <code>pg_cron</code> runs everything in one.</p>
+<p>I don&#8217;t think it&#8217;s an unsolvable problem, but it&#8217;s one I have not found a good
+solution for and I would love <a href="https://github.com/earendil-works/absurd/issues/4">to get input
+on</a>.</p>
+<h2>Does Open Source Still Matter?</h2>
+<p>This brings me a bit to a meta point on the whole thing which is what the point
+of Open Source libraries in the age of agentic engineering is.  Durable
+Execution is now something that plenty of startups sell you.  On the other hand
+it&#8217;s also something that an agent would build you and people might not even look
+for solutions any more.  It&#8217;s kind of … weird?</p>
+<p>I don&#8217;t think a durable execution library can support a company, I really
+don&#8217;t.  On the other hand I think it&#8217;s just complex enough of a problem that it
+could be a good Open Source project void of commercial interests.  You do need a
+bit of an ecosystem around it, particularly for UI and good DX for debugging,
+and that&#8217;s hard to get from a throwaway implementation.</p>
+<p>I don&#8217;t think we have squared this yet, but it&#8217;s already much better to use than
+a few months ago.</p>
+<p>If you&#8217;re using Absurd, thinking about it, or building adjacent ideas, I&#8217;d love
+your feedback. Bug reports, rough edges, design critiques, and contributions are
+all very welcome—this project has gotten better every time someone poked at it
+from a different angle.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 04, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/4/4/absurd-in-production/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2026/04/haciendo-historia-celebrating-pycon-uss.html" class="hover:underline"
+              >¡Haciendo Historia! Celebrating PyCon US’s First-Ever Spanish-Language Keynote</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <span id="docs-internal-guid-643cab50-7fff-28c2-aea7-60dadeb1ad68"><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b id="docs-internal-guid-77cb2ca8-7fff-88d2-a193-ee0637fc814c" style="font-weight: normal;"><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial; font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon US has always been about more than just a programming language; it’s about the incredible, global community that builds, supports, and innovates with it. This year at PyCon US 2026 in Long Beach, we are thrilled to celebrate a remarkable milestone for our community: </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">our very first Spanish-language keynote address</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, delivered by the brilliant Pablo Galindo Salgado!</span></span></p></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial;">Meet Your Keynote Speaker: Pablo Galindo Salgado</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b><span style="font-family: arial; font-size: small;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">If you’ve used Python recently, you’ve benefited from </span><a href="https://pablogsal.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Pablo’s work</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Pablo works on the Python team at </span><a href="https://www.hudsonrivertrading.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Hudson River Trading</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> and is a </span><a href="https://devguide.python.org/core-team/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">CPython core developer</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. He is currently serving his 6th term on the </span><a href="https://github.com/python/steering-council" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Steering Council</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> and served as the release manager for Python 3.10 and 3.11.</span></p><p dir="ltr" style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">But his background isn't just in software engineering—Pablo is a Theoretical Physicist specializing in general relativity and black hole physics! (He also has a cat, though he assures us that his cat does not write any code).</span></p><p dir="ltr" style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">With his deep technical expertise and unique scientific perspective, Pablo is uniquely positioned to deliver an unforgettable keynote. But what makes this moment even more special is the language in which it will be delivered.</span></p></span></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Why a Spanish Keynote Matters to PyCon US</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b><span style="font-family: arial; font-size: small;"><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Currently, about </span><a href="https://data.census.gov/table/ACSST1Y2024.S1601?q=language" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">14% of the US population</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> speaks Spanish. PyCon US has proudly hosted the </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon Charlas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, a dedicated track of talks presented entirely in Spanish, since 2018. The Charlas have been a phenomenal success, highlighting the deep well of talent within the Spanish-speaking Pythonista community across Latin America, Europe, the United States, Africa (looking at you, Equatorial Guinea), and beyond.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The Charlas has evolved from a small day with a handful of talks to an official track with 2 full days of talks! But we believe we could do more.</span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Elevating a Spanish-language presentation to the </span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Keynote Stage</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> is a significant step for PyCon US for several reasons:</span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Reflecting our Global Community:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> Python is a truly global language, and its developer base is wonderfully diverse. By placing a Spanish-language talk on the main stage, PyCon US is reflecting the reality of our worldwide community. We want to remind folks that top-tier technical leadership and innovation happen in every language.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Amplifying the Charlas Track:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> Moving from the Charlas track to the Keynote stage bridges the gap between our English and Spanish programming. It exposes the broader PyCon US audience to the vibrancy of our Spanish-speaking community, and we hope it encourages more cross-cultural collaboration and networking.<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Encourage the Spanish-speaking community</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">: A few initiatives have been developed around the Python ecosystem supporting the Spanish-speaking community, like the </span><a href="https://docs.python.org/es/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">official translation of the Python documentation</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. This initiative has been adding more and more people, so if you are interested, make sure to check out the </span><a href="https://python-docs-es.readthedocs.io/es/3.14/CONTRIBUTING.html" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">contribution guide</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! We also encourage you to check out the </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python en Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> community hub, which has gathered many Spanish-speaking communities around the world. You can also come visit the Python en </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> booth in the PyCon US Expo Hall!<br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span></p><p style="font-weight: normal; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Motivating other language-focused communities:</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> If the Spanish-speaking community managed to get here, we have no doubt that in the future we could have even more languages in our beloved conference. Let us know which language you’d like to see follow these steps!</span></p></span></b></h3><h3 style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial;">Join Us for This Historic Moment</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial; font-size: small;"><span style="font-weight: normal;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;">Whether you are a native Spanish speaker, you've been practicing your </span><span style="font-style: italic; vertical-align: baseline;">español</span><span style="vertical-align: baseline;"> on some apps, or you just want to experience a fantastic technical talk through the magic of live translation and community spirit, you will not want to miss this.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;">So charge up your phone, pack a set of headphones so you can use the live translation service and get ready to give a massive, warm welcome to Pablo Galindo Salgado. </span><span style="font-style: italic; vertical-align: baseline;">¡Nos vemos en Long Beach!</span><span style="vertical-align: baseline;"> (See you in Long Beach!)</span></p><span style="vertical-align: baseline;">*** </span><span style="font-style: italic; vertical-align: baseline;">To learn more about Pablo and our other incredible keynote speakers, head over to the</span><a href="https://us.pycon.org/2026/about/keynote-speakers/"><span style="color: black; font-style: italic; vertical-align: baseline;"> </span><span style="color: #1155cc; font-style: italic; vertical-align: baseline;">PyCon US 2026 Keynote Speakers page</span></a><span style="font-style: italic; vertical-align: baseline;">.
+
+</span></span><b id="docs-internal-guid-37da6964-7fff-dd90-4d50-8b5c5d6e4f60" style="font-weight: normal;"><span><a name="more"></a></span><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt; text-align: justify;"><br /></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt; text-align: justify;"></p><h2><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Título: ¡Haciendo historia! Celebrando la primera keynote en español de PyCon US</span></h2><p></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">PyCon US siempre ha sido mucho más que un lenguaje de programación; se trata de la increíble comunidad global que lo construye, lo apoya y lo impulsa. Este año, en PyCon US 2026 en Long Beach, estamos emocionados de celebrar un hito extraordinario para nuestra comunidad: ¡nuestra primera keynote en español, presentada por el brillante Pablo Galindo Salgado!</span></p><p></p></b></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: small;">Conoce a tu keynote speaker: Pablo Galindo Salgado</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b style="font-weight: normal;"><span style="font-family: arial; font-size: small;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Si has usado Python recientemente, probablemente te has beneficiado del </span><a href="https://pablogsal.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">trabajo de Pablo</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Actualmente forma parte del equipo de Python en</span><a href="https://www.hudsonrivertrading.com/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;"> Hudson River Trading</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> y es </span><a href="https://devguide.python.org/core-team/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">desarrollador core de CPython</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Además, está cumpliendo su sexto mandato en el </span><a href="https://github.com/python/steering-council" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python Steering Council</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> y fue release manager de Python 3.10 y 3.11.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Pero su trayectoria no se limita a la ingeniería de software: ¡Pablo también es físico teórico especializado en relatividad general y física de agujeros negros! (Y sí, también tiene un gato, aunque asegura que no programa).</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Con su sólida experiencia técnica y su perspectiva científica única, Pablo está más que preparado para ofrecer una keynote inolvidable. Pero lo que hace este momento aún más especial es el idioma en el que será presentada.</span></p><p></p></span></b></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Por qué una keynote en español es importante para PyCon US</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><b style="font-weight: normal;"><span style="font-family: arial;"><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Actualmente, aproximadamente el </span><a href="https://data.census.gov/table/ACSST1Y2024.S1601?q=language" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">14% de la población de Estados Unidos habla español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Desde 2018, PyCon US ha sido anfitrión de PyCon Charlas, un track dedicado completamente a presentaciones en español. Este espacio ha sido un éxito rotundo, mostrando el enorme talento de la comunidad Python hispanohablante en América Latina, Europa, Estados Unidos, África (sí, Guinea Ecuatorial 👀) y más allá.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-size: small;">Las Charlas han evolucionado desde un pequeño conjunto de presentaciones en un solo día hasta convertirse en un track oficial de ¡dos días completos! Pero creemos que podemos ir aún más lejos.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-size: small;">Llevar una presentación en español al escenario principal es un paso importante por varias razones:</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Reflejar nuestra comunidad global</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Python es un lenguaje verdaderamente global, con una comunidad diversa y vibrante. Al incluir una keynote en español, PyCon US refleja esta realidad y reconoce que la innovación y el liderazgo técnico existen en todos los idiomas.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Amplificar el track de Charlas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Este paso conecta el track de Charlas con el escenario principal, acercando a toda la audiencia de PyCon US a la riqueza de la comunidad hispanohablante y fomentando más colaboración e intercambio cultural.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Impulsar a la comunidad hispanohablante</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Existen iniciativas dentro del ecosistema Python que apoyan a la comunidad en español, como la </span><a href="https://docs.python.org/es/" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">traducción oficial de la documentación de Python</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Este esfuerzo sigue creciendo, así que si te interesa contribuir, ¡no dudes en revisar la </span><a href="https://python-docs-es.readthedocs.io/es/3.14/CONTRIBUTING.html" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">guía de contribución</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">!</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">También te invitamos a conocer el hub de </span><a href="https://hablemospython.dev" style="text-decoration: none;"><span style="background-color: transparent; color: #1155cc; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: underline; vertical-align: baseline; white-space: pre-wrap;">Python en Español</span></a><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">, que reúne comunidades de todo el mundo, y a visitar su booth en el Expo Hall de PyCon US.</span></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-size: small;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Motivar a otras comunidades lingüísticas</span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><br /></span><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Si la comunidad hispanohablante logró este paso, estamos seguros de que en el futuro veremos más idiomas en nuestra conferencia. ¡Cuéntanos cuál te gustaría ver próximamente!</span></span></p><p style="font-size: medium;"></p></span></b></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 4pt; margin-top: 14pt; text-align: justify;"><span style="background-color: transparent; color: black; font-style: normal; font-variant: normal; font-weight: 700; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><span style="font-family: arial; font-size: medium;">Acompáñanos en este momento histórico</span></span></h3><h3 dir="ltr" style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt; text-align: justify;"><span style="font-family: arial;"><span style="font-weight: normal;"><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">Ya sea que hables español nativo, estés practicando con alguna app o simplemente quieras disfrutar de una excelente charla técnica con traducción en vivo y el espíritu de la comunidad, no querrás perderte este momento.</span></span></p><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">Carga tu teléfono, lleva tus audífonos para usar el servicio de traducción en vivo y prepárate para darle una gran bienvenida a Pablo Galindo Salgado.</span></span></p><p style="line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="vertical-align: baseline;"><span style="font-size: small;">¡Nos vemos en Long Beach!</span></span></p><p dir="ltr" style="font-size: medium; line-height: 1.38; margin-bottom: 0pt; margin-top: 0pt;"></p><p dir="ltr" style="font-size: medium; line-height: 1.38; margin-bottom: 12pt; margin-top: 12pt;"><span style="font-style: italic; vertical-align: baseline;">Para conocer más sobre Pablo y otros increíbles keynote speakers, visita la página de </span><a href="https://us.pycon.org/2026/about/keynote-speakers/"><span style="color: #1155cc; font-style: italic; vertical-align: baseline;">Keynote Speakers de PyCon US 2026.</span></a></p><br /></span><span style="font-size: medium; font-weight: normal;"><span style="font-style: italic; vertical-align: baseline;"></span></span></span></h3><h2><span style="font-weight: normal;"><span style="font-family: Arial, sans-serif; font-size: 11pt; font-style: italic; vertical-align: baseline;">
+</span></span></h2></span>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on April 03, 2026 09:20 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2026/04/haciendo-historia-celebrating-pycon-uss.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://death.andgravity.com/reader-3-22" class="hover:underline"
               >reader 3.22 released – new web app</a
             >
@@ -1692,86 +1931,6 @@ The documentation is available at <a class="inline-onebox" href="https://docs.tr
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai" class="hover:underline"
-              >#474 Astral to join OpenAI</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Starlette 1.0.0, Astral to join OpenAI, , and Fire and forget (or never) with Python’s asyncio.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 23, 2026 08:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/474/astral-to-join-openai"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/humans-of-ep-niklas/" class="hover:underline"
-              >Humans of EuroPython: Niklas Mertsch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>EuroPython runs on people power&#x2014;real people giving their time to make it happen. No flashy titles, just real work: setting up rooms, guiding speakers, helping attendees find their way, or making sure everyone feels welcome. Some help run sessions, others support accessibility needs or troubleshoot the Wi-Fi.&#xa0;</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on March 22, 2026 01:53 PM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/humans-of-ep-niklas/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index7.html" class="btn">«</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</button><a href="index9.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</a><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index9.html" class="btn">»</a></div></div>
 </div>
@@ -1783,12 +1942,12 @@ The documentation is available at <a class="inline-onebox" href="https://docs.tr
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8321</a></li>
-    <li><a>Unique Feeds: 384</a></li>
+    <li><a>Total Entries: 8302</a></li>
+    <li><a>Unique Feeds: 381</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://nuitka.net/categories/Python.xml">Talk Python to Me (549)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (482)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (201)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (549)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Python Bytes (483)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (201)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
