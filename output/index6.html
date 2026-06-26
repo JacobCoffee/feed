@@ -53,6 +53,669 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/" class="hover:underline"
+              >Monitoring Apache with SQL and Grafana</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Ever since my last job I have been wanting to make this. I think it's not the first time I do it, but
+for one reason or another, I did it (again?) in two evenings only.</p>
+<p>In that job we had an internet facing API with Apache as the router in front of several services. All
+our metrics and even our billing was based on the Apache logs. We had a system that ingested the logs
+into a PostgreSQL database, and we tried to create Grafana panels and alerts based on that info. At
+the same time, I wanted to reproduce <a href="https://www.awstats.org/"><code>awstats</code></a> in Grafana, and found it was 
+almost impossible.</p>
+<p>Another problem is that the usual tools to solve this, Loki or Prometheus, have big problems to handle this
+type of too arbitrary data (think of the <code>referer</code> or <code>user_agent</code> columns) or whose space is too big
+(<code>client</code> is an IPv4, with 4Bi different values). They effectively suffer (in principle) of what they 
+call "cardinality bomb": since they build one time series database (TSDB) per combination of fields 
+(they call them "labels"), storage use is big and aggregation operations inter TSDBs are expensive.</p>
+<p>Last night I sat down to reimplement the ingestion side. Instead of PostgreSQL I used SQLite mostly
+because almost all of my services (with low traffic and mostly only me as user) already use it. To be fair,
+and one really can't expect anything else, the script is quite straight forward. It uses regexps to 
+parse the logs, which for the moment is good enough. I'm "releasing" it as is, because I'm tired, but you'll
+find some surprises around parsing the request line (see <code>request_re</code> and its handling); some janky ways
+to convert from <code>str</code> to <code>int</code> or <code>datetime</code>; and an iteration trick to use <code>dataclass</code>es as <code>execute()</code>
+argument. I omited some comments and all the testing:</p>
+<div class="code"><pre class="code literal-block"><span class="ch">#! /usr/bin/env python3</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span><span class="p">,</span> <span class="n">timezone</span><span class="p">,</span> <span class="n">tzinfo</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pathlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="c1"># I miss dinant</span>
+
+<span class="c1"># no 0-255 range check since this is written by apache</span>
+<span class="c1"># if the number is not in that range, we have bigger problems</span>
+<span class="n">octet_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\d{1,3}'</span>
+<span class="n">ip_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\.'</span><span class="o">.</span><span class="n">join</span><span class="p">([</span> <span class="n">octet_re</span> <span class="p">]</span> <span class="o">*</span> <span class="mi">4</span><span class="p">)</span>
+
+<span class="n">word_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'[^ ]+'</span>
+<span class="n">identd_user_re</span> <span class="o">=</span> <span class="n">word_re</span>  <span class="c1"># it can be '-'</span>
+<span class="n">user_id_re</span> <span class="o">=</span> <span class="n">word_re</span>      <span class="c1"># it can be '-'</span>
+
+<span class="n">month_names</span> <span class="o">=</span> <span class="p">[</span> <span class="s1">'Jan'</span><span class="p">,</span> <span class="s1">'Feb'</span><span class="p">,</span> <span class="s1">'Mar'</span><span class="p">,</span> <span class="s1">'Apr'</span><span class="p">,</span> <span class="s1">'May'</span><span class="p">,</span> <span class="s1">'Jun'</span><span class="p">,</span> <span class="s1">'Jul'</span><span class="p">,</span> <span class="s1">'Aug'</span><span class="p">,</span> <span class="s1">'Sep'</span><span class="p">,</span> <span class="s1">'Oct'</span><span class="p">,</span> <span class="s1">'Nov'</span><span class="p">,</span> <span class="s1">'Dec'</span> <span class="p">]</span>
+
+<span class="n">day_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\d{1,2}'</span>
+<span class="n">month_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"(?:</span><span class="si">{</span><span class="s1">'|'</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">month_names</span><span class="p">)</span><span class="si">}</span><span class="s2">)"</span>
+<span class="n">year_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\d</span><span class="si">{4}</span><span class="s1">'</span>
+<span class="n">date_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="n">day_re</span><span class="si">}</span><span class="s2">)/(</span><span class="si">{</span><span class="n">month_re</span><span class="si">}</span><span class="s2">)/(</span><span class="si">{</span><span class="n">year_re</span><span class="si">}</span><span class="s2">)"</span>
+
+<span class="n">time_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'(\d</span><span class="si">{2}</span><span class="s1">):(\d</span><span class="si">{2}</span><span class="s1">):(\d</span><span class="si">{2}</span><span class="s1">)'</span>
+
+<span class="n">utc_offset_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'(?:\+|\-)\d</span><span class="si">{4}</span><span class="s1">'</span>  <span class="c1"># no capture</span>
+
+<span class="c1"># fscking double escaping :(</span>
+<span class="n">date_time_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"</span><span class="se">\\</span><span class="s2">[</span><span class="si">{</span><span class="n">date_re</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">time_re</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">utc_offset_re</span><span class="si">}</span><span class="s2">)</span><span class="se">\\</span><span class="s2">]"</span>
+
+<span class="n">method_re</span> <span class="o">=</span> <span class="n">word_re</span>
+<span class="n">url_re</span> <span class="o">=</span> <span class="n">word_re</span>  <span class="c1"># technically not a word, but word_re is too generic</span>
+
+<span class="n">proto_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'HTTP'</span>      <span class="c1"># who are we kidding</span>
+<span class="n">version_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\d\.\d'</span>  <span class="c1"># who are we kidding</span>
+<span class="n">proto_and_version_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="n">proto_re</span><span class="si">}</span><span class="s2">)/(</span><span class="si">{</span><span class="n">version_re</span><span class="si">}</span><span class="s2">)"</span>
+
+<span class="c1"># idiot skrip kidz send no method or proto/version!</span>
+<span class="c1"># and re is silly? enough to produce empty matches for the ()s here</span>
+<span class="c1"># oh, but re.compile().match().groups() returns things like</span>
+<span class="c1"># (None, None, None, None, '', '\\x16\\x03\\x02\\x01o\\x01', '', '')</span>
+<span class="c1"># so we gained nothing</span>
+<span class="n">request_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">'"(?:(</span><span class="si">{</span><span class="n">method_re</span><span class="si">}</span><span class="s1">) (</span><span class="si">{</span><span class="n">url_re</span><span class="si">}</span><span class="s1">) </span><span class="si">{</span><span class="n">proto_and_version_re</span><span class="si">}</span><span class="s1">|()(</span><span class="si">{</span><span class="n">url_re</span><span class="si">}</span><span class="s1">)()())"'</span>
+
+<span class="n">number_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'\d+'</span>
+
+<span class="n">http_status_re</span> <span class="o">=</span> <span class="n">number_re</span>
+<span class="n">bytes_rx_re</span> <span class="o">=</span> <span class="n">number_re</span>
+<span class="n">bytes_tx_re</span> <span class="o">=</span> <span class="n">number_re</span>
+<span class="n">ttfb_re</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"(?:</span><span class="si">{</span><span class="n">number_re</span><span class="si">}</span><span class="s2">|-)"</span>
+<span class="n">response_time_re</span> <span class="o">=</span> <span class="n">number_re</span>
+
+<span class="n">double_quoted_text_re</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">'"([^"]+)"'</span>
+<span class="n">referer_re</span> <span class="o">=</span> <span class="n">double_quoted_text_re</span>
+<span class="n">user_agent_re</span> <span class="o">=</span> <span class="n">double_quoted_text_re</span>
+
+<span class="n">log_line_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">f</span><span class="s2">"^(</span><span class="si">{</span><span class="n">ip_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">identd_user_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">user_id_re</span><span class="si">}</span><span class="s2">) </span><span class="si">{</span><span class="n">date_time_re</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">request_re</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">http_status_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">bytes_rx_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">bytes_tx_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">ttfb_re</span><span class="si">}</span><span class="s2">) (</span><span class="si">{</span><span class="n">response_time_re</span><span class="si">}</span><span class="s2">) </span><span class="si">{</span><span class="n">referer_re</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">user_agent_re</span><span class="si">}</span><span class="s2">$"</span><span class="p">)</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">LogRecord</span><span class="p">:</span>
+    <span class="n">client_ip</span><span class="p">:</span> <span class="nb">str</span>         <span class="c1"># 0</span>
+    <span class="n">indent_user</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">date_time</span><span class="p">:</span> <span class="n">datetime</span>
+    <span class="n">method</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span>               <span class="c1"># 5</span>
+    <span class="n">protocol</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">protocol_version</span><span class="p">:</span> <span class="nb">str</span>  <span class="c1"># could be float, but we don't really care; besides, x.y.z?</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">bytes_rx</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">bytes_tx</span><span class="p">:</span> <span class="nb">int</span>          <span class="c1"># 10</span>
+    <span class="n">ttfb</span><span class="p">:</span> <span class="nb">int</span>  <span class="c1"># maybe -!</span>
+    <span class="n">response_time</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">referer</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">user_agent</span><span class="p">:</span> <span class="nb">str</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_log_line</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">line</span><span class="p">):</span>
+        <span class="n">match</span> <span class="o">=</span> <span class="n">log_line_re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">match</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Malformed line: </span><span class="si">{</span><span class="n">line</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+        <span class="n">data</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">groups</span><span class="p">())</span>
+        <span class="n">new_data</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="n">group_index</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">field_index</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">field</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">cls</span><span class="o">.</span><span class="n">__dataclass_fields__</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+            <span class="k">if</span> <span class="n">field</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">datetime</span><span class="p">:</span>
+                <span class="c1"># [11/May/2026:20:15:28 +0200]</span>
+
+                <span class="c1"># convert month str to number</span>
+                <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">month_names</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">1</span><span class="p">])</span> <span class="o">+</span> <span class="mi">1</span>
+
+                <span class="c1"># convert to ints</span>
+                <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">:</span><span class="n">group_index</span><span class="o">+</span><span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span> <span class="nb">int</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">:</span><span class="n">group_index</span><span class="o">+</span><span class="mi">6</span><span class="p">]</span> <span class="p">]</span>
+
+                <span class="n">new_data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">datetime</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">2</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">1</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">],</span>
+                                          <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">3</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">4</span><span class="p">],</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">5</span><span class="p">],</span> <span class="mi">0</span><span class="p">,</span>
+                                          <span class="n">utc_offset2tzinfo</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">6</span><span class="p">]))</span> <span class="p">)</span>
+
+                <span class="n">group_index</span> <span class="o">+=</span> <span class="mi">7</span>
+
+                <span class="k">continue</span>
+
+            <span class="c1"># handle ttfb as -</span>
+            <span class="k">if</span> <span class="n">field_index</span> <span class="o">==</span> <span class="mi">11</span> <span class="ow">and</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">]</span> <span class="o">==</span> <span class="s1">'-'</span><span class="p">:</span>
+                <span class="c1"># </span>
+                <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">]</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">:</span><span class="n">group_index</span><span class="o">+</span><span class="mi">4</span><span class="p">]</span> <span class="o">==</span> <span class="p">[</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span> <span class="p">]:</span>
+                <span class="k">if</span> <span class="n">group_index</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">14</span><span class="p">):</span>
+                    <span class="c1"># handle (None, None, None, None, '', '\\x16\\x03\\x02\\x01o\\x01', '', '')</span>
+                    <span class="c1"># handle ('GET', '/', 'HTTP', '1.0', None, None, None, None)</span>
+
+                    <span class="c1"># no need to add anything, it's handled by the fallback</span>
+                    <span class="c1"># but we still need to skip this cruft</span>
+                    <span class="n">group_index</span> <span class="o">+=</span> <span class="mi">4</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Got confused: </span><span class="si">{</span><span class="p">(</span><span class="n">field_index</span><span class="p">,</span><span class="w"> </span><span class="n">field</span><span class="o">.</span><span class="n">type</span><span class="p">,</span><span class="w"> </span><span class="n">group_index</span><span class="p">,</span><span class="w"> </span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">],</span><span class="w"> </span><span class="n">new_data</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+            <span class="c1"># convert ints</span>
+            <span class="k">if</span> <span class="n">field</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="nb">int</span><span class="p">:</span>
+                <span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">])</span>
+
+            <span class="c1"># fallback</span>
+            <span class="n">new_data</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">group_index</span><span class="p">])</span>
+            <span class="n">group_index</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="o">*</span><span class="n">new_data</span><span class="p">)</span>
+
+
+    <span class="c1"># implement the iterator protocol so we can mostly be passed as argument to execute()</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">value</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="c1"># the whole protocol could be replaced with .__dataclass_fields__.values() :shrug:</span>
+            <span class="c1"># but this way I can do further conversions</span>
+            <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">==</span> <span class="n">datetime</span><span class="p">:</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">timestamp</span><span class="p">())</span>
+
+            <span class="k">yield</span> <span class="n">value</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">utc_offset2tzinfo</span><span class="p">(</span><span class="n">offset</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">tzinfo</span><span class="p">:</span>
+    <span class="c1"># +0200</span>
+    <span class="n">hours</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">offset</span><span class="p">[:</span><span class="mi">3</span><span class="p">])</span>    <span class="c1"># +02</span>
+    <span class="n">minutes</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">offset</span><span class="p">[</span><span class="mi">3</span><span class="p">:])</span>  <span class="c1"># 00</span>
+
+    <span class="k">return</span> <span class="n">timezone</span><span class="p">(</span><span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="n">hours</span><span class="p">,</span> <span class="n">minutes</span><span class="o">=</span><span class="n">minutes</span><span class="p">),</span> <span class="n">offset</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">():</span>
+    <span class="c1"># if we test after sqlite3.connect(), the file is already created</span>
+    <span class="n">create</span> <span class="o">=</span> <span class="ow">not</span> <span class="n">pathlib</span><span class="o">.</span><span class="n">Path</span><span class="p">(</span><span class="s1">'./apache_logs.db'</span><span class="p">)</span><span class="o">.</span><span class="n">exists</span><span class="p">()</span>
+
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">'./apache_logs.db'</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">create</span><span class="p">:</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">CREATE TABLE "logs" (</span>
+<span class="s1">    "client"    TEXT,</span>
+<span class="s1">    "indent_user"   TEXT,</span>
+<span class="s1">    "user_id"   TEXT,</span>
+<span class="s1">    "timestamp" INTEGER,</span>
+<span class="s1">    "method"    TEXT,</span>
+<span class="s1">    "url"   TEXT,</span>
+<span class="s1">    "protocol"  TEXT,</span>
+<span class="s1">    "protocol_version"  TEXT,</span>
+<span class="s1">    "status"    INTEGER,</span>
+<span class="s1">    "bytes_rx"  INTEGER,</span>
+<span class="s1">    "bytes_tx"  INTEGER,</span>
+<span class="s1">    "ttfb"  INTEGER,</span>
+<span class="s1">    "response_time" INTEGER,</span>
+<span class="s1">    "referer"   TEXT,</span>
+<span class="s1">    "user_agent"    TEXT</span>
+<span class="s1">);'''</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">conn</span>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">connect</span><span class="p">()</span>
+    <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">sys</span><span class="o">.</span><span class="n">stdin</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">log_record</span> <span class="o">=</span> <span class="n">LogRecord</span><span class="o">.</span><span class="n">from_log_line</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="k">continue</span>
+
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'''</span><span class="p">,</span>
+                       <span class="nb">tuple</span><span class="p">(</span><span class="n">log_record</span><span class="p">))</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">'__main__'</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+
+<p>One of the things I didn't do was to further play with the URLs. One could make list of different apps
+based on whether there is any routing to different services, like in the cases of my previous job and
+my own server; or even different subdivisions on a single app, like for NextCloud:</p>
+<div class="code"><pre class="code literal-block"><span class="n">ocs</span><span class="o">/</span><span class="n">v2</span><span class="p">.</span><span class="n">php</span><span class="o">/</span><span class="n">apps</span><span class="o">/</span><span class="n">serverinfo</span>
+<span class="n">remote</span><span class="p">.</span><span class="n">php</span><span class="o">/</span><span class="n">dav</span><span class="o">/</span><span class="n">files</span><span class="o">/</span><span class="n">USER</span>
+<span class="n">remote</span><span class="p">.</span><span class="n">php</span><span class="o">/</span><span class="n">dav</span><span class="o">/</span><span class="n">calendars</span><span class="o">/</span><span class="n">USER</span><span class="o">/</span><span class="n">CALENDAR</span><span class="o">/</span>
+</pre></div>
+
+<p>etc. I haven't really thought about it; it could be implemented either as more columns or extra tables.</p>
+<p>Today I managed to finish the rest.</p>
+<p>The next step is to install this so it runs constantly with the output of <code>tail --follow=name --retry</code>
+piped into its <code>stdin</code><sup id="fnref:1"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/#fn:1">1</a></sup>. Left as an exercise for the reader; use SystemD units :)</p>
+<p>Next is installing <a href="https://github.com/fr-ser/grafana-sqlite-datasource">Grafana's plugin to read SQLite</a>
+and declare the new Grafana datasource.</p>
+<p>The hard part was to query the data in a way that was useful for Grafana. I managed to get a query like:</p>
+<div class="code"><pre class="code literal-block"><span class="c1">-- round to the minute</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="k">timestamp</span><span class="o">/</span><span class="mi">60</span><span class="o">*</span><span class="mi">60</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="k">time</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="n">status</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="ss">"count"</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">logs</span>
+<span class="c1">-- $__from and $__to are defined by Grafana based on the dashboards's time range</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="k">timestamp</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="err">$</span><span class="n">__from</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1000</span><span class="w"> </span><span class="k">and</span><span class="w"> </span><span class="k">timestamp</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="err">$</span><span class="n">__to</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1000</span>
+<span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="k">timestamp</span><span class="o">/</span><span class="mi">60</span><span class="p">,</span><span class="w"> </span><span class="n">status</span>
+</pre></div>
+
+<p>to get the count of different status codes per minute<sup id="fnref:2"><a class="footnote-ref" href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/#fn:2">2</a></sup>. But this returns a table that looks like:</p>
+<div class="code"><pre class="code literal-block">      time | status | count
+1778533620 |    200 |    30
+1778533620 |    207 |     3
+1778533620 |    403 |     1
+</pre></div>
+
+<p>while Grafana is expecting one line per sample (but remember we're aggregating data) and one column 
+per data series:</p>
+<div class="code"><pre class="code literal-block">      time | 200 | 207 | 403
+1778533620 |  30 |   3 |   1
+</pre></div>
+
+<p>I read how to pivot this in SQL, but it mostly works only if you know the different values for the
+<code>status</code> column beforehand. This might be feasible with 
+<a href="https://en.wikipedia.org/w/index.php?title=List_of_HTTP_status_codes">HTTP status codes</a> (I count
+63 standard ones, including the joke <code>418 I'm a teapot</code>), but that would be impossible for the <code>referer</code>
+or <code>user_agent</code> columns.</p>
+<p>Thanks to <code>iRobbery#postgresql@libera.chat</code> I found about 
+<a href="https://community.grafana.com/t/merging-rows-with-same-timestamp-for-time-series/103254/3">Grafana's Partition by values data transformation</a>.
+Aplying it to the column that defines the time series (<code>status</code>, etc), it gives us exactly what we want!</p>
+<p><img alt="" src="https://www.grulic.org.ar/~mdione/glob/images/Screenshot_20260512_210706.png" /></p>
+<p>And one can even include a pure table with all the logs to inspect when one finds weird spikes or values.
+I made almost impossible queries like transferred bytes per URL, methods per client and more! One
+missing piece, i possible, would be to implement histograms, 
+<a href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-prometheus-and-grafana/">like last time we looked into this</a>.</p>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:1">
+<p>One could cite the UNIX philosophy, but seriously, who wants to reimplement all the corner cases
+  of that <code>tail</code> invocation? See for instance 
+  <a href="https://www.phoronix.com/news/Ubuntu-Rust-Coreutils-Audit">the 113 bugs found in the coreutils Rust reimplementaiton</a> <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/#fnref:1" title="Jump back to footnote 1 in the text">↩</a></p>
+</li>
+<li id="fn:2">
+<p>One could use a dashboard variable to control this arbitrarily. One could get granularity 
+  per second! <a class="footnote-backref" href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/#fnref:2" title="Jump back to footnote 2 in the text">↩</a></p>
+</li>
+</ol>
+</div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 12, 2026 06:07 PM UTC by
+            <a href="http://www.grulic.org.ar/~mdione/glob/categories/python.xml" class="link link-hover text-primary"
+              >Marcos Dione</a
+            >
+          </div>
+          <a
+            href="https://www.grulic.org.ar/~mdione/glob/posts/monitoring-apache-with-sql-and-grafana/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/05/announcing-psf-community-service-award.html" class="hover:underline"
+              >Announcing PSF Community Service Award Recipients!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The PSF Community Service Awards (CSAs) are a formal way for the PSF Board of Directors to offer recognition of work which, in its opinion, significantly improves the Foundation's fulfillment of <a href="https://www.python.org/psf/mission/" target="_blank">its mission</a> to build a vibrant, welcoming, global Python community. These awards shine a light on the incredible people who are the heart and soul of our community– those whose dedication, creativity, and generosity help the PSF fulfill its mission. The PSF CSAs celebrate individuals who have been truly invaluable, inspiring others through their example, and demonstrates that service to the Python community leads to recognition and reward. If you know of someone in the Python community deserving of a PSF CSA award, please submit them to the PSF Board via psf@python.org at any time. You can read more about <a href="https://www.python.org/community/awards/psf-awards/" target="_blank">PSF CSA’s on our website</a>.&nbsp;<br /><br />The PSF Board is excited to announce 5 new CSAs, awarded to Inessa Pawson, Kafui Alordo, Kalyan Prasad, Maria Jose Molina Contreras, and Paul Everitt, for their contributions to the Python community. Read more about their work and impact below.&nbsp;</p><h3 style="text-align: left;">Inessa Pawson&nbsp;</h3><p>Inessa Pawson has been a tireless and dedicated contributor to the Python ecosystem for over eight years. She has led the PyCon US Maintainers Summit since 2020, not only shaping the event but actively opening doors for others to participate–onboarding new contributors and supporting attendees with characteristic warmth and care.&nbsp;<br />&nbsp;<br />Beyond PyCon US, Inessa has spearheaded the Maintainers and Community Track, the mentorship program, and the Teen Track at the SciPy Conference, and co-founded the Contributor Experience project, reflecting her deep commitment to making the Python community more inclusive and accessible. She brings that same dedication to her roles on the NumPy Steering Committee, the scikit-learn survey team, and the SPEC (Scientific Python Ecosystem Coordination) Steering Committee. As a leader on the pyOpenSci Advisory Council, Inessa has been instrumental in advancing the organization's mission to support open and reproducible science.</p><h3 style="text-align: left;">Kafui Alordo</h3><p>Kafui Alordo has spent years building and nurturing the Python community in Ho, in the Volta Region of Ghana. What began for Kafui as volunteer coaching at the first Django Girls Ho workshop grew into co-organizing the second and third editions, and eventually leading the workshop as its primary organizer, while also lending his expertise as a coach and co-organizer at Django Girls events across Ghana. Recognizing that sustainable community growth starts with welcoming total beginners, Kafui introduced a coding bootcamp initiative for his user group that has broadened participation and helped new learners find their footing in Python.&nbsp;<br /><br />Kafui’s landmark achievement came with the organization of PyHo, the first-ever regional Python conference in Ho, which drew attendees from diverse backgrounds across the country. His impact has also extended well beyond Ghana, most recently stepping into the role of remote chair on the PyCascades organizing team.<br /></p><h3 style="text-align: left;">Kalyan Prasad</h3><p>Kalyan Prasad's journey in the Python community began in 2019 as a volunteer with the Hyderabad Python User Group (HydPy), one of India's largest Python communities, and he has grown steadily into one of its most consequential leaders. His dedication to PyConf Hyderabad has been especially remarkable–contributing across the CFP, program, and sponsorship teams, serving as co-chair in 2022, and stepping up as chair in both 2025 and 2026, representing four consecutive years of conference leadership at the regional and national level.&nbsp;<br /><br />At the national scale, Kalyan also served as co-chair for PyCon India 2023. Kalyan's commitment extends well beyond India, as he actively contributes to the broader Python ecosystem as a reviewer, mentor, and program committee member for conferences around the world. His care for community safety is further reflected in two years of service on the NumFOCUS Code of Conduct squad, ensuring that Python spaces remain welcoming and respectful for everyone. Kalyan has also joined the PSF Diversity &amp; Inclusion Working Group this year, contributing to inclusion efforts.&nbsp;<br /></p><h3 style="text-align: left;">Maria Jose Molina Contreras</h3><p>Maria Jose Molina Contreras has been a dedicated and wide-ranging contributor to the Python community, with deep roots in both Spanish-language and PyLadies initiatives. She has been a core organizer of PyLadiesCon since its inaugural edition in 2023, serving as co-chair in 2024 and 2025, and her tireless leadership helped make the most recent edition the most successful in the conference's history, raising over $55,000 in funds to support PyLadies members and chapters around the world.&nbsp;<br /><br />Maria’s commitment to Spanish-speaking Pythonistas is equally impressive: she contributes to the Python Docs ES initiative, coordinates events for Python en Español on Discord, and co-founded the PyLadies en Español initiative, including leading the PyLadies presence at PyCon US. At EuroPython, Maria has volunteered since 2023 and taken on growing responsibility, leading community booths, PyLadies events, and community organizer efforts in 2024 and 2025. She has also served as a reviewer for PyCon US Charlas since 2020 and has been a speaker at numerous conferences including PyCon US, EuroPython, and PyConES, sharing her expertise with audiences across the global community.&nbsp;<br /></p><h3 style="text-align: left;">Paul Everitt</h3><p>Paul Everitt's relationship with Python stretches back to the very beginning! Paul was present at the early PyCons and played a foundational role as an incorporating member and director on the PSF's first Board of Directors, helping to establish the organization that supports Python to this day. Decades later, his commitment to the community remains as strong as ever, demonstrated through his long tenure as a Developer Advocate at JetBrains/PyCharm, where he has championed the company's sustained investment in Python open source.&nbsp;<br /><br />Paul’s advocacy extends beyond any one project, as he has provided support to smaller but important ecosystem projects like HTMX and remained a regular, encouraging presence at Python conferences and on podcasts. Most recently, Paul proved that his contributions are not merely historical–he co-authored PEP 750, introducing template strings (t-strings) as a significant new feature in Python 3.14, demonstrating a continued willingness to roll up his sleeves and shape the language itself. Whether writing PEPs, giving conference talks, or simply championing the people who make Python great, Paul’s generous and enthusiastic spirit is an invaluable gift to the Python community.&nbsp;<br /><br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 12, 2026 03:55 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/05/announcing-psf-community-service-award.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/building-type-safe-llm-agents-with-pydantic-ai/" class="hover:underline"
+              >Building Type-Safe LLM Agents With Pydantic AI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Build type-safe LLM agents in Python with Pydantic AI using structured outputs, function calling, and dependency injection.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 12, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/building-type-safe-llm-agents-with-pydantic-ai/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/may/12/2026-django-developers-survey/" class="hover:underline"
+              >2026 Django Developers Survey</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The Django Software Foundation is once again partnering with JetBrains to run the 2026 <a href="https://surveys.jetbrains.com/s3/wb-django-developers-survey-2026">Django Developers Survey</a> 🌈</p>
+<p>It’s an important metric of Django usage and is immensely helpful to guide future technical and community decisions.</p>
+<p>After the survey closes, we will publish the aggregated results. JetBrains will also randomly select 10 winners (from those who complete the survey in full with meaningful answers) who will each receive a $100 Amazon voucher or the equivalent in local currency.</p>
+<h3 id="s-how-you-can-help">How you can help</h3>
+<p>Once you’ve done the survey, take a moment to re-share on socials and with your communities. The more diverse the answers, the better the results for all of us.</p>
+<p>Please use the following links:</p>
+<ul>
+<li>
+<p>Bluesky<br />
+<a href="https://surveys.jetbrains.com/s3/bs-django-developers-survey-2026">https://surveys.jetbrains.com/s3/bs-django-developers-survey-2026</a></p>
+</li>
+<li>
+<p>Django Forum<br />
+<a href="https://surveys.jetbrains.com/s3/df-django-developers-survey-2026">https://surveys.jetbrains.com/s3/df-django-developers-survey-2026</a></p>
+</li>
+<li>
+<p>LinkedIn<br />
+<a href="https://surveys.jetbrains.com/s3/li-django-developers-survey-2026">https://surveys.jetbrains.com/s3/li-django-developers-survey-2026</a></p>
+</li>
+<li>
+<p>Mastodon<br />
+<a href="https://surveys.jetbrains.com/s3/md-django-developers-survey-2026">https://surveys.jetbrains.com/s3/md-django-developers-survey-2026</a></p>
+</li>
+<li>
+<p>Reddit<br />
+<a href="https://surveys.jetbrains.com/s3/r-django-developers-survey-2026">https://surveys.jetbrains.com/s3/r-django-developers-survey-2026</a></p>
+</li>
+<li>
+<p>X / Twitter<br />
+<a href="https://surveys.jetbrains.com/s3/x-django-developers-survey-2026">https://surveys.jetbrains.com/s3/x-django-developers-survey-2026</a></p>
+</li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 12, 2026 12:00 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/may/12/2026-django-developers-survey/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/548/event-sourcing-design-pattern" class="hover:underline"
+              >#548: Event Sourcing Design Pattern</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What if your database worked more like Git? Every change captured as an immutable event you can replay, instead of a single mutating row that quietly forgets its own history. That's event sourcing, and Chris May is back on Talk Python, fresh off our Datastar panel, to walk us through what it actually looks like in Python. We'll cover the core patterns, the libraries to reach for, when not to use it, and why event sourcing turns out to be a surprisingly good fit for AI-assisted coding.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 11, 2026 04:36 PM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/548/event-sourcing-design-pattern"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/may/11/dsf-member-of-the-month-bhuvnesh-sharma/" class="hover:underline"
+              >DSF member of the month -  Bhuvnesh Sharma</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>For May 2026, we welcome Bhuvnesh Sharma as our DSF member of the month! ⭐</p>
+<p><img alt="Bhuvnesh, with a dark red pull over, in front of the camera, looking on the left. We can see a landscape with multiple buildings behind him and the cloudy sky." src="https://media.djangoproject.com/blog/images/2026/05/bhuvnesh-sharma-profile.webp" /></p>
+<p>Bhuvnesh is a Django contributor since 2022 and a Google Summer of Code (GSoC) participant in 2023 for Django. He is now a mentor and a GSoC admin organizer for the Django Software Foundation organization. 
+He is the founder of Django Events Foundation India (DEFI) and DjangoDay India conference. He has been a DSF member since July 2023. He is looking for new opportunities!</p>
+<p>You can learn more about Bhuvnesh by visiting <a href="https://www.devilsautumn.com/">Bhuvnesh's website</a> and <a href="https://github.com/DevilsAutumn">his GitHub Profile</a>.</p>
+<p>Let’s spend some time getting to know Bhuvnesh better!</p>
+<h2 id="s-can-you-tell-us-a-little-about-yourself-hobbies-education-etc">Can you tell us a little about yourself (hobbies, education, etc)</h2>
+<p>I’m Bhuvnesh (aka DevilsAutumn), a software developer from India. I graduated in 2024 from GL Bajaj Institute of technology and management, and most of my work has been around Python, Django and building backend systems. My journey with Django started when I started contributing to Django core in 2022.
+I usually like working on things where there is an actual product involved, not just writing few APIs and closing the task. I like thinking about how the whole thing will work: models, permissions, background jobs, deployment, users, edge cases and all of that.</p>
+<p>Apart from work, I like reading books around startups and entrepreneurship, watching movies, and honestly I overthink a lot about building products. Sometimes too much, but yeah that’s also how many ideas start for me.
+I’ve also been involved with the Django community through Django India, GSoC, Djangonaut Space and DjangoDay India, which has been a big part of my journey.</p>
+<h2 id="s-im-curious-where-your-nickname-devilsautumn-comes-from">I'm curious, where your nickname "DevilsAutumn" comes from?</h2>
+<p>Haha, Nice question. So, there is one of my friend who used to write sci-fi novels. In 2022, I decided that I’ll have one unique coding name for me and thinking that I have a friend who write novels his imagination must be great, I went to him to ask for name ideas and one of the names he suggested was DevilsAutumn, since then I use that as my nickname.</p>
+<h2 id="s-how-did-you-start-using-django">How did you start using Django?</h2>
+<p>When I was in my exploring phase, I was really curious and trying out different languages, frameworks etc. and I read a blog post from Instagram engineering team about Django being used at Instagram. A framework which is a backbone of a product used by billions of users, will get anyone curious. From there I started exploring Django and I fell in love with it. The framework, the community, the documentation - all of it was amazing.</p>
+<h2 id="s-what-other-framework-do-you-know-and-if-there-is-anything-you-would-like-to-have-in-django-if-you-had-magical-powers">What other framework do you know and if there is anything you would like to have in Django if you had magical powers?</h2>
+<p>I have also worked with FastAPI and I find that really cool as well. But the calmness django has is unbeatable.</p>
+<p>If I had magical powers, I’d be living on the moon. Just kidding. 😆</p>
+<p>There are a couple of things that I would love in Django:</p>
+<p>First is "modernising" the website which is already underway. The website feels very boring and outdated. I’d love to see a modern version.</p>
+<p>Second, I would love to see Django have built-in support for creating REST APIs. DRF is amazing and it has done a lot for the Django ecosystem, but because it is still an external library, there are some rough edges. Sometimes serialization can feel a bit slow or heavy, the learning curve is different from regular Django, and you also depend on a separate package for something which has become a core need in modern web apps.</p>
+<h2 id="s-what-projects-are-you-working-on-now">What projects are you working on now?</h2>
+<p>I am currently working on a project called <a href="https://www.trevo.co.in/">Trevo</a>, which helps people find activities happening around them which anyone can join and socialize with others in real life.</p>
+<p>Apart from that, I am also working on an open source python library which is a migration safety toolkit for Django. It's called django-migrations-inspector. It helps you find problems in your migration files before they go into production.</p>
+<h2 id="s-which-django-libraries-are-your-favorite-core-or-3rd-party">Which Django libraries are your favorite (core or 3rd party)?</h2>
+<p>Although there is a long list, I’d probably say Django REST Framework (DRF), django-import-export, and django-debug-toolbar.</p>
+<p><a href="https://github.com/encode/django-rest-framework">DRF</a> is the obvious one because I’ve used it a lot for building APIs with Django. Even with some rough edges, it has been very important for the ecosystem 😛</p>
+<p>I also really like <a href="https://github.com/django-import-export/django-import-export">django-import-export</a>, mostly because in real projects you always end up needing some Excel/CSV import export kind of thing, and this just saves time.</p>
+<p>And <a href="https://github.com/django-commons/django-debug-toolbar">django-debug-toolbar</a> because it has made debugging queries and performance issues much easier for me personally.</p>
+<h2 id="s-what-are-the-top-three-things-in-django-that-you-like">What are the top three things in Django that you like?</h2>
+<p>I think the first thing has to be the community. People in the Django community are genuinely nice and helpful, and the docs are also really good. A lot of times, when you are stuck, either the documentation has already explained it properly or someone has discussed the same thing before.</p>
+<p>Second, I really like the ecosystem around Django. For most of the common things you need while building a product, there is usually already a good package available. And Django itself also gives you so much out of the box, so you don’t have to build every basic thing from scratch.</p>
+<p>And third is Django admin. Honestly, I really like it. Some people may not think of it as a very exciting feature, but when you are building real products, having a working admin panel so quickly is super useful. It saves a lot of time.</p>
+<h2 id="s-you-are-one-of-the-admin-organizers-of-gsoc-program-for-django-organization-thank-you-for-helping-how-is-it-going-for-you-do-you-need-help">You are one of the admin organizers of GSoC program for Django organization, thank you for helping. How is it going for you? Do you need help?</h2>
+<p>It has been going well so far, thank you for asking. I’m really happy to help with organizing GSoC for Django. It’s always nice to see contributors getting involved and working on meaningful projects, I even posted about it on LinkedIn.</p>
+<p>Everything is good for now, but I’ll reach out in case I need any help. In fact, we are also working <a href="https://github.com/django/dsf-working-groups/issues/41">creating GSoC working group</a> to make things more smooth for future. I’m sure that is also going to help us.</p>
+<h2 id="s-you-have-been-part-of-djangonaut-space-program-as-a-navigator-mentor-in-the-first-session-how-did-you-find-the-experience-what-is-your-reflection-on-the-program-after-all-this-time">You have been part of Djangonaut Space program as a Navigator (Mentor) in the first session. How did you find the experience? What is your reflection on the program after all this time?</h2>
+<p>It was a great experience! I love to help people who are new to open-source and guide them just like I was guided by a mentor in my college days. I believe anyone can do great things in life if they are given proper mentorship. That's my motivation behind getting involved in Djangonaut Space.</p>
+<p><a href="https://djangonaut.space/">Djangonaut Space</a> program has created a strong community of developers from all background that love Django. A lot of people want to contribute to open source, but they don’t always know where to start, or they feel the project is too big for them. Djangonaut Space helped reduce that fear by giving people guidance, structure, and a friendly space to ask questions.</p>
+<p>Even after all this time, I still feel it is one of the best community-led efforts around Django. It doesn’t just help people contribute code, it helps them feel that they belong in the community. </p>
+<h2 id="s-do-you-have-any-advice-for-folks-would-like-to-consider-mentoring-through-gsoc-or-djangonaut-space">Do you have any advice for folks would like to consider mentoring through GSoC or Djangonaut Space?</h2>
+<p>I just want to say that people who are experienced, who have been contributing to Django or people who are maintaining any 3rd party package, must consider mentoring through GSoC or Djangonaut Space program. It is one of the most impactful way to contribute to open source in my opinion because you are not just guiding a few people, you might be guiding the next generation of mentors, Django maintainers, org admins, community leaders or Djangonaut Space organizers.</p>
+<p>And mentorship plays the most important role in maintaining the ecosystem that django has created for years.</p>
+<h2 id="s-you-have-been-previously-a-participant-of-gsoc-for-django-organization-you-are-now-an-admin-of-the-organization-thats-great-how-did-you-get-to-this-point-did-you-ever-imagine-you-would-end-up-here">You have been previously a participant of GSoC for Django organization, you are now an admin of the organization. That's great! How did you get to this point? Did you ever imagine you would end up here?</h2>
+<p>Haha honestly, no. I don’t think I ever imagined it would turn out this way.
+When I first got into GSoC with Django, I was just really happy to be there and contribute. At that time, I was mostly focused on learning, understanding the project better, and trying not to mess things up 😅</p>
+<p>But after that I kind of stayed around. I kept contributing, stayed connected with the community, mentored in Djangonaut Space, then mentored in GSoC 2024, and slowly started getting more involved in the community and organizing side of things too.</p>
+<p>So it was never like I had this clear plan that one day I’ll become an org admin. It just happened very naturally over time, mostly because I kept showing up and people trusted me with more responsibility.</p>
+<p>Now being on this side feels a little unreal, but also very special. I know how it feels to be a contributor, how confusing and exciting it can be, so I really care about making the experience good for others too.</p>
+<p>In a way, it feels like a full-circle moment, but also like there’s still a lot more to learn and do.</p>
+<h2 id="s-you-are-the-founder-of-djangoday-india-and-django-events-foundation-india-could-you-tell-us-a-bit-more-on-the-event-and-what-made-you-create-this-structure">You are the founder of DjangoDay India and Django Events Foundation India, could you tell us a bit more on the event and what made you create this structure?</h2>
+<p>DjangoDay India started from a very simple thought, like we should have a proper Django-focused event in India. There are a lot of people here using Django — developers, students, companies — but we didn’t really have one place where everyone can come together. It was really difficult to organize DjangoDay India in 2025 because it was the first Django event happening at that scale in India but we still made it thanks to the amazing team.</p>
+<p>Django Events Foundation India (DEFI) was created to give this some structure. I didn’t wanted DjangoDay India to become just a one-time thing or something which only depends on me. Apart from that, I even want to support more local Django events happening around India through DEFI. The idea is to make it sustainable, community-first, and slowly involve more people. 
+For me, it is mainly about growing the Django ecosystem in India and giving people a space to speak, volunteer, sponsor, contribute, and maybe later lead also.</p>
+<h2 id="s-do-you-remember-your-first-contribution-to-django-and-in-open-source">Do you remember your first contribution to Django and in open source?</h2>
+<p>Yes, so I was going through someone else’s PR which got merged and in that I found a small typo in the comment. Then I created a new PR to fix that. It was my first contribution to Django.</p>
+<p>Talking about the first open source contribution, it was adding some phone number validation checks in validatorjs library.</p>
+<h2 id="s-is-there-anything-else-youd-like-to-say">Is there anything else you’d like to say?</h2>
+<p>Nothing much, just thank you for having me here. If someone is thinking of contributing to Django but feels scared, please don’t worry. Most of us also started by staring at the codebase and pretending we understood what was happening.
+Just start small, ask questions, and slowly it starts making sense.</p>
+<hr />
+<p><strong>Thank you for doing the interview, Bhuvnesh !</strong></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 11, 2026 11:00 AM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/may/11/dsf-member-of-the-month-bhuvnesh-sharma/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/05/strategic-planning-at-psf.html" class="hover:underline"
+              >Strategic Planning at the PSF</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The Python Software Foundation (PSF) is excited to share that the PSF Board has been developing a strategic plan to guide the foundation's direction over the next five years. We are sharing the high-level goals today to collect feedback and commentary from the Python community. A full draft with detailed objectives will be published in early June for public feedback, and the board hopes to adopt the plan in July 2026, to be reviewed annually going forward.</p><h2 style="text-align: left;">Why now</h2><p>The Python ecosystem is growing and changing fast. <a href="https://blog.pypi.org/posts/2025-12-31-pypi-2025-in-review/" target="_blank">PyPI hosts over 800,000 projects</a> and serves tens of billions of downloads per month. The <a href="https://www.python.org/psf/developersinresidence/" target="_blank">Developers-in-Residence program</a> has grown from a single role to a team spanning CPython development, security, and PyPI safety, proving that targeted investment in core infrastructure works. <a href="https://pyfound.blogspot.com/2025/11/python-is-for-everyone-join-in-psf-year.html" target="_blank">Last year's fundraiser</a> showed that the community and sponsors are willing to support the PSF's mission when provided the opportunity.</p><p>The foundation also faces challenges. <a href="http://pyfound.blogspot.com/2025/10/connecting-the-dots.html" target="_blank">As we shared in November</a>, the PSF's assets and yearly revenue have declined and costs have increased, while the demand for the foundation's work grows faster than its capacity. Last year we had to <a href="https://pyfound.blogspot.com/2025/08/the-psf-has-paused-our-grants-program.html" target="_blank">pause the Grants Program</a> after reaching the budget cap earlier than expected. These pressures are part of why the board committed to a strategic plan: the foundation needs a clear framework for making hard choices about where to focus.</p><p>The PSF Board has discussed strategic planning <a href="https://pyfound.blogspot.com/2017/10/psfs-october-board-meeting.html" target="_blank">over the years</a>, including at the <a href="https://pyfound.blogspot.com/2024/11/psf-board-retreat-2024.html" target="_blank">2024 board retreat</a>. This year, we committed to turning that discussion into a concrete plan. The process included numerous interviews with PSF Staff, community members, and participants across the Python ecosystem. After interviews, the PSF Board went through a prioritization exercise, followed by a series of dedicated and structured board discussions.<br /></p><h2 style="text-align: left;">The direction</h2><p>The plan has two parts:&nbsp;<br /></p><p style="margin-left: 40px; text-align: left;">I. Organizational Goals: How the PSF operates across all its activities, and<br />II. Program Goals: Where the PSF directs its work and resources.&nbsp;<br /></p><p>We invite your feedback on all of the goals in both parts of the plan (See the “How to participate” section below).&nbsp;</p><p></p><h3 style="text-align: left;">I. Organizational Goals: How we operate</h3><ol><li><b>Financial Sustainability:</b> Diversify the PSF's revenue so the foundation is not dependent on any single source.</li><li><b>Building a Resilient Foundation:</b> Strengthen governance, financial oversight, and knowledge management so the organization can survive transitions and operate transparently.</li><li><b>Diversity and Inclusion:</b> D&amp;I is not treated as a standalone effort. D&amp;I is a lens for all PSF decisions and activities.</li><li><b>Transparency and Community Trust:</b> Increase visibility into how the PSF makes decisions and uses its resources, as the community's trust in its governance is the foundation of the PSF's credibility.</li><li><b>Community Empowerment and Self-Sufficiency:</b> Support Python communities in building their own capacity through collaboration and shared resources.</li><li><b>Strong Partnerships and Collaboration:</b> Partner with organizations that distribute, extend, and depend on Python, as well as with community groups across the open source ecosystem.</li></ol><h3>II. Program Goals: Where we focus our work</h3><ul><li><b>Secure Python's Software Supply Chain and Distribution Infrastructure.</b> PyPI is critical global infrastructure, and supply chain security goes beyond the index. Python reaches users through many channels beyond python.org and PyPI, which makes collaboration with distributors essential.</li><li><b>Responsibly Grow and Advance Critical Python Infrastructure.</b> The PSF stewards PyPI, CPython, python.org, pip, and more. Growth needs to match staffing capacity and sustainable funding.</li><li><b>Foster a Thriving, Connected Global Python Community.</b> Support the global Python community through events, grants, and working groups, while empowering regional communities to be self-sufficient.</li><li><b>Develop the Next Generation of Python Developers.</b> Make Python accessible to newcomers and remove barriers for underrepresented groups.</li></ul><h2 style="text-align: left;">How the plan works</h2><p>We developed this strategic plan to cover a five-year period. The board will review progress annually with community input, review whether priorities need to shift, and publish the results so the community can see how we are tracking. The intention is for the strategic plan to be flexible and adaptive, so that it can effectively guide the PSF’s priorities as the ecosystem continues to grow and evolve, rather than a static document that begins to collect dust on the shelf.</p><p>We developed the plan to set direction–<b><i>not</i></b> implementation details. How to carry it out is the job of PSF Staff, and the specifics will evolve as we learn what works. Once adopted, the plan will directly inform how the PSF allocates its budget and staff time and how it seeks funding.<br /></p><h2 style="text-align: left;">How to participate</h2><p>If any of these goals matter to you, or if you think we are missing something important, we want to hear from you.</p><p>We welcome you to email strategy@python.org to share your thoughts. This is the best way to reach us asynchronously.</p><p>You can also join the conversation with us at:<br /></p><ul style="text-align: left;"><li><a href="https://pyfound.blogspot.com/2025/10/a-new-psf-board-another-year-of-psf.html" target="_blank"><b>PSF Board Office Hours</b></a> on May 12 and June 9th, on the PSF Discord. We hope to spend both of these sessions focused on discussing the strategic plan with people from the community.</li><li><b><a href="https://us.pycon.org/2026/" target="_blank">PyCon US 2026</a></b> at the <a href="https://discuss.python.org/t/psf-members-lunch-at-pycon-us-2026/106763" target="_blank">Members Lunch</a> and a <a href="https://us.pycon.org/2026/schedule/open-spaces/#OpenSpace-39" target="_blank">dedicated Open Space session</a>. We know only a small fraction of our community will be present at PyCon US this year, so we warmly welcome you to engage with us on Discuss and via the email address provided above.</li><li><b><a href="https://discuss.python.org/t/strategic-planning-at-the-psf/107314" target="_blank">A Python Discuss thread</a></b> is available for open community discussion. We welcome you to join in with feedback and comments.&nbsp;</li></ul><p>A full draft with detailed objectives under each Program Goal will be published in early June for community feedback via this blog, <a href="https://discuss.python.org/c/python-software-foundation/9" target="_blank">Python Discuss under the PSF category</a>, and social media. The feedback window for this year will close before the July 8th PSF Board meeting.</p><p>This plan will shape what the PSF does and how it spends its resources for the next five years. If you use Python, contribute to it, or participate in communities around it, you have a stake in shaping its future.</p><p><i>Jannis Leidel, PSF Board Chair, on behalf of the PSF Board of Directors</i><br /><br /></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 11, 2026 10:40 AM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/05/strategic-planning-at-psf.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/479/talking-about-types" class="hover:underline"
               >#479 Talking About Types</a
             >
@@ -437,6 +1100,87 @@ itself</a>.</p>
           </div>
           <a
             href="https://talkpython.fm/episodes/show/547/parallel-python-at-anyscale-with-ray"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.pythonlibrary.org/2026/05/06/textual-an-intro-to-dom-queries-part-ii/" class="hover:underline"
+              >Textual – An Intro to DOM Queries (Part II)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Last month, you learned the basics of Textual’s DOM queries. If you missed it, you can read the article now! In this tutorial you will be learning about the following topics: The DOMQuery object Getting the first or last widget Query filters Query exclusions Other query methods Let’s get started! The DOMQuery Object The DOMQuery object gets [&#8230;]</p>
+<p>The post <a href="https://blog.pythonlibrary.org/2026/05/06/textual-an-intro-to-dom-queries-part-ii/">Textual &#8211; An Intro to DOM Queries (Part II)</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 06, 2026 12:47 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://blog.pythonlibrary.org/2026/05/06/textual-an-intro-to-dom-queries-part-ii/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/add-some-explanation-on-sorting-a-qtableview/" class="hover:underline"
+              >Sorting and Filtering a QTableView with QSortFilterProxyModel — Learn how to add interactive sorting and filtering to your PyQt/PySide table views without touching your underlying data</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            I'm using QTableView to show some data, which works well. But I would like to be able to sort the data by different columns. How can I do this without sorting the data manually?
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on May 06, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/add-some-explanation-on-sorting-a-qtableview/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1456,476 +2200,6 @@ to write the code to analyze and scrape Google Trends.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2026/05/asking-key-questions-q-with-pycon-us.html" class="hover:underline"
-              >Asking the Key Questions: Q&A with the PyCon US 2026 keynote speaker amanda casari</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>&nbsp;</p><h2 style="text-align: left;"><span face="Arial, sans-serif"><span><i><span style="font-family: inherit; font-size: 14.6667px;">This is a blog series where we're asking each of our PyConUS 2026 keynote speakers about their journey into tech, how excited they are for PyconUS and any tips they can provide for an awesome conference experience! 
-</span></i></span></span></h2><p style="text-align: left;"><span face="Arial, sans-serif"><span><i><span style="font-family: inherit; font-size: 14.6667px;"><b>Thank you amanda for this interview! You can learn more about amanda's keynote on the <a href="https://us.pycon.org/2026/about/keynote-speakers/" target="_blank">PyConUS Keynote Speakers page</a> and you can also attend amanda's meet and greet at the PSF Booth in the Expo Hall on Thursday May 14 during the opening reception at 5 - 6pm PT. </b></span></i></span></span></p><div><span face="Arial, sans-serif"><span style="font-family: inherit;"><div class="separator" style="clear: both; font-size: 14.6667px; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjMxxIJaBGSo_LsefYBgWkDUSFqzw5U7Zt8v9_CXf5rzelAXjpexEhuDFc7QLA1o8x44yWTrpzFDy4diHM8LhYbY3SwCcZRha25hUsnjEhTDoFWFlUEJOCl1ghsxGM_dbj3_IBVWQvJrn79-cCIG5buvmhXalKLS-3b8BSqPjRUwEVzysJcw3ID0Q/s1080/amanda%20casari.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="320" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjMxxIJaBGSo_LsefYBgWkDUSFqzw5U7Zt8v9_CXf5rzelAXjpexEhuDFc7QLA1o8x44yWTrpzFDy4diHM8LhYbY3SwCcZRha25hUsnjEhTDoFWFlUEJOCl1ghsxGM_dbj3_IBVWQvJrn79-cCIG5buvmhXalKLS-3b8BSqPjRUwEVzysJcw3ID0Q/s320/amanda%20casari.png" width="320" /></a></div><div style="font-size: 14.6667px;"><span face="Arial, sans-serif"><span style="font-size: 14.6667px;"><br /></span></span></div></span></span><p style="text-align: left;"></p><h4 style="text-align: left;"><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><b><i>Without giving any too many spoilers, tell us what your keynote is about? </i></b></span></span></span></span></h4><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">More and more these days, amanda is asking how do you make space in open source for hope.</span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">
-</span></span></span></span><h4 style="text-align: left;"><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><b><i>How did you get started in tech/Python? Did you have a friend or a mentor that helped you?</i></b></span></span></span></span></h4><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">My first time wrestling with Python was in 2009 when I was struggling to set up a webserver for a graduate student project building a microgrid testbed for a local national park. When I moved to Seattle a few years later, the local Python tech community was extremely welcoming, friendly, and really focused on bringing people together to make them feel connected. I especially grateful to <br /></span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">My first time wrestling with Python was in 2009 when I was struggling to set up a webserver for a graduate student project building a microgrid testbed for a local national park. When I moved to Seattle a few years later, the local Python tech community was extremely welcoming, friendly, and really focused on bringing people together to make them feel connected. I especially grateful to <a href="https://seattle.pyladies.com/" target="_blank">PyLadies Seattle</a> leader Wendy Grus, and later Carol Willing, for entertaining and celebrating with me so many silly ideas.</span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">
-</span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><b>
-</b></span></span></span></span><h4 style="text-align: left;"><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><i><b>What do you think the most important work you’ve ever done is? Or if you think it might still be in the future, can you tell us something about your plans?</b></i></span></span></span></span></h4><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">It's hard for me to judge what the most important work I've ever done is, or will be. So much of my work is a series of incremental changes or decisions made with a goal to impact what is next, rather than what is nearby. What I will always be most proud of is when I'm given the opportunity to build teams with other people who challenge me. The most important is always the people, and how we spend the time together when our lives intersect.</span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">
-</span></span></span></span><h4 style="text-align: left;"><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><b><i>Have you been to PyCon US before? What are you looking forward to?</i></b></span></span></span></span></h4><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">YES! In no particular order, I'm looking forward to: community booth time, meals with old friends, meeting new friends, and finally giving the 5K a noble effort.</span></span></span><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">
-</span></span></span></span><h4 style="text-align: left;"><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;"><b><i>Do you have any advice for first-time conference goers or any general conference tips?</i></b></span></span></span></span></h4><span style="font-family: inherit;"><span face="Arial, sans-serif"><span><span style="font-size: 14.6667px;">Pick at least one talk or session that is completely new to you, or that you have no idea whether or not it intersects with your interests. If it's a low-volume crowd, sit near the front, and be the silent, attentive, and encouraging audience member that every speaker needs.</span></span></span></span><p></p><h4 style="text-align: left;"><span face="Arial, sans-serif"><span><span style="font-family: inherit;"><span style="font-size: 14.6667px;"><b><i>Can you tell us about an open source or open culture project that you think not enough people know about?</i></b></span></span></span></span></h4><span face="Arial, sans-serif"><span><span style="font-family: inherit;"><span style="font-size: 14.6667px;">I'm a MASSIVE space nerd. Last year I finally learned about <a href="https://www.rtems.org/" target="_blank">RTEMS</a>, and now I'm obsessed. Everyone talked about the proprietary software failure from the recent Artemis II launch, but they SHOULD have been talking about RTEMS being onboard!!! As a successful open source project that's been running for over 30 years, I want everyone to know about this.</span><br /></span><i style="font-size: 14.6667px;"><br /></i></span></span></div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 02, 2026 04:45 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2026/05/asking-key-questions-q-with-pycon-us.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/293/" class="hover:underline"
-              >The Real Python Podcast – Episode #293: Agentic Data Science Pair Programming With marimo pair</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            How do you add agent skills to your data science workflow? How can a coding agent assist with data wrangling and research? This week on the show, Trevor Manz from marimo joins us to discuss marimo pair.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 01, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/293/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lukeplant.me.uk/blog/posts/inverse-sapir-whorf-and-programming-languages/" class="hover:underline"
-              >Inverse Sapir-Whorf and programming languages</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A discussion on how features of programming languages can make it hard to avoid expressing or talking about things you may or may not care about as a programmer.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 01, 2026 08:40 AM UTC by
-            <a href="http://lukeplant.me.uk/blog/categories/python/atom/index.xml" class="link link-hover text-primary"
-              >Luke Plant</a
-            >
-          </div>
-          <a
-            href="https://lukeplant.me.uk/blog/posts/inverse-sapir-whorf-and-programming-languages/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/tryton-news-may-2026/9214" class="hover:underline"
-              >Tryton News May 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div>  </div>
-<p></p><div class="lightbox-wrapper"><a class="lightbox" href="https://discuss-cdn.tryton.org/uploads/default/original/2X/b/b874a91bc0cc86db4d7c0f63c699f944529e0c83.jpeg" title="Photo: Pexels, Thirdman"><img alt="Persons using a Laptop" height="500" src="https://discuss-cdn.tryton.org/uploads/default/optimized/2X/b/b874a91bc0cc86db4d7c0f63c699f944529e0c83_2_499x500.jpeg" title="Photo: Pexels, Thirdman" width="499" /></a></div><p></p>
-
-<p>During the last month we focused on fixing bugs, improving the behaviour of things, speeding-up performance issues - building on the changes from <a href="https://discuss.tryton.org/t/tryton-release-8-0/">our last LTS release 8.0</a>. We added some new features which we would like to introduce to you in this newsletter.</p>
-<p>For an in depth overview of the <a href="https://bugs.tryton.org/">Tryton issues please take a look at our issue tracker </a> or see the issues and merge requests <a href="https://code.tryton.org/tryton/-/labels">filtered by label</a>.</p>
-<h2 id="heading--user">Changes for the User</h2>
-<h3 id="heading--accounting">Accounting, Invoicing and Payments</h3>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/bdc64a6ffe6effe0e4cd1f91a3fb218097f02183">updated the supported version of stripe</a> from <code>2025-09-30.clover</code> to <code>2026-03-25.dahlia</code>.</p>
-<h3 id="heading--stock">Stock, Production and Shipments</h3>
-<p>Now we <a href="https://bugs.tryton.org/13304">include the time-sheet costs in the production work costs</a>.</p>
-<h3 id="heading--ui">User Interface</h3>
-<p>We now implemented a <a href="https://bugs.tryton.org/14743">fallback on the <em>model name</em></a> when there is no <code>name</code> parameter is given in a Tryton URL.</p>
-<p>No we <a href="https://code.tryton.org/tryton/-/commit/91b7e4ff14ce26582ae8205ae80189aee21ab926">support sending emails on chat messages</a> and the ability to reply to them.</p>
-<h2 id="heading--new-modules">Modules</h2>
-<p>Now we move the <code>account_de_skr03</code>, <code>account_es</code> and <code>account_es_sii</code> modules to the <a href="https://foss.heptapod.net/tryton-community/modules">external tryton-community project</a>.</p>
-<h2 id="heading--new-documentation">New Documentation</h2>
-<p>We now add a new documentation for the <a href="https://docs.tryton.org/latest/client-rest/index.html">REST-API</a>.</p>
-<h2 id="heading--new-releases">New Releases</h2>
-<p>We released bug fixes for the currently maintained <a href="https://discuss.tryton.org/t/release-process/395">long term support series</a><br />
-<a href="https://code.tryton.org/tryton/-/commits/branch/8.0">8.0</a>, <a href="https://code.tryton.org/tryton/-/commits/branch/7.0">7.0</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/6.0">6.0</a>, and for the penultimate series <a href="https://code.tryton.org/tryton/-/commits/branch/7.8">7.8</a> and <a href="https://code.tryton.org/tryton/-/commits/branch/7.6">7.6</a>.</p>
-<h2 id="heading--sysadmin">Changes for the System Administrator</h2>
-<p>Now we [add a <a href="https://en.wikipedia.org/wiki/Representational_state_transfer">REST</a> API](<a href="https://code.tryton.org/tryton/-/commit/44edc21632c653a7a0db8a0ee42a8631c6d10f31">https://code.tryton.org/tryton/-/commit/44edc21632c653a7a0db8a0ee42a8631c6d10f31</a>) for user applications. <a href="https://docs.tryton.org/latest/client-rest/index.html">For more information, have a look at its documentation</a>.</p>
-<h2 id="heading--developer">Changes for Implementers and Developers</h2>
-<p>We now <a href="https://code.tryton.org/tryton/-/commit/d7e0dcf4ac45824cb6688ddbeb560c519eb37a34">fall back to <em>compact syntax</em> if <code>RelaxNG</code> files are not present</a>. LXML is able to load the compact syntax in case the <code>rnc2rng</code> package is installed. This avoids the need to generate the RelaxNG files when developing.</p>
-<p>Authors: <a class="mention" href="https://discuss.tryton.org/u/dave">@dave</a> <a class="mention" href="https://discuss.tryton.org/u/pokoli">@pokoli</a> <a class="mention" href="https://discuss.tryton.org/u/udono">@udono</a></p>
-            <p><small>2 posts - 2 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/tryton-news-may-2026/9214">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on May 01, 2026 06:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/tryton-news-may-2026/9214"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/europython-2026-ticket-sales-now-open/" class="hover:underline"
-              >EuroPython 2026: Ticket Sales Now Open</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            EuroPython 2026 ticket sales are now open! We have a special keynote this year: Łukasz Langa and Pablo Galindo Salgado will be recording the core.py podcast right on the conference stage. It will feature their special guest Guido van Rossum, the creator of Python.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 30, 2026 10:00 AM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/europython-2026-ticket-sales-now-open/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycon.blogspot.com/2026/04/pycon-us-2026-call-for-volunteers.html" class="hover:underline"
-              >PyCon US 2026: Call for Volunteers</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Looking to make a meaningful contribution to the Python community? Look no further than PyCon US 2026! Whether you're a seasoned Python pro or a newcomer to the community and looking to get involved, there's a volunteer opportunity that's perfect for you.&nbsp;</p><p>Sign-up for volunteer roles is done directly through the <a href="http://us.pycon.org/2026/">PyCon US website</a>. This way, you can view and manage shifts you sign up for through <a href="https://us.pycon.org/2026/accounts/dashboard/">your personal dashboard</a>! You can read up on <a href="https://us.pycon.org/2026/volunteer/volunteering/">the different roles to volunteer for and how to sign up on the PyCon US website</a>.</p><p>PyCon US is largely organized and run by volunteers. Every year, we ask to fill over 300 onsite volunteer hours to ensure everything runs smoothly at the event. And the best part? You don't need to commit a lot of time to make a difference–some shifts are as short as 45 minutes long! You can sign up for as many or as few shifts as you’d like. Even a couple of hours of your time can go a long way in helping us create an amazing experience for attendees.</p><p>Keep in mind that you need to be <a href="https://us.pycon.org/2026/attend/information/">registered for the conference</a> to sign up for a volunteer role.</p><div>One important way to get involved is to sign up as a <a href="http://us/pycon.org/2026/volunteers/volunteering/session-staff/">Session Chair or Session Runner</a>. This is an excellent opportunity to meet and interact with speakers while helping to ensure that sessions run smoothly. And who knows, you might just learn something new along the way:) If you’re looking for an important yet simple-to-learn role, you may be just the person we’ve been looking for!&nbsp;</div><div><br /></div><div>We do ask if you sign up for these roles that you please do your absolute best to avoid canceling or worst case not showing up, so that we can make sure we have coverage for all the necessary time slots. You can sign up for these roles directly on the <a href="https://us.pycon.org/2026/schedule/talks/">Talks schedule</a>: Sign up for an open time slot by clicking the [+ Volunteer] in one of the talk slots for the session of your choice.</div><div><br /></div><div><div>Volunteer your time at PyCon US 2026 and you’ll be part of a fantastic community that's passionate about Python programming. You can help us make this year's conference a huge success while connecting with your fellow event attendees. It’s especially great for first-timers looking to get the most out of PyCon US. Sign up today for the shifts that call to you and join the fun!</div></div><div><br /></div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 29, 2026 06:00 PM UTC by
-            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
-              >PyCon</a
-            >
-          </div>
-          <a
-            href="https://pycon.blogspot.com/2026/04/pycon-us-2026-call-for-volunteers.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/pycharm/2026/04/using-bag-of-words-with-pycharm/" class="hover:underline"
-              >Using Bag-of-Words With PyCharm</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Have you ever wondered how machine learning models actually work with text? After all, these models require numerical input, but text is, well, text. Natural language processing (NLP) offers many ways to bridge this gap, from the large language models (LLMs) that are dominating headlines today all the way back to the foundational techniques of [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 29, 2026 05:42 PM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/pycharm/2026/04/using-bag-of-words-with-pycharm/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/testing-your-code-with-pythons-unittest/" class="hover:underline"
-              >Testing Your Code With Python's unittest</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to use Python's unittest framework to write unit tests for your code, including test cases, fixtures, and test suites.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 28, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/testing-your-code-with-pythons-unittest/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pypy.org/posts/2026/04/pypy-v7322-release.html" class="hover:underline"
-              >PyPy v7.3.22 release</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <section id="pypy-v7-3-22-release-of-python-2-7-3-11">
-<h2>PyPy v7.3.22: release of python 2.7, 3.11</h2>
-<p>The PyPy team is proud to release version 7.3.22 of PyPy after the previous
-release on March 13, 2026. This is a bug-fix release that fixes several issues
-in the JIT. Among them, a long-standing JIT bug that started appearing when
-some instance optimizations exposed it. We also cleaned
-up many of the remaining stdlib test suite failures, which improves CPython
-compatibility around line numbers in dis.dis, signatures and objclass
-attributes for builtins, and other quality of life features.</p>
-<p>There is now an RPython <code class="docutils literal">_pickle</code> module that mirrors
-the CPython one, greatly speeding up pickling operations. Where before PyPy was
-5.7x slower than CPython on the pickle benchmark from the pyperformance
-benchmark suite, now it is only 1.6x slower <a class="brackets" href="https://www.pypy.org/posts/2026/04/pypy-v7322-release.html#footnote-1" id="footnote-reference-1"><span class="fn-bracket">[</span>0<span class="fn-bracket">]</span></a>. We also added pypy
-pickler extensions to dump and load lists using list strategies, and enabled
-them in the <code class="docutils literal">ForkingPickler</code> used by multiprocessing, speeding up cases where
-such objects are passed between PyPy multiprocessing instances.</p>
-<p>We also added an RPython json encoder, speeding up json_bench from being 2.6x
-slower than CPython to being 0.7x (meaning faster).</p>
-<p>The release includes two different interpreters:</p>
-<ul class="simple">
-<li><p>PyPy2.7, which is an interpreter supporting the syntax and the features of
-Python 2.7 including the stdlib for CPython 2.7.18+ (the <code class="docutils literal">+</code> is for
-backported security updates)</p></li>
-<li><p>PyPy3.11, which is an interpreter supporting the syntax and the features of
-Python 3.11, including the stdlib for CPython 3.11.15.</p></li>
-</ul>
-<p>The interpreters are based on much the same codebase, thus the double
-release. This is a micro release, all APIs are compatible with the other 7.3
-releases.</p>
-<p>We recommend updating. You can find links to download the releases here:</p>
-<blockquote>
-<p><a class="reference external" href="https://pypy.org/download.html">https://pypy.org/download.html</a></p>
-</blockquote>
-<p>We would like to thank our donors for the continued support of the PyPy
-project. If PyPy is not quite good enough for your needs, we are available for
-<a class="reference external" href="https://www.pypy.org/pypy-sponsors.html">direct consulting</a> work. If PyPy is helping you out, we would love to hear
-about it and encourage submissions to our <a class="reference external" href="https://pypy.org/blog">blog</a> via a pull request
-to <a class="reference external" href="https://github.com/pypy/pypy.org">https://github.com/pypy/pypy.org</a></p>
-<p>We would also like to thank our contributors and encourage new people to join
-the project. PyPy has many layers and we need help with all of them: bug fixes,
-<a class="reference external" href="https://doc.pypy.org/">PyPy</a> and <a class="reference external" href="https://rpython.readthedocs.org">RPython</a> documentation improvements, or general <a class="reference external" href="https://doc.pypy.org/project-ideas.html">help</a> with
-making RPython's JIT even better.</p>
-<p>If you are a python library maintainer and use C-extensions, please consider
-making a <a class="reference external" href="https://hpyproject.org/">HPy</a> / <a class="reference external" href="https://cffi.readthedocs.io">CFFI</a> / <a class="reference external" href="https://cppyy.readthedocs.io">cppyy</a> version of your library that would be performant
-on PyPy. In any case, <a class="reference external" href="https://github.com/joerick/cibuildwheel">cibuildwheel</a> supports building wheels for PyPy.</p>
-<p class="rubric">Footnotes</p>
-<aside class="footnote-list brackets">
-<aside class="footnote brackets" id="footnote-1">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/04/pypy-v7322-release.html#footnote-reference-1">0</a><span class="fn-bracket">]</span></span>
-<p>Once <a class="reference external" href="https://github.com/python/pyperformance/pull/461">a PR to pyperformance</a> to use the _pickle module on PyPy is accepted</p>
-</aside>
-</aside>
-<section id="what-is-pypy">
-<h3>What is PyPy?</h3>
-<p>PyPy is a Python interpreter, a drop-in replacement for CPython
-It's fast (<a class="reference external" href="https://speed.pypy.org">PyPy and CPython</a> performance
-comparison) due to its integrated tracing JIT compiler.</p>
-<p>We also welcome developers of other <a class="reference external" href="https://rpython.readthedocs.io/en/latest/examples.html">dynamic languages</a> to see what RPython
-can do for them.</p>
-<p>We provide binary builds for:</p>
-<ul class="simple">
-<li><p><strong>x86</strong> machines on most common operating systems
-(Linux 32/64 bits, Mac OS 64 bits, Windows 64 bits)</p></li>
-<li><p>64-bit <strong>ARM</strong> machines running Linux (<code class="docutils literal">aarch64</code>) and macos (<code class="docutils literal">macos_arm64</code>).</p></li>
-</ul>
-<p>PyPy supports Windows 32-bit, Linux PPC64 big- and little-endian, Linux ARM
-32 bit, RISC-V RV64IMAFD Linux, and s390x Linux but does not release binaries.
-Please reach out to us if you wish to sponsor binary releases for those
-platforms. Downstream packagers provide binary builds for debian, Fedora,
-conda, OpenBSD, FreeBSD, Gentoo, and more.</p>
-</section>
-<section id="what-else-is-new">
-<h3>What else is new?</h3>
-<p>For more information about the 7.3.22 release, see the <a class="reference external" href="https://doc.pypy.org/release-v7.3.22.html#changelog">full changelog</a>.</p>
-<p>Please update, and continue to help us make pypy better.</p>
-<p>Cheers,
-The PyPy Team</p>
-</section>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on April 28, 2026 10:00 AM UTC by
-            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
-              >PyPy</a
-            >
-          </div>
-          <a
-            href="https://www.pypy.org/posts/2026/04/pypy-v7322-release.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -1937,8 +2211,8 @@ The PyPy Team</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8056</a></li>
-    <li><a>Unique Feeds: 369</a></li>
+    <li><a>Total Entries: 8203</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
