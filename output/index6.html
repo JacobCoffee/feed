@@ -1426,10 +1426,11 @@ def rest_get(path: str, params: dict = None) -> dict:
 
 # ─── 3. WORKERS USAGE (GraphQL) ───────────────────────────────────────────────
 
-def get_workers_usage(days: int = 30):
+def get_workers_usage(days: int = 30) -> list[str]:
     print(f"\nWORKERS USAGE  (last {days} days)")
     now   = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
+    alerts: list[str] = []
 
     query = """
     query WorkersUsage($accountId: String!, $start: String!, $end: String!) {
@@ -1461,22 +1462,60 @@ def get_workers_usage(days: int = 30):
                             "start": iso(start), "end": iso(now)})
         records = (data["viewer"]["accounts"][0]
                        .get("workersInvocationsAdaptive", []))
-        rows = []
+
+        # Aggregate by scriptName: Cloudflare may return >1 row per script
+        # due to implicit time-bucket dimensions in adaptive sampling.
+        # Sum requests/errors; take max CPU across rows (CPU percentiles
+        # don't sum meaningfully, so report the highest observed).
+        aggregated: dict[str, dict] = {}
         for rec in records:
             s = rec.get("sum", {})
             q = rec.get("quantiles", {})
+            script_name = rec["dimensions"].get("scriptName", "(unnamed)")
+
+            if script_name not in aggregated:
+                aggregated[script_name] = {
+                    "requests": 0,
+                    "errors": 0,
+                    "cpu_p50": 0,
+                    "cpu_p99": 0,
+                }
+            aggregated[script_name]["requests"] += s.get("requests", 0) or 0
+            aggregated[script_name]["errors"]   += s.get("errors", 0) or 0
+            # Track maximum CPU across rows for safety
+            row_p50 = (q.get("cpuTimeP50") or 0) / 1_000
+            row_p99 = (q.get("cpuTimeP99") or 0) / 1_000
+            if row_p50 > aggregated[script_name]["cpu_p50"]:
+                aggregated[script_name]["cpu_p50"] = row_p50
+            if row_p99 > aggregated[script_name]["cpu_p99"]:
+                aggregated[script_name]["cpu_p99"] = row_p99
+
+        rows = []
+        for script_name, totals in aggregated.items():
             rows.append({
-                "Script":       rec["dimensions"].get("scriptName", "(unnamed)"),
-                "Requests":     f"{s.get('requests', 0):,}",
-                "Errors":       f"{s.get('errors', 0):,}",
-                "CPU ms":       f"{(q.get('cpuTimeP50') or 0) / 1_000:.1f}",
-                "CPU P99 ms":   f"{(q.get('cpuTimeP99') or 0) / 1_000:.1f}",
+                "Script":     script_name,
+                "Requests":   f"{totals['requests']:,}",
+                "Errors":     f"{totals['errors']:,}",
+                "CPU ms":     f"{totals['cpu_p50']:.1f}",
+                "CPU P99 ms": f"{totals['cpu_p99']:.1f}",
             })
+
+            if totals["requests"] > WORKERS_REQUEST_THRESHOLD:
+                alerts.append(
+                    f"Workers '{script_name}' requests {totals['requests']:,} > {WORKERS_REQUEST_THRESHOLD:,}"
+                )
+            if totals["cpu_p50"] > WORKERS_CPU_MS_THRESHOLD:
+                alerts.append(
+                    f"Workers '{script_name}' CPU ms {totals['cpu_p50']:.1f} > {WORKERS_CPU_MS_THRESHOLD:.1f}"
+                )
+
         rows.sort(key=lambda r: int(r["Requests"].replace(",", "")), reverse=True)
         print_table("Workers Invocations by Script",
                     rows, ["Script", "Requests", "Errors", "CPU ms", "CPU P99 ms"])
+        return alerts
     except Exception as e:
         print(f"  Workers data unavailable: {e}")
+        return []
 
 # ─── 4. R2 STORAGE & OPERATIONS (GraphQL) ────────────────────────────────────
 
@@ -2126,12 +2165,12 @@ to write the code to analyze and scrape Google Trends.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8361</a></li>
-    <li><a>Unique Feeds: 381</a></li>
+    <li><a>Total Entries: 8260</a></li>
+    <li><a>Unique Feeds: 379</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (552)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (485)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (216)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Kay Hayen (201)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (552)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (486)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (201)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
