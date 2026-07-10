@@ -53,6 +53,176 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://k-d-w.org/blog/2026/07/scikit-survival-0.28.0-released/" class="hover:underline"
+              >scikit-survival 0.28.0 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I am pleased to announce the release of <a href="https://scikit-survival.readthedocs.io/en/stable/release_notes/v0.28.html#scikit-survival-0-28-0-2026-07-05" target="_blank">scikit-survival 0.28.0</a>.</p>
+<p>A highlight of this release is the support for <em>Polars DataFrames</em> alongside pandas DataFrames via
+the <a href="https://narwhals-dev.github.io/narwhals/" target="_blank">Narwhals</a> dataframe abstraction layer.
+In addition, this release adds support for <em>scikit-learn 1.9</em>.</p>
+<h2 id="support-for-polars">Support for Polars</h2>
+<p><a href="https://docs.pola.rs/" target="_blank">Polars</a> is a data frame library similar to <a href="https://pandas.pydata.org/" target="_blank">pandas</a>,
+but with its core written in Rust instead of Python, which often gives Polars an advantage in terms of performance.</p>
+<p>All datasets shipped with scikit-survival can now be loaded as a Polars DataFrame by specifying the
+<code>output_type</code> argument.</p>
+<pre><code class="language-python">from sksurv.datasets import load_gbsg2
+# return X as a polars DataFrame
+X, y = load_gbsg2(output_type=&quot;polars&quot;)
+X.head()
+</code></pre>
+<pre><code class="language-text">shape: (5, 8)
+┌──────┬────────┬───────┬──────────┬────────┬─────────┬────────┬───────┐
+│ age ┆ estrec ┆ horTh ┆ menostat ┆ pnodes ┆ progrec ┆ tgrade ┆ tsize │
+│ --- ┆ --- ┆ --- ┆ --- ┆ --- ┆ --- ┆ --- ┆ --- │
+│ f64 ┆ f64 ┆ enum ┆ enum ┆ f64 ┆ f64 ┆ enum ┆ f64 │
+╞══════╪════════╪═══════╪══════════╪════════╪═════════╪════════╪═══════╡
+│ 70.0 ┆ 66.0 ┆ no ┆ Post ┆ 3.0 ┆ 48.0 ┆ II ┆ 21.0 │
+│ 56.0 ┆ 77.0 ┆ yes ┆ Post ┆ 7.0 ┆ 61.0 ┆ II ┆ 12.0 │
+│ 58.0 ┆ 271.0 ┆ yes ┆ Post ┆ 9.0 ┆ 52.0 ┆ II ┆ 35.0 │
+│ 59.0 ┆ 29.0 ┆ yes ┆ Post ┆ 4.0 ┆ 60.0 ┆ II ┆ 17.0 │
+│ 73.0 ┆ 65.0 ┆ no ┆ Post ┆ 1.0 ┆ 26.0 ┆ II ┆ 35.0 │
+└──────┴────────┴───────┴──────────┴────────┴─────────┴────────┴───────┘
+</code></pre>
+<h3 id="transforming-dataframes">Transforming DataFrames</h3>
+<p>scikit-learn enables transformers to return Polars data frames via the
+<a href="https://scikit-learn.org/stable/modules/df_output_transform.html#df-output-transform" target="_blank">set_output API</a>.</p>
+<pre><code class="language-python">from sklearn import set_config
+from sklearn.preprocessing import StandardScaler
+set_config(transform_output=&quot;polars&quot;)
+# standarize the columns of a polars DataFrame
+X_standarized = StandardScaler().fit_transform(
+X.select(&quot;age&quot;, &quot;tsize&quot;)
+)
+</code></pre>
+<p>scikit-surival has two transformers that now accept polars and pandas data frames as input:
+<a href="https://scikit-survival.readthedocs.io/en/v0.28.0/api/generated/sksurv.kernels.ClinicalKernelTransform.html" target="_blank">ClinicalKernelTransform</a>, and
+<a href="https://scikit-survival.readthedocs.io/en/v0.28.0/api/generated/sksurv.preprocessing.OneHotEncoder.html" target="_blank">OneHotEncoder</a>.</p>
+<h4 id="clinicalkerneltransform">ClinicalKernelTransform</h4>
+<p><code>ClinicalKernelTransform</code> computes a kernel matrix, so the output will be a numpy array, as before.
+With scikit-survival 0.28.0, it is aware of the
+<a href="https://docs.pola.rs/user-guide/concepts/data-types-and-structures/#appendix-full-data-types-table" target="_blank">polars colum types</a>
+<code>String</code>, <code>Categorical</code>, <code>Enum</code> and <code>Object</code>.
+However, polars does not have a concept similar to <a href="https://pandas.pydata.org/docs/user_guide/categorical.html#sorting-and-order" target="_blank">ordered categories</a> in pandas: <code>pd.Categorical([…], ordered=True)</code>.</p>
+<p>When computing the clinical kernel for a polars data frame, you can specify the order
+of categories with the <code>ordinal_categories</code> argument, otherwise all non-numeric columns
+will be treated as <em>nominal</em> columns, where values have no specific order
+(e.g. the column <code>horTh</code> with values &ldquo;yes&rdquo; and &ldquo;no&rdquo; in the example below).</p>
+<pre><code class="language-python">from sksurv.kernels import ClinicalKernelTransform
+K = ClinicalKernelTransform(
+ordinal_categories={&quot;tgrade&quot;: [&quot;I&quot;, &quot;II&quot;, &quot;III&quot;]},
+).fit_transform(
+X.select(&quot;age&quot;, &quot;horTh&quot;, &quot;tgrade&quot;)
+)
+</code></pre>
+<h4 id="onehotencoder">OneHotEncoder</h4>
+<p><code>OneHotEncoder</code> encodes the string-type columns to numeric columns.
+It automatically returns a data frame of the same type as the input:</p>
+<pre><code class="language-python">from sksurv.preprocessing import OneHotEncoder
+X_onehot = OneHotEncoder().fit_transform(X.select(&quot;horTh&quot;, &quot;tgrade&quot;))
+X_onehot.head()
+</code></pre>
+<pre><code class="language-text">shape: (5, 3)
+┌───────────┬───────────┬────────────┐
+│ horTh=yes ┆ tgrade=II ┆ tgrade=III │
+│ --- ┆ --- ┆ --- │
+│ f64 ┆ f64 ┆ f64 │
+╞═══════════╪═══════════╪════════════╡
+│ 0.0 ┆ 1.0 ┆ 0.0 │
+│ 1.0 ┆ 1.0 ┆ 0.0 │
+│ 1.0 ┆ 1.0 ┆ 0.0 │
+│ 1.0 ┆ 1.0 ┆ 0.0 │
+│ 0.0 ┆ 1.0 ┆ 0.0 │
+└───────────┴───────────┴────────────┘
+</code></pre>
+<h3 id="fitting-survival-models">Fitting survival models</h3>
+<p>Finally, you can pass a polars data frame to the fit and predict functions of any estimator.</p>
+<pre><code class="language-python">from sklearn.pipeline import make_pipeline
+from sksurv.linear_model import CoxPHSurvivalAnalysis
+pipe = make_pipeline(
+OneHotEncoder(), StandardScaler(), CoxPHSurvivalAnalysis()
+)
+pipe.fit(X[:500], y[:500])
+risk_scores = pipe.predict(X[500:])
+</code></pre>
+<p>Note that this only works for <em>eager</em> data frames, <em>lazy</em> data frames will give an error.</p>
+<pre><code class="language-python">X_lazy = X.lazy()
+pipe.fit(X_lazy[:500], y[:500])
+</code></pre>
+<pre><code class="language-python-traceback">Traceback (most recent call last):
+File &quot;example.py&quot;, line 21, in &lt;module&gt;
+pipe.fit(X_lazy[:500], y[:500])
+File &quot;…/site-packages/sklearn/base.py&quot;, line 1403, in wrapper
+return fit_method(estimator, *args, **kwargs)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+…
+File &quot;…/site-packages/sksurv/_dataframe/_input.py&quot;, line 96, in ensure_eager_dataframe
+_reject_polars_lazyframe(obj)
+File &quot;…/site-packages/sksurv/_dataframe/_input.py&quot;, line 84, in _reject_polars_lazyframe
+raise TypeError(_LAZYFRAME_NOT_SUPPORTED_MSG)
+TypeError: polars.LazyFrame is not supported; call .collect() before passing to scikit-survival.
+</code></pre>
+<h2 id="new-contributors">New Contributors</h2>
+<p>A big shoutout to our two new contributors:</p>
+<ul>
+<li><a href="https://github.com/cakedev0" target="_blank">cakedev0</a> for adding support for scikit-learn 1.9</li>
+<li><a href="https://github.com/55Kamiryo" target="_blank">55Kamiryo</a> for adding support for Polars data frames.</li>
+</ul>
+<h2 id="updated-dependencies">Updated Dependencies</h2>
+<p>With this release, the minimum supported version are:</p>
+<table style="width: auto;">
+<thead>
+<tr><th>Package</th><th>Minimum Version</th></tr>
+</thead>
+<tbody>
+<tr><td>narwhals</td><td style="text-align: right;">2.0.1</td></tr>
+<tr><td>scikit-learn</td><td style="text-align: right;">1.9.0</td></tr>
+</tbody>
+</table>
+<h2 id="install">Install</h2>
+<p>scikit-survival is available for Linux, macOS, and Windows
+and can be installed either</p>
+<p>via pip:</p>
+<pre><code class="language-bash">pip install scikit-survival
+</code></pre>
+<p>or via conda</p>
+<pre><code class="language-bash"> conda install -c conda-forge scikit-survival
+</code></pre>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 05, 2026 04:22 PM UTC by
+            <a href="https://k-d-w.org/tags/python/index.xml" class="link link-hover text-primary"
+              >Sebastian Pölsterl</a
+            >
+          </div>
+          <a
+            href="https://k-d-w.org/blog/2026/07/scikit-survival-0.28.0-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lucumr.pocoo.org/2026/7/4/better-models-worse-tools/" class="hover:underline"
               >Better Models: Worse Tools</a
             >
@@ -1470,241 +1640,6 @@ The journey started long ago with a new mum reading &quot;Intellectual Property 
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/un-open-source-week-2026?utm_campaign=rss" class="hover:underline"
-              >United Nations Open Source Week 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I was <a href="https://www.sovereign.tech/news/un-open-source-week-2026-maintainer-delegation">among the delegation</a> of “open source
-experts” invited to the <a href="https://www.unopensource.org/">UN Open Source Week 2026</a>
-in New York City by the Sovereign Tech Agency.
-Thank you to the <a href="https://www.sovereign.tech/">Sovereign Tech Agency</a> for
-inviting and supporting my stay and travel for the event.
-Thanks to <a href="https://alpha-omega.dev">Alpha-Omega</a> for sponsoring my position at the
-Python Software Foundation.</p>
-
-<p>UN Open Source Week is a week-long event with a different focus
-for each day. In order, the focuses were: Maintain-a-thon (UN Tech Over), Open Source × AI,
-Digital Public Infrastructure Day, OSPOs for Good, and Community Day.
-The event is structured into a series of presentations, panels,
-parallel sessions, interactive break-outs that start in the morning
-and carry on through into the evening at local partnered events.</p>
-
-<!-- more -->
-
-<h2>Themes</h2>
-
-<p>After speaking with many folks and attending a week of sessions,
-there were themes that carried through the entirety of the event:</p>
-
-<ul>
-<li>Power, resources, and talent around LLM technologies are currently concentrated into the control
-and geographical borders of few. Many countries and organizations are
-struggling with access to these technologies.
-A substantial portion of the answer is Open Source software and models of various definitions, but
-compute and talent are more difficult problems. Better efficiencies, distributed training
-and inference, sharing compute resources, and programs to transfer
-skills to other communities were among discussed solutions.</li>
-<li>LLMs are changing many of the social norms for
-Open Source participation which disrupts processes that have
-been in place for decades. Upstream and downstream processes
-will need to be developed to handle these changes.</li>
-<li>There were acknowledgements that many people were on edge or scared, that the
-metaphorical “tomorrow” was less clear to see than it was
-a few years ago. </li>
-</ul>
-
-<p>There was also plenty of hope in the sessions, too. Similar to last year,
-I left feeling that Open Source was a critical component for overcoming
-the challenges ahead and that organizations around the world knew this
-acutely.</p>
-
-<p>Multiple speakers asked those involved with Open Source projects
-to see how their projects aligned with the <a href="https://sdgs.un.org/goals">17 Sustainable Development Goals</a>,
-including quality education, clean energy, industry and infrastructure, and
-many more. Having done this exercise, I highly recommend others do so, too.</p>
-
-<h2>Maintain-a-thon 2.0</h2>
-
-<p>The Sovereign Tech Agency was the partner hosting the
-second “<a href="https://www.sovereign.tech/news/maintain-a-thon-2026">Maintain-a-thon</a>” as a part of the first day
-of UN Open Source Week. This year the day was split into
-two parallel tracks: “Technical Maintenance” and “Capacity &amp; Stewardship”.</p>
-
-<p><center>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/IMG_5454.JPG" style="border: 2px black solid;" />
-<br /><small><em>Giving context for LLMs and vulnerability reports for the Python programming language.</em></small>
-</center></p>
-
-<p><a href="https://www.linkedin.com/in/mirko-swillus/">Mirko Swillus</a> and I hosted a session in the Technical Maintenance track
-titled “The Vulnerability Flood: Open Source Security in the Age of LLMs”.
-The session would discuss how LLMs were affecting vulnerability handling
-and security teams and how we might better plan for potential futures.
-We began the session by setting context around how
-LLMs were already changing security, such as:</p>
-
-<ul>
-<li>publicly available models are able to discover vulnerabilities.</li>
-<li>LLMs can detect whether patches are security-relevant, regardless
-of whether an advisory is published (embargoes are less useful).</li>
-<li>time-to-exploit for vulnerabilities is decreasing.</li>
-<li>“AI slop” vulnerability reports and how in recent months quality has improved.</li>
-<li>how projects like the Python programming language are thinking today about
-“steering” these LLM-assisted contributions in a positive direction through
-security policies and threat models.</li>
-</ul>
-
-<p>The session proceeded into an interactive exercise to draw potential topics for deeper small-group
-discussions from participants using sticky notes. The three topic-clusters ended up being
-“People”, “Process”, and unsurprisingly “AI”.</p>
-
-<p>The “People” group
-discussed offering mental health programs for Open Source maintainers
-to better handle stress, burnout, and succession planning and highlighted
-the difficulties in defining what it even means to be a maintainer in terms
-of a “job description”.</p>
-
-<p>The “AI” group discussed the critical junction for handling unmaintained software
-in a world of agents and faster time-to-exploits, focusing on the question: “Fix or rewrite?”.
-Clearly rewrites should be a last-resort and are fraught with challenges, such
-as introducing more bugs and security issues due to a large volume of new code.
-The group highlighted challenges and potential solutions around LLM use for
-Open Source projects in handling the flood of security reports.</p>
-
-<p>The “Process” group discussed the weakening value of secrecy when it comes to
-vulnerability reports discovered using LLMs. Historically secrecy was kept to
-protect users, but if public models are able to find issues then who does
-this aspect of coordinated-vulnerability disclosure actually help? (Attackers).
-The Linux kernel is already experimenting with having less secrecy involved in vulnerability
-handling. </p>
-
-<blockquote>
-<details>
-Notes from the AI group
-
-Small python dep that keeps getting reports, is there a point where it should get rebuilt (with AI), rewrite it in rust for memory safety, identify the jenga block
-
-Is it so bad that it needs a complete overhaul, how is the architecture? (pre-ai assumption)
-
-Programme Bench (ai benchmark, does an ai rewrite something reliably)
-
-Depends on the size of the project, often 90% isn’t used
-
-What happens when there are no maintainers?
-
-Is the project well maintained enough? Does it have governance model that lets ai take over?
-
-We’ve seen ai rewrites that also change licenses at the same time
-
-When you make something from the ground up you learn it better, if you take something over, learning all the edge cases can be more work that rewriting from scratch.
-
-In any case, whoever takes over, new maintainers have to learn the edge cases and understanding.
-
-You could feed all git history into a model to ensure it learns all the failures and fixes over time.
-
-If we believe that AI is good enough to do an AI rewrite properly
-
-Rewrites are hard, introduces more problems that were there anymore
-
-Project moved in a direction from paid hosted models to free self hosted models, dealing with resource constraints. Easier to pitch AI projects from an ethics POV if it’s using self-hosted “open source” ai models. Feels better and better perceived about using “open source” models, but worried about how it scales.
-
-Choosing to engage with AI can cross red lines with committers and users that causes lots of issues.
-
-Pitching OSS projects as “AI powered” often upsets users.
-
-Getting users past “it has AI in the name”
-
-Resource constraints can make it needed to use AI because there are no people and no funding, locally run ai powered approaches come across more reasonably.
-
-Humanitarian sectors are slow to adopt this technology and generally slower moving in general.
-
-Airflow - Big open source projects - big number of incoming requests, hard to tell if incoming is human or agents. Processing issue trackers using AIs, ensuring things are triage and keeping them up to date.
-
-More process == more overhead. Having experienced developers looking at the triage process rather than the initial untrusted issues.
-
-Reducing the friction of adoption of AI - generation vs assistive
-
-Calling “ai” things - Machine learning to be clear if it’s generative llms.
-
-Can fix faster be useful for accessibility of using software where there user previously never had any software experience
-
-</details>
-</blockquote>
-
-<blockquote>
-<details>
-Notes from the People group
-
-Mental Health Programme for FOSS Maintainers
-
-How do we create awareness, so that people sign up for this? 
-
-Outspoken and explicit “Job Descriptions” for single maintainers
-
-so that is easier to understand which functions can be trained and educated
-Clear path for becoming a mentor 
-
-Sunsetting Projects 
-
-Support structures for sunsetting projects & find replacements 
-
-Ment or Students
-
-Learn from best practices (french DINUM, 2-3 years)
-
-</details>
-</blockquote>
-
-<h2>Open Source × AI Day Reception</h2>
-
-<p>At the reception for Open Source × AI Day there was an additional
-panel session focusing on LLMs and security. One of the most interesting
-talking points of this panel was the restrictions being placed on “Frontier”
-models with cybersecurity capabilities. Earlier in the week, GLM-5.2,
-an open weights model had been released and folks already had begun testing
-the model’s cybersecurity capabilities and found them to be
-already quite capable.</p>
-
-<p>The panel noted how open weights models appear to be fast-following “Frontier”
-capabilities with a delay between 6-12 months, implying that we may not
-need to wait long for an open weights model with Mythos-like capabilities
-to become available. This is based on speculation, but there are many implications for 
-this are... interesting, to put it lightly. :)</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 29, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/un-open-source-week-2026?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -1716,8 +1651,8 @@ this are... interesting, to put it lightly. :)</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8130</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8238</a></li>
+    <li><a>Unique Feeds: 379</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
