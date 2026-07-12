@@ -613,46 +613,6 @@ more about these topics at the end of the article.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/faq/adding-new-tabs-in-tabwidget-appears-as-a-seperate-window-when-tab-is-selected/" class="hover:underline"
-              >Why Widgets Appear as Separate Windows — Understanding widget parenting in Qt and how to fix widgets that float outside your main window</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Sometimes when I dynamically add widgets to tabs in my PyQt6 application, they pop out as windows instead. What's going on?
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 08, 2026 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/faq/adding-new-tabs-in-tabwidget-appears-as-a-seperate-window-when-tab-is-selected/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://snarky.ca/how-to-publish-to-pypi-using-github-actions-securely/" class="hover:underline"
               >How to publish to PyPI using GitHub Actions securely</a
             >
@@ -1617,6 +1577,532 @@ of media you're experiencing without the ceremony?</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://dev.to/ldrscke/migrate-from-mypy-to-ty-and-pyrefly-4p30" class="hover:underline"
+              >Migrate From mypy To ty And pyrefly</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I wanted to migrate one of my Python packages from <code>mypy</code> to <code>ty</code> and <code>pyrefly</code>. I handed this task over to Claude, and at the end I asked it to write out some guidance on how to perform it most efficiently. So what follows is <strong>AI-generated 'slop'</strong>.</p>
+
+
+
+
+<p>This guide is not about using <a href="https://github.com/cleder/fastkml" rel="noopener noreferrer"><code>fastkml</code></a>. It documents how <code>fastkml</code> itself was migrated from <code>mypy</code> to Astral's <a href="https://docs.astral.sh/ty/coming-from-mypy-or-pyright/" rel="noopener noreferrer"><code>ty</code></a> and Meta's <a href="https://pyrefly.org/en/docs/migrating-from-mypy/" rel="noopener noreferrer"><code>pyrefly</code></a>, so the same playbook can be replayed on other codebases with less trial and error. Keep it here because the next migration (human- or agent-driven) should start from findings, not from zero.</p>
+
+<p>Running two checkers instead of one is deliberate, not incidental. <code>ty</code> and <code>pyrefly</code> disagree with each other and with mypy often enough that running only one gives a false sense of completeness. Budget for both, and expect them to catch different subsets of the same bugs.</p>
+
+<h2>
+  
+  
+  TL;DR
+</h2>
+
+<ol>
+<li>Get a raw error-count baseline for both tools <strong>before</strong> touching any source. Categorize by error kind, not by file.</li>
+<li>Look for one <strong>systemic</strong> root cause before fixing anything file-by-file. In most codebases with an optional C-extension backend (lxml, pydantic-core, orjson, etc.) there is a single architectural fix that collapses 60-90% of the noise.</li>
+<li>Fix genuine bugs the tools surface (there will be some — both tools are pickier than mypy about <code>Optional</code>/union narrowing, positional-only stubs, and unpacking).</li>
+<li>Bulk-suppress test-file "constructed-then-accessed-without-narrowing" noise scoped to <code>tests/**</code>, not case by case, and not by widening the rule to error kinds that could hide real bugs (<code>invalid-argument-type</code> is not <code>unresolved-attribute</code>).</li>
+<li>Turn on strict presets, then promote specific rules the preset doesn't cover, and explicitly cut the ones that create disproportionate mechanical churn (ask a human before doing a 80-site <code>@override</code> sweep).</li>
+<li>Verify: both tools clean, full test suite green (with <strong>and</strong> without optional runtime deps installed), linter clean, and the TOML re-parses.</li>
+</ol>
+
+<h2>
+  
+  
+  Phase 0 — Inventory the mypy config honestly
+</h2>
+
+<p>Before deleting <code>[tool.mypy]</code>, read what each flag actually bought you, because that's the strictness bar <code>ty</code>/<code>pyrefly</code> need to match or exceed:</p>
+
+<div class="table-wrapper-paragraph"><table>
+<thead>
+<tr>
+<th>mypy setting</th>
+<th>Rough ty/pyrefly equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>disallow_any_generics</code></td>
+<td>ty <code>missing-type-argument = "error"</code>
+</td>
+</tr>
+<tr>
+<td><code>warn_redundant_casts</code></td>
+<td>ty <code>redundant-cast</code>; pyrefly <code>redundant-cast</code> (both exist, check current default level)</td>
+</tr>
+<tr>
+<td><code>warn_unused_ignores</code></td>
+<td>ty <code>unused-ignore-comment</code> / <code>unused-type-ignore-comment</code>; pyrefly <code>unused-ignore</code> (on by default under <code>strict</code>)</td>
+</tr>
+<tr>
+<td><code>warn_unreachable</code></td>
+<td>pyrefly's <code>strict</code> preset covers this; ty has no exact analog — don't assume parity, spot-check</td>
+</tr>
+<tr>
+<td><code>disallow_untyped_defs</code></td>
+<td>Neither tool has a literal flag for this — <code>ty</code> infers types through unannotated bodies by default (different philosophy from mypy). Don't expect a 1:1 mapping; re-derive intent instead of hunting for the same flag name.</td>
+</tr>
+<tr>
+<td>Per-module <code>disable_error_code</code> overrides</td>
+<td>pyrefly <code>[[tool.pyrefly.sub-config]]</code> + <code>matches</code> glob; ty <code>[[tool.ty.overrides]]</code> + <code>include</code> glob</td>
+</tr>
+</tbody>
+</table></div>
+
+<p>Also inventory <strong>stale</strong> per-module overrides — a mypy config that's been edited over years accumulates dead entries (a module path that was renamed or deleted, but the override survived). Grep for the referenced paths; don't carry dead config forward.</p>
+
+<h2>
+  
+  
+  Phase 1 — Install both tools and get a baseline
+</h2>
+
+
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>uv pip <span class="nb">install </span>ty pyrefly
+ty check &lt;src&gt; &lt;tests&gt;
+pyrefly check &lt;src&gt; &lt;tests&gt;
+</code></pre>
+
+</div>
+
+
+
+<p>Immediately categorize, don't read line by line yet:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>ty check &lt;src&gt; &lt;tests&gt; 2&gt;&amp;1 | <span class="nb">grep</span> <span class="nt">-oE</span> <span class="s1">'^error\[[a-zA-Z-]+\]'</span> | <span class="nb">sort</span> | <span class="nb">uniq</span> <span class="nt">-c</span> | <span class="nb">sort</span> <span class="nt">-rn</span>
+ty check &lt;src&gt; &lt;tests&gt; 2&gt;&amp;1 | <span class="nb">grep</span> <span class="nt">-E</span> <span class="s1">'^\s+--&gt;'</span> | <span class="nb">sed</span> <span class="nt">-E</span> <span class="s1">'s/^\s+--&gt; //; s/:[0-9]+:[0-9]+$//'</span> | <span class="nb">sort</span> | <span class="nb">uniq</span> <span class="nt">-c</span> | <span class="nb">sort</span> <span class="nt">-rn</span>
+</code></pre>
+
+</div>
+
+
+
+<p>The second command (errors by file) usually reveals the systemic cause immediately: a handful of files concentrate a disproportionate share of the errors, and they're usually the ones touching an optional/duck-typed dependency.</p>
+
+<p>If a partial migration already exists in the repo (CI switched over but <code>pyproject.toml</code> grew broad <code>ignore-missing-imports = ["*"]</code> / blanket <code>missing-attribute = "ignore"</code> sub-configs), treat that as a red flag, not a starting point. Broad suppressions accumulated during an in-progress migration usually mean someone hit friction and silenced it rather than fixed it. Re-run with those suppressions removed to see the real baseline before deciding what's worth keeping.</p>
+
+<h2>
+  
+  
+  Phase 2 — Find the systemic root cause first
+</h2>
+
+<p>The highest-leverage move in this kind of migration is almost never "fix errors file by file." It's finding the one architectural mismatch that both checkers are tripping over identically across dozens of call sites.</p>
+
+<p><strong>The recurring pattern</strong>: a project supports an optional, richer backend (lxml over <code>xml.etree.ElementTree</code>, <code>orjson</code> over <code>json</code>, <code>ujson</code>, a C-accelerated regex engine, etc.) via a runtime try/except import, and defines either a <code>Protocol</code> or just relies on structural duck-typing to abstract over both. mypy tolerated this for years via <code>ignore_missing_imports = true</code>, which silently treats the untyped backend as <code>Any</code> everywhere. Neither <code>ty</code> nor <code>pyrefly</code> degrade that gracefully by default — they'll either partially resolve the untyped backend's real (but incomplete) info, or fall back to typing it against whichever branch of the try/except <em>does</em> have full stubs (usually the stdlib fallback), and then report every method/kwarg the richer backend uniquely offers as invalid.</p>
+
+<p><strong>The fix</strong>, applied at the import site (not scattered across every call site):<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight python"><code><span class="kn">from</span> <span class="n">typing</span> <span class="kn">import</span> <span class="n">TYPE_CHECKING</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="c1"># Type-checkers see the richer backend's own stubs; the preferred
+</span>    <span class="c1"># backend's API is treated as a superset of the fallback's.
+</span>    <span class="kn">from</span> <span class="n">lxml</span> <span class="kn">import</span> <span class="n">etree</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">from</span> <span class="n">lxml</span> <span class="kn">import</span> <span class="n">etree</span>
+    <span class="k">except</span> <span class="nb">ImportError</span><span class="p">:</span>
+        <span class="kn">import</span> <span class="n">xml.etree.ElementTree</span> <span class="k">as</span> <span class="n">etree</span>
+</code></pre>
+
+</div>
+
+
+
+<p>If the project also defines its own <code>Protocol</code> to abstract over both backends (e.g. <code>types.py: class Element(Protocol): ...</code>), consider going one step further and making that Protocol <strong>literally alias the richer backend's real type</strong> under <code>TYPE_CHECKING</code>, falling back to the structural <code>Protocol</code> only for runtime/non-typechecking purposes:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight python"><code><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="n">lxml.etree</span> <span class="kn">import</span> <span class="n">_Element</span> <span class="k">as</span> <span class="n">Element</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="k">class</span> <span class="nc">Element</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+        <span class="p">...</span>  <span class="c1"># the original structural protocol, unchanged
+</span></code></pre>
+
+</div>
+
+
+
+<p>This one change collapsed roughly 150 of ~240 diagnostics in the fastkml migration, because it fixed both the "backend-specific kwarg doesn't exist" class of errors <em>and</em> the "structural Protocol isn't assignable to a concrete stdlib parameter type" class in one shot (see pitfall below).</p>
+
+<p>If a stub package exists for the richer backend (<code>lxml-stubs</code>, <code>types-ujson</code>, etc.), add it to your typing dev-dependencies — but read the pitfalls section before assuming it's a strict improvement for <em>both</em> checkers.</p>
+
+<h2>
+  
+  
+  Pitfalls (the part worth re-reading before your second migration)
+</h2>
+
+<h3>
+  
+  
+  1. <code># type: ignore[code]</code> is not portable
+</h3>
+
+<p>Neither <code>ty</code> nor <code>pyrefly</code> parses mypy's bracketed error-code suppression the way mypy does.</p>
+
+<ul>
+<li>
+<code>ty</code> honors a <strong>bare</strong> <code># type: ignore</code> (no brackets) as a blanket suppression for that line, but a bracketed <code># type: ignore[some-code]</code> is <strong>not</strong> recognized as a ty-ignore at all — it's inert noise as far as ty is concerned, and the underlying error still fires.</li>
+<li>
+<code>pyrefly</code> does honor <code># type: ignore[...]</code> by default (its <code>--enabled-ignores</code> defaults to <code>type,pyrefly</code>), so bracketed mypy comments mostly still work for pyrefly specifically.</li>
+<li>Both tools have their own dedicated syntax: <code># ty: ignore[rule-name]</code> and <code># pyrefly: ignore</code> / <code># pyrefly: ignore[error-kind]</code>.</li>
+</ul>
+
+<p>Verify empirically before trusting any of this — behavior can change between tool versions:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight python"><code><span class="k">def</span> <span class="nf">f</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sh">"</span><span class="s">y</span><span class="sh">"</span>  <span class="c1"># type: ignore[return-value]
+</span></code></pre>
+
+</div>
+
+
+
+<p>Run <code>ty check</code> and <code>pyrefly check</code> against a two-line repro before deciding on a suppression strategy for the whole codebase.</p>
+
+<p><strong>Practical rule that worked well</strong>: keep the original <code># type: ignore[code]</code> comment (documents intent, keeps pyrefly happy) and append <code># ty: ignore[rule-name]</code> on the same physical line for ty. Don't strip the mypy-era comments outright; they're free documentation of <em>why</em> a line is exceptional.</p>
+
+<h3>
+  
+  
+  2. pyrefly's TOML keys are snake_case even though its CLI flags are kebab-case
+</h3>
+
+<p>This is the single most time-consuming mistake to make. <code>pyrefly check --replace-imports-with-any 'lxml.*'</code> works from the CLI. Writing the "obvious" TOML equivalent:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[tool.pyrefly]</span>
+<span class="py">replace-imports-with-any</span> <span class="p">=</span> <span class="p">[</span><span class="s">"lxml.*"</span><span class="p">]</span>   <span class="c"># WRONG — silently different key</span>
+</code></pre>
+
+</div>
+
+
+
+<p>...does not raise an error from <code>pyrefly check</code> in some code paths, but it <strong>does</strong> hard-fail with <code>pyrefly dump-config</code> (<code>unknown variant 'replace-imports-with-any'... Fatal configuration error</code>), and depending on invocation order this can also break <code>pyrefly check</code> itself later. The correct TOML key uses underscores:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[tool.pyrefly]</span>
+<span class="py">replace_imports_with_any</span> <span class="p">=</span> <span class="p">[</span><span class="s">"lxml.*"</span><span class="p">]</span>
+</code></pre>
+
+</div>
+
+
+
+<p>Meanwhile, <strong>error-kind names</strong> (used as dict keys under <code>[tool.pyrefly.errors]</code> or inside a <code>rules = {...}</code> table) <em>do</em> use hyphens (<code>missing-override-decorator</code>, <code>redundant-cast</code>, etc.) — matching the CLI's <code>--error</code>/<code>--ignore</code> rule-name spelling, not the config-field spelling. There is no single consistent casing convention across the whole config surface; check <code>pyrefly dump-config</code> after every config change, not just <code>pyrefly check</code>, because <code>check</code> can look clean while a nearby key is silently ignored.</p>
+
+<p>After any pyrefly config edit, run both <code>pyrefly dump-config</code> (schema/parse validation) and <code>pyrefly check</code> (behavioral validation) — one catches structural mistakes the other doesn't surface.</p>
+
+<h3>
+  
+  
+  3. pyrefly's <code>[[tool.pyrefly.sub-config]]</code> array-of-tables is fragile against interleaving
+</h3>
+
+<p>Pyrefly's per-path overrides use TOML's array-of-tables syntax:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[[tool.pyrefly.sub-config]]</span>
+<span class="py">matches</span> <span class="p">=</span> <span class="s">"tests/**/*"</span>
+
+<span class="nn">[tool.pyrefly.sub-config.errors]</span>
+<span class="py">missing-attribute</span> <span class="p">=</span> <span class="s">"ignore"</span>
+</code></pre>
+
+</div>
+
+
+
+<p>TOML allows other, unrelated top-level tables to appear <em>between</em> <code>[[tool.pyrefly.sub-config]]</code> and its paired <code>[tool.pyrefly.sub-config.errors]</code> — the nested table still binds to the most-recently-opened array element regardless of what's interleaved. That means a <code>pyproject.toml</code> that grew organically (auto-migration tooling appending blocks near whatever happened to be at the end of the file) can end up with three sub-config blocks scattered across 100+ lines of unrelated project/tool config, and it will <em>still parse</em>. It becomes a landmine the moment someone (or an agent) deletes one <code>[[tool.pyrefly.sub-config]]</code> header without also deleting its now-orphaned <code>[tool.pyrefly.sub-config.errors]</code> block — the orphaned errors table then either binds to the wrong array element or breaks parsing entirely.</p>
+
+<p><strong>Fix</strong>: keep every pyrefly (and ty) config block <strong>contiguous</strong> in one place in the file, even if that means moving it away from wherever an automated tool first inserted it. Re-parse after every edit:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>python3 <span class="nt">-c</span> <span class="s2">"import tomllib; tomllib.load(open('pyproject.toml','rb')); print('OK')"</span>
+</code></pre>
+
+</div>
+
+
+
+<h3>
+  
+  
+  4. A <code>Protocol</code> is not assignable to a concrete class parameter
+</h3>
+
+<p>If your duck-typing abstraction is a <code>Protocol</code> (say, <code>types.Element</code>) and internal code passes <code>Element</code>-typed values into functions that are typed against the <em>concrete</em> stdlib/third-party class (<code>xml.etree.ElementTree.SubElement(parent: Element[Any], ...)</code>), both <code>ty</code> and <code>pyrefly</code> will reject it — even though the Protocol is structurally compatible at every call site. Protocol → concrete-class assignability doesn't work the way concrete → Protocol does, and a mutable/invariant attribute (<code>text: str</code> on the Protocol vs. <code>text: str | None</code> on the real class) makes it worse.</p>
+
+<p>This resolves itself for free once you apply the Phase 2 fix (alias the Protocol to the real backend's type under <code>TYPE_CHECKING</code>) for internal, backend-facing code. Keep the original Protocol only for the codebase's genuinely-public, backend-agnostic API surface.</p>
+
+<h3>
+  
+  
+  5. Registry/callback-style dispatch can't be narrowed at the signature level
+</h3>
+
+<p>A common pattern: a generic dispatch table stores <code>classes: tuple[type[object], ...]</code> and a matching <code>Protocol</code> requires every registered callback to accept exactly that (necessarily wide) signature, even though any <em>individual</em> callback only ever receives one concrete class at runtime. You cannot narrow an individual callback's parameter type to the concrete class it actually expects (<code>tuple[type[SpecificClass], ...]</code>) — that breaks structural assignability against the wider Protocol the dispatcher requires (parameter types are contravariant; a callback that only accepts a narrower type can't stand in for one the dispatcher will call with the wider type).</p>
+
+<p>Fix at the call site inside the function body instead of the signature: <code>cast("tuple[type[SpecificClass], ...]", classes)</code>, or <code>cls = cast("type[SpecificClass]", classes[0])</code>. Keep the public signature honestly wide.</p>
+
+<h3>
+  
+  
+  6. <code>**heterogeneous_dict</code> splats can't be validated against multi-parameter constructors
+</h3>
+
+
+
+<div class="highlight js-code-highlight">
+<pre class="highlight python"><code><span class="n">fields</span> <span class="o">=</span> <span class="p">{</span><span class="sh">"</span><span class="s">type_</span><span class="sh">"</span><span class="p">:</span> <span class="n">DataType</span><span class="p">.</span><span class="n">int_</span><span class="p">,</span> <span class="sh">"</span><span class="s">name</span><span class="sh">"</span><span class="p">:</span> <span class="sh">"</span><span class="s">Integer</span><span class="sh">"</span><span class="p">}</span>
+<span class="nc">SimpleField</span><span class="p">(</span><span class="o">**</span><span class="n">fields</span><span class="p">)</span>
+</code></pre>
+
+</div>
+
+
+
+<p>Both checkers infer <code>fields: dict[str, DataType | str]</code> and then check <em>every</em> keyword argument against that whole union, rather than against each parameter's own specific type — because plain <code>dict[str, ...]</code> splatting isn't a <code>TypedDict</code>, so there's no per-key type information available. This isn't a narrowing bug or an inherent-bad-input case; it's a structural limitation of <code>**dict</code> splatting itself. Either convert the dict to a <code>TypedDict</code> (real fix, more invasive) or accept a targeted ignore comment — don't spend time trying to "fix" it any other way.</p>
+
+<h3>
+  
+  
+  7. Community stub packages can behave differently per checker
+</h3>
+
+<p>If you add a community-maintained stub package (<code>lxml-stubs</code>, etc.) rather than relying on inline <code>py.typed</code> types, expect it to have its own bugs, and expect those bugs to manifest <strong>differently per checker</strong>. In this migration, <code>lxml-stubs</code> declares several attributes using the legacy stub syntax <code>tag = ...  # type: str</code> (pre-PEP 526). <code>ty</code> tolerates this by falling back to <code>Unknown</code> for that attribute (safe, just loses precision). <code>pyrefly</code> mis-parses it as the attribute's type being the <strong>literal value</strong> <code>Ellipsis</code>, then reports every subsequent use (<code>.strip()</code>, <code>.split()</code>, slicing) as an error on a nonexistent <code>EllipsisType</code> method — a wave of dozens of false positives that has nothing to do with your code.</p>
+
+<p>There is no fix on your side other than working around the stub bug per-checker:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[tool.pyrefly]</span>
+<span class="c"># Force pyrefly to treat the whole (broken-for-pyrefly) stub package as Any,</span>
+<span class="c"># while `ty` still gets full value from the same installed stub package.</span>
+<span class="py">replace_imports_with_any</span> <span class="p">=</span> <span class="p">[</span><span class="s">"lxml.*"</span><span class="p">]</span>
+</code></pre>
+
+</div>
+
+
+
+<p>Don't assume "we added the stub package" is the end of the story — verify both tools independently after adding any third-party stub dependency, because "more type information" is not always strictly better across tools.</p>
+
+<h3>
+  
+  
+  8. Fixing the root cause makes old workaround <code>cast()</code>s redundant — clean them up
+</h3>
+
+<p>Once you fix the systemic issue, re-run both tools and look specifically for <code>redundant-cast</code> warnings. Every <code>cast("Element", root)</code> that existed purely to placate mypy's <code>ignore_missing_imports</code> fallback becomes genuinely unnecessary once the real type flows through correctly, and leaving it in is now dead weight (and a <code>ty</code>/<code>pyrefly</code> warning) rather than a workaround. This is a good automatic signal that the root-cause fix actually landed.</p>
+
+<h3>
+  
+  
+  9. Some "strict" rules are mechanical churn, not bug-catching — decide explicitly, don't default to on
+</h3>
+
+<p>Pyrefly's <code>strict</code> preset (and to a lesser extent <code>ty</code>'s optional rules) includes checks like <code>missing-override-decorator</code> (PEP 698 <code>@override</code>), which can flag <strong>dozens to low-hundreds</strong> of ordinary <code>__repr__</code>/<code>__init__</code>/method overrides in any codebase with meaningful inheritance. This is a legitimate check with real value in large team codebases (catches silently-broken overrides after a base-class rename), but adding <code>@override</code> everywhere is a large, purely mechanical diff disconnected from the actual "fix type errors" task.</p>
+
+<p>Don't silently turn this on or off. Surface it explicitly (to a human reviewer, or via an explicit question if you're an agent) before deciding: disable it with a documented reason, or actually do the sweep. Either is defensible; picking silently isn't.</p>
+
+<h3>
+  
+  
+  10. Test-file "narrowing noise" is real but should not become a license to blanket-suppress everything
+</h3>
+
+<p>The overwhelming majority of test-file errors in a mature test suite will be the same shape: construct an object, then immediately access/assign a field typed <code>X | None</code> or <code>A | B | None</code>, without a narrowing <code>assert x is not None</code> — because the test <em>knows</em> the value is set (it just set it three lines up) but the checker doesn't. This is legitimately safe to bulk-suppress scoped to the test tree:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[[tool.pyrefly.sub-config]]</span>
+<span class="py">matches</span> <span class="p">=</span> <span class="s">"tests/**/*"</span>
+<span class="nn">[tool.pyrefly.sub-config.errors]</span>
+<span class="py">missing-attribute</span> <span class="p">=</span> <span class="s">"ignore"</span>
+
+<span class="nn">[[tool.ty.overrides]]</span>
+<span class="py">include</span> <span class="p">=</span> <span class="p">[</span><span class="s">"tests/**"</span><span class="p">]</span>
+<span class="py">rules</span> <span class="o">=</span> <span class="p">{</span> <span class="py">unresolved-attribute</span> <span class="p">=</span> <span class="s">"ignore"</span><span class="p">,</span> <span class="py">invalid-assignment</span> <span class="p">=</span> <span class="s">"ignore"</span> <span class="p">}</span>
+</code></pre>
+
+</div>
+
+
+
+<p>But scope the suppressed <strong>rule names</strong> narrowly (<code>unresolved-attribute</code>/<code>missing-attribute</code>/the specific <code>invalid-assignment</code> shape), not broad categories like <code>invalid-argument-type</code>/<code>bad-argument-type</code> — those catch genuinely wrong types passed into calls, which do happen in test code (typos, copy-paste of the wrong fixture) and are worth keeping visible. In the fastkml migration, roughly 90% of test-file errors were narrowing noise safely bulk-suppressed, and the remaining 10% surfaced one genuine test bug (a string literal assigned where an enum member was expected) plus a batch of deliberately-invalid-input tests that just needed their ignore-comment syntax migrated (see pitfall 1).</p>
+
+<h2>
+  
+  
+  Phase 3 — Work file by file for what's left
+</h2>
+
+<p>After the systemic fix and the bulk test-suppression, what remains is usually a short, tractable list (tens, not hundreds, of diagnostics). For each:</p>
+
+<ol>
+<li>
+<strong>Read the surrounding code before deciding how to fix it.</strong> The same <code>unresolved-attribute</code> shape can be a real narrowing gap (add <code>assert x is not None</code>, matching the style already used elsewhere in the file), a genuine latent bug (an off-by-one/empty-tuple case an unpacking <code>*args</code> call didn't guard against), or a structural dispatch limitation (pitfall 5).</li>
+<li>
+<strong>Prefer a real fix over a cast or ignore</strong> wherever one exists cheaply: correcting a wrong return-type annotation (<code>Optional[X]</code> that never actually returns <code>None</code>), adding <code>isinstance</code> narrowing instead of a loose dict-dispatch, genericizing a <code>find</code>/<code>find_all</code>-style utility with <code>@overload</code> + a <code>TypeVar</code> instead of returning <code>object</code>.</li>
+<li>
+<strong>Use <code>cast()</code> with a one-line comment explaining *why</strong>* when the limitation is structural (pitfalls 4-6), not because you're in a hurry.</li>
+<li>Re-run the checker on just that file after each fix (<code>ty check path/to/file.py</code>) — faster feedback loop than re-running the whole tree, and it confirms the fix didn't introduce a new diagnostic in the same file.</li>
+</ol>
+
+<h2>
+  
+  
+  Phase 4 — Tighten to "maximum quality"
+</h2>
+
+<p>Once both tools report zero errors on the fixed baseline, raise the bar deliberately rather than assuming the default preset is already strict:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight toml"><code><span class="nn">[tool.pyrefly]</span>
+<span class="py">preset</span> <span class="p">=</span> <span class="s">"strict"</span>   <span class="c"># not "legacy" / "default" — legacy exists specifically to ease mypy migrations, it's a floor, not a target</span>
+
+<span class="nn">[tool.ty.rules]</span>
+<span class="c"># Promote rules ty ships at warn/ignore by default; discover the full list with `ty explain rule`.</span>
+<span class="py">possibly-missing-attribute</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">possibly-missing-import</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">possibly-unresolved-reference</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">missing-type-argument</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">unused-ignore-comment</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">unused-type-ignore-comment</span> <span class="p">=</span> <span class="s">"error"</span>
+<span class="py">redundant-cast</span> <span class="p">=</span> <span class="s">"error"</span>
+</code></pre>
+
+</div>
+
+
+
+<p>Discover what's available rather than guessing:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>ty explain rule                 <span class="c"># every rule, default level, rationale, examples</span>
+pyrefly check <span class="nt">--help</span>            <span class="c"># --preset options, --error/--warn/--ignore, --replace-imports-with-any, etc.</span>
+pyrefly dump-config             <span class="c"># what's actually active for this project right now</span>
+</code></pre>
+
+</div>
+
+
+
+<h2>
+  
+  
+  Phase 5 — Verify
+</h2>
+
+<p>Don't call it done on "the type checker is quiet." Run the full loop:<br />
+</p>
+
+<div class="highlight js-code-highlight">
+<pre class="highlight shell"><code>ty check &lt;src&gt; &lt;tests&gt;
+pyrefly check &lt;src&gt; &lt;tests&gt;
+ruff check <span class="nt">--no-fix</span> &lt;src&gt; &lt;tests&gt;          <span class="c"># type-fix edits (casts, isinstance, overloads) can introduce lint issues</span>
+ruff format <span class="nt">--check</span> &lt;src&gt; &lt;tests&gt;
+python <span class="nt">-m</span> pytest                            <span class="c"># with optional runtime deps installed</span>
+uv pip uninstall &lt;optional-dep&gt;             <span class="c"># e.g. lxml</span>
+python <span class="nt">-m</span> pytest <span class="nt">-m</span> <span class="s2">"not &lt;slow-marker&gt;"</span>     <span class="c"># confirm the fallback code path still works</span>
+uv pip <span class="nb">install</span> <span class="nt">-e</span> <span class="s2">".[typing,&lt;optional-dep&gt;]"</span>
+python3 <span class="nt">-c</span> <span class="s2">"import tomllib; tomllib.load(open('pyproject.toml','rb'))"</span>
+</code></pre>
+
+</div>
+
+
+
+<p>The "uninstall the optional dependency and re-run tests" step matters specifically because Phase 2's fix changes how the optional backend is <em>typed</em>, not just how it's imported — if the runtime fallback logic was touched at all while chasing type errors, this is the step that catches a broken fallback path before it ships.</p>
+
+<h2>
+  
+  
+  Case study numbers (fastkml)
+</h2>
+
+<p>For calibration on what "a lot of noise, mostly one root cause" looks like in practice:</p>
+
+<ul>
+<li>Baseline: <code>ty</code> reported 237 diagnostics across source + tests; <code>pyrefly</code> reported 40 errors (with an already-too-permissive config suppressing 38 more).</li>
+<li>One import-site fix (Phase 2, aliasing the duck-typed <code>Element</code> Protocol and <code>etree</code> module to <code>lxml</code>'s real stubs under <code>TYPE_CHECKING</code>) collapsed <code>ty</code>'s source-only count from 47 to 13 in a single step.</li>
+<li>Total genuine bugs found and fixed in library source: 5 (a missed <code>.getroot()</code> call, an unguarded empty-tuple unpack in a <code>zip_longest</code> loop, a too-loose <code>type[object]</code> dispatch signature, a <code>Self</code>-in-a-list invariance issue, and one example script passing <code>bytes</code> where <code>str</code> was expected).</li>
+<li>Total genuine bugs found and fixed in tests: 1 (a string literal compared against an enum field).</li>
+<li>Final state: zero errors on <code>ty check</code> and <code>pyrefly check</code> for the CI-covered scope, with all pre-existing tests still passing, both with and without the optional <code>lxml</code> backend installed.</li>
+</ul>
+
+
+
+
+<p>If you made it this far, you might be interested in the cost:</p>
+
+<ul>
+<li>Total cost:            $40.44</li>
+<li>Total duration (API):  58m 29s</li>
+<li>Total duration (wall): 1h 48m 15s</li>
+<li>Total code changes:    635 lines added, 224 lines removed</li>
+</ul>
+
+<p>Usage by model:</p>
+
+<ul>
+<li>claude-haiku-4-5:  1.1k input, 39 output, 0 cache read, 0 cache write ($0.0013)</li>
+<li>claude-sonnet-5:  23.1k input, 227.0k output, 106.7m cache read, 993.5k cache write ($40.44)</li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 05, 2026 04:29 PM UTC by
+            <a href="https://dev.to/feed/ldrscke.rss" class="link link-hover text-primary"
+              >Christian Ledermann</a
+            >
+          </div>
+          <a
+            href="https://dev.to/ldrscke/migrate-from-mypy-to-ty-and-pyrefly-4p30"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1628,8 +2114,8 @@ of media you're experiencing without the ceremony?</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8273</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8362</a></li>
+    <li><a>Unique Feeds: 385</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
