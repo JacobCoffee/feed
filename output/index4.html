@@ -53,617 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lucumr.pocoo.org/2026/7/4/better-models-worse-tools/" class="hover:underline"
-              >Better Models: Worse Tools</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A very strange <a href="https://github.com/earendil-works/pi/issues/6278">Pi issue</a>
-sent me down a rabbit hole over the last two days.  The short version is that
-newer Claude models sometimes call Pi&#8217;s edit tool with extra, invented fields in
-the nested <code>edits[]</code> array.  And not Haiku or some small model: Opus 4.8.  The
-edit itself is usually correct but the arguments do not match the schema as
-the model invents made-up keys and Pi thus rejects the tool call and asks to
-try again.</p>
-<p>That alone is not too surprising as models emit malformed tool calls sometimes.
-Particularly small ones.  What surprised me is that this is getting worse with
-newer Anthropic models as both Opus 4.8 and Sonnet 5 show it but none of the
-older models.  In other words, the SOTA models of the family are worse at this
-specific tool schema than their older siblings.</p>
-<p>In case you are curious about Fable: I intentionally did not test it because I
-was not sure if the classifiers they are running might downgrade me to Opus
-silently.</p>
-<h2>Tool Calls Are Text</h2>
-<p>If you have not spent too much time looking at LLM tool calling internals, the
-important thing to understand is that tool calls are not magic and use some
-rather crude in-band signalling.  The model receives a transcript, a system
-prompt and a list of available tools.  The server munches that into a large
-prompt with special marker tokens.  Because the model was trained and
-reinforced on examples of that format, at some point during generation it emits
-something that the API or client interprets as &#8220;call this tool with these
-arguments&#8221;.</p>
-<p>For a file edit tool, the intended invocation payload might say something like
-this:</p>
-<div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;some/file.py&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;edits&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<span class="w">    </span><span class="p">{</span>
-<span class="w">      </span><span class="nt">&quot;oldText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;text to replace&quot;</span><span class="p">,</span>
-<span class="w">      </span><span class="nt">&quot;newText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;replacement text&quot;</span>
-<span class="w">    </span><span class="p">}</span>
-<span class="w">  </span><span class="p">]</span>
-<span class="p">}</span>
-</pre></div>
-<p>A harness then validates the arguments, performs the edit, and feeds the result
-back into the model.  If validation fails, the model sees an error and usually
-tries again.</p>
-<p>How exactly that formatting happens is not known for the Anthropic models, but
-some people have gotten out &#8220;ANTML&#8221; markers and they at times do leak also into
-public communications.  To the best of my knowledge, the call above would come
-out serialized like this from the model:</p>
-<div class="highlight"><pre><span></span><span class="nt">&lt;antml:function_calls&gt;</span>
-<span class="w">  </span><span class="nt">&lt;antml:invoke</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;edit&quot;</span><span class="nt">&gt;</span>
-<span class="w">    </span><span class="nt">&lt;antml:parameter</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;path&quot;</span><span class="nt">&gt;</span>some/file.py<span class="nt">&lt;/antml:parameter&gt;</span>
-<span class="w">    </span><span class="nt">&lt;antml:parameter</span><span class="w"> </span><span class="na">name=</span><span class="s">&quot;edits&quot;</span><span class="nt">&gt;</span>
-[
-<span class="w">  </span>{
-<span class="w">    </span>&quot;oldText&quot;:<span class="w"> </span>&quot;text<span class="w"> </span>to<span class="w"> </span>replace&quot;,
-<span class="w">    </span>&quot;newText&quot;:<span class="w"> </span>&quot;replacement<span class="w"> </span>text&quot;
-<span class="w">  </span>}
-]
-<span class="w">    </span><span class="nt">&lt;/antml:parameter&gt;</span>
-<span class="w">  </span><span class="nt">&lt;/antml:invoke&gt;</span>
-<span class="nt">&lt;/antml:function_calls&gt;</span>
-</pre></div>
-<p>An important thing to note here is that this thing, while looking like XML, is
-not really XML.  It&#8217;s just a thing they found convenient to tokenize and train
-on.  The other thing to note is that a basic top-level string parameter appears
-in-line whereas an array of objects is implemented via JSON serialization.
-While I&#8217;m not <em>entirely sure</em> that this is how it works, there are some
-indications that this is not too far off.  This will become relevant later.</p>
-<p>There are two very different ways to make the model produce a structure like
-this:</p>
-<ol>
-<li>You can <em>ask</em> the model to produce valid JSON matching a schema and then
-validate it afterwards.</li>
-<li>You can constrain the sampler so that invalid JSON, or even invalid schema
-shapes, cannot be sampled in the first place.</li>
-</ol>
-<p>The second approach is what people usually refer to as grammar-aware or
-constrained decoding.  The sampler masks out tokens that would violate the
-grammar.  If the model is currently inside a JSON object and the schema says
-only <code>oldText</code> and <code>newText</code> are allowed, the sampler can prevent it from
-emitting <code>&quot;in_file&quot;</code> or <code>&quot;type&quot;</code>.  Grammar-aware decoding can be used both to
-constrain something to be syntactically valid JSON and also to enforce specific
-enum values or keys.</p>
-<p>Without any form of constraints the model is merely following a learned
-convention.</p>
-<h2>The Failure</h2>
-<p>Pi&#8217;s edit tool supports multiple exact string replacements in one call.  That is
-why the arguments contain an <code>edits</code> array.  In the failing cases the model
-produces entries like this:</p>
-<div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;oldText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;newText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;requireUnique&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<span class="p">}</span>
-</pre></div>
-<p>or this:</p>
-<div class="highlight"><pre><span></span><span class="p">{</span>
-<span class="w">  </span><span class="nt">&quot;oldText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;newText&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;oldText2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span><span class="p">,</span>
-<span class="w">  </span><span class="nt">&quot;newText2&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&quot;</span>
-<span class="p">}</span>
-</pre></div>
-<p>Across repeated trials I saw a whole zoo of invented trailing keys: <code>type</code>,
-<code>id</code>, <code>kind</code>, <code>unique</code>, <code>requireUnique</code>, <code>matchCase</code>, <code>in_file</code>,
-<code>forceMatchCount</code>, <code>children</code>, <code>notes</code>, <code>cost</code>, <code>oldText2</code>, <code>newText2</code>,
-<code>oldText_2</code>, <code>newText_2</code>, and even an <code>event.0.additionalProperties</code> key inside
-the edit object itself.</p>
-<p>The most annoying part is that the actual <code>oldText</code> and <code>newText</code> payloads were
-byte-correct in the invalid calls I inspected.  The model had in fact produced
-the right invocation but then added nonsense at the end of the object.</p>
-<p>The failure is also heavily context-dependent.  A fresh single-turn prompt like
-&#8220;edit this file&#8221; did not reproduce it at all for me.  An agentic history where the
-model had read files, diagnosed a problem and then composed a multi-line edit
-could reproduce it.  And more annoyingly, not all transcripts will show that behavior.
-In fact, I needed <a href="https://github.com/pasky">Petr Baudis</a>&#8216;s transcripts to
-reproduce this for me at all!  In that user&#8217;s session continuing the session
-caused Opus 4.8 to fail around 20% of the time.  Stripping thinking blocks from
-history reduced the failure rate by half.  Turning on strict tool invocation
-eliminated it in my runs.</p>
-<h2>Why It&#8217;s Getting Worse</h2>
-<p>My strongest hypothesis is that this is not random deterioration but a training
-artifact.</p>
-<p>When older Anthropic models were trained, they were trained on some tools (some of
-which were documented).  But that training did not yet have a user-shipped
-harness like Claude Code as the obvious target.  Modern Anthropic models are
-most likely different because their post-training includes Claude Code or a
-harness that looks very similar.  The model learns what a successful tool call
-looks like in that environment.  It also learns what mistakes are tolerated by that environment.</p>
-<p>Claude Code&#8217;s own tools are comparatively flat.  The ordinary edit tool is not
-Pi&#8217;s nested <code>edits[]</code> shape; it is closer to <code>file_path</code>, <code>old_string</code>,
-<code>new_string</code>, and an optional flag (<code>replace_all</code>).  Looking at Claude Code&#8217;s
-client is very instructive: it contains retry paths for malformed tool use,
-parameter aliases, type coercions, Unicode repairs and filtering of unknown
-keys.  In other words, Anthropic&#8217;s own client appears to expect and accept a
-fair amount of slop and repairs it, mostly silently.</p>
-<p>If reinforcement learning happens in a harness like that, or a simulation of
-one, then slightly malformed tool calls can still complete the task and receive
-reward.  The harness fully absorbs the error and there is little gradient
-against inventing an alias, adding a stray field or using a nearby parameter
-name.</p>
-<p>Worse, the model may become very strongly adapted to the canonical Claude Code
-edit tool shape.  A different harness can present a tool with the same semantic
-intent but a different schema.  Such a tool can increasingly be
-off-distribution.  The better-trained model might actually fight you harder
-because its prior is stronger.</p>
-<p>This is not too surprising, but it is a change from how this was a few months ago.
-When Opus 4.5 launched, it adapted to other edit tools exceptionally well.  In
-fact, I was pretty convinced that we&#8217;re on a good path where the models are
-more likely to adapt to any sort of tool shape that comes around for as long
-as the instructions are good.</p>
-<p>Now I&#8217;m somewhat worried about the track we&#8217;re on here.  Alternative tool
-schemas might not just be unfamiliar.  They might be implicitly punished by
-post-training that optimizes for one particular, forgiving tool ecology.  And
-that ecology is not documented.  While there is a <a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/text-editor-tool">text editor
-tool</a>
-that is documented, you will see that this format is in fact not followed by
-Claude Code.  What Claude Code does internally (which is a closed-source
-harness) is hidden from you.</p>
-<h2>The Slop Harness</h2>
-<p>Claude Code is obviously closed-source but we can look at the minified code and
-get some idea of what it does.  And honestly, it&#8217;s very forgiving of incoming
-data.</p>
-<p>For a start, Claude Code checks the model&#8217;s visible text for leaked <code>&lt;invoke</code>
-markup.  It also emits some telemetry when that happens and then it has its
-own state machine to retry such bad calls by pushing back to the model.</p>
-<p>It has explicit Unicode escape repair which fixes broken <code>\uXXXX</code> sequences and
-lone surrogates in string values.  It also has per-tool aliases for parameters.
-For instance, <code>Edit</code> accepts <code>old_str</code> (presumably from the times when the models
-were trained on the officially documented text editor tool), the newer <code>old_string</code>
-from the schema, <code>new_str</code>/<code>new_string</code>, <code>path</code> as an alias for <code>file_path</code>, and some more.</p>
-<p>It also silently filters out unexpected keys and it does not use <code>strict</code> mode
-either.  The issue with <code>strict</code> mode is that Anthropic applies complexity
-limits to the tool definitions that cause API requests to fail, so presumably
-that&#8217;s why Claude Code does not attempt to use it.</p>
-<h2>Strictness</h2>
-<p>Will this problem be with us in other harnesses too?  One huge issue with
-Anthropic is that the models are completely closed, and so is the harness.
-Codex models are also closed, but at least the harness is not.  We also have
-<a href="https://github.com/openai/gpt-oss">gpt-oss</a> which is at least a bit
-interesting.  The models are explicitly trained to use OpenAI&#8217;s
-<a href="https://github.com/openai/harmony">harmony</a> response format and there is
-a lot of documentation that at least tells us how OpenAI people think about
-this.</p>
-<p>Harmony makes channels and tool-call content types part of the prompt format.  A
-function call can look like this:</p>
-<div class="highlight"><pre><span></span>&lt;|start|&gt;assistant&lt;|channel|&gt;commentary to=functions.get_weather
-&lt;|constrain|&gt;json&lt;|message|&gt;{&quot;location&quot;:&quot;San Francisco&quot;}&lt;|call|&gt;
-</pre></div>
-<p>The important bit is <code>&lt;|constrain|&gt;json</code>.  The model can express in-band that
-this message body is JSON, and an inference stack can use that boundary to
-switch into JSON-constrained sampling for the body of the tool call.  Presumably
-a bit of this also happens in Anthropic&#8217;s models, at least in <code>strict</code> mode
-I would imagine.</p>
-<p>The marker in harmony helps the sampler to detect when it needs to sample with a
-specific grammar, and because it is part of the transcript, it makes that rather
-easy to do.  For hosted GPT models, there is also an option to provide a
-<a href="https://lark-parser.readthedocs.io/en/latest/grammar.html">LARK</a> grammar for
-custom tools that need to adhere to something like this.</p>
-<p>Anthropic appears different from that, though maybe not entirely.  If an array
-of objects is represented as JSON, as it appears to be, then the model has to
-write JSON inside the tool parameter.  There is probably basic
-grammar-constrained sampling going on, and that may partly explain the extra
-keys.  For a nested array parameter, that JSON includes escaped multi-line file
-content inside string literals, inside one tag.  The unexpected,
-made-up keys appear exactly at the highest-entropy point of that task: after
-closing a several-hundred-token escaped <code>newText</code> string, where the model must
-decide <code>}</code> vs <code>, &quot;...&quot;</code>.</p>
-<p>Opus 4.8 and Sonnet 5 seem to have much stronger priors about what an edit tool
-call should look like and that prior appears to be Claude Code&#8217;s edit schema: a
-flat old/new string pair, plus the optional <code>replace_all</code> flag.  My guess is
-that Opus has learned that an edit operation may have one extra optional field,
-but under Pi&#8217;s nested <code>oldText</code>/<code>newText</code> shape it has no trained name for that
-field.  So it samples a plausible name fresh each time, which is why the
-failures produce dozens of random keys rather than one stable alias.</p>
-<p>As <code>strict</code> mode in Anthropic appears to fix this, I presume that on the server
-side they are refusing to sample a key that is not permitted by the JSON schema
-structure.  That would also explain why they have limits to the complexity of
-the tool definitions when strict mode is enabled.</p>
-<p>So far, the Codex models I tested did not show this type of regression.  I tested
-all available ones except 5.6, which I do not have access to yet.</p>
-<h2>What This Means For Harnesses</h2>
-<p>The uncomfortable lesson is that tool schemas are not neutral, at least not on
-Anthropic models.  We like to pretend that a schema is an abstract contract and
-the model is a general reasoner that will follow it, but that might no longer be
-the case for some of the tools.</p>
-<p>Tool schemas are somewhere in the distribution and some shapes are close to
-what the model saw during post-training and some are far away.  Some are easy for
-the provider&#8217;s hidden encoding (e.g. top-level attributes in ANTML), whereas some
-require the model to write large escaped JSON objects inside nested arrays after
-long multiline strings.  The model may be smart enough to understand the schema
-and still be bad at sampling the exact shape under pressure.</p>
-<p>If this type of model behavior continues, I wonder what the implications for
-harnesses are.  Obviously one could turn on <code>strict</code> sampling in
-Anthropic and the problem should go away.  On the other hand, that the model
-has this behavior shows the impact that reinforcement learning has on them.
-Fighting that prior is probably futile if you want to get the best model performance.</p>
-<p>Right now the reality is that Claude Code is not open source and we cannot
-really know what they are doing in their RL environments either.  We cannot assume
-Claude-Code-trained behavior will transfer cleanly to your tools unless they are
-a close match.  The more post-training happens inside one dominant harness, the
-more every other harness will have to inherit its quirks.</p>
-<p>I used to be more skeptical of strict grammar-constrained tool invocation
-because constrained decoding can have quality tradeoffs.  I still think that can
-be true in general, but this bug moved my priors significantly.  If the newest
-models get better at solving the task while getting worse at faithfully emitting
-an alternative tool schema, then the harness needs stronger guarantees
-somewhere.</p>
-<p>If you want to find out more, or you want to discuss this, consider reading the
-<a href="https://github.com/earendil-works/pi/issues/6278">issue on the Pi tracker</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 04, 2026 12:00 AM UTC by
-            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
-              >Armin Ronacher</a
-            >
-          </div>
-          <a
-            href="https://lucumr.pocoo.org/2026/7/4/better-models-worse-tools/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/301/" class="hover:underline"
-              >The Real Python Podcast – Episode #301: Running Python Locally in a Sandbox</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            How do you avoid the risk of running a Python application locally that could be malicious, break your code, or leak private data? How can you create a sandboxed local environment using WASM and MicroPython? Christopher Trudeau is back on the show this week with another batch of PyCoder's Weekly articles and projects.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 03, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/301/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.mycli.net/v2.0.0.html" class="hover:underline"
-              >Release v2.0.0</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><code>mycli</code> is a command line interface for MySQL which includes
-auto-completion and syntax highlighting.</p>
-<p><a href="https://www.mycli.net/install">Read the install instructions</a> to find out how to get the latest version.</p>
-<p>Mycli v2.0.0 has <a href="https://github.com/dbcli/mycli/blob/v2.0.0/changelog.md#breaking-changes">breaking changes</a>!</p>
-<p>Major features added in recent months include</p>
-<ul>
-<li>powerful fuzzy history search with <a href="https://github.com/junegunn/fzf">fzf</a> (thanks <a href="https://github.com/lazmond3">lazmond3</a>!)</li>
-<li>integrated …</li></ul>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 03, 2026 07:00 AM UTC by
-            <a href="http://www.mycli.net/feeds/tag.python.rss.xml" class="link link-hover text-primary"
-              >Mycli</a
-            >
-          </div>
-          <a
-            href="https://www.mycli.net/v2.0.0.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/security-release-for-issue-5160-and-14869/9266" class="hover:underline"
-              >Security Release for issue #5160 and #14869</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The user titou has discovered that <a href="https://bugs.tryton.org/5160">the administrator group can execute Python code on the server which is hidden inside an uploaded report template</a>.<br />
-And <a href="https://foss.heptapod.net/dan.shallom">Dan Shallom </a> has discovered that <a href="https://bugs.tryton.org/14869">the same can also be accomplished by the marketing group when uploading marketing email templates</a>.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39937-impact-1" name="p-39937-impact-1"></a>Impact</h2>
-<p><a href="https://www.first.org/cvss/calculator/3-0#CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N/E:H/RL:O/RC:C">CVSS v3.0 Base Score: 6.5</a></p>
-<ul>
-<li>Attack Vector: Network</li>
-<li>Attack Complexity: Low</li>
-<li>Privileges Required: Low</li>
-<li>User Interaction: None</li>
-<li>Scope: Unchanged</li>
-<li>Confidentiality: High</li>
-<li>Integrity: None</li>
-<li>Availability: None</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39937-workaround-2" name="p-39937-workaround-2"></a>Workaround</h2>
-<p>There is no workaround.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39937-resolution-3" name="p-39937-resolution-3"></a>Resolution</h2>
-<p>All affected users should upgrade <code>trytond</code> to the latest version.</p>
-<p>Affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>8.0: &lt;= 8.0.5</li>
-<li>7.8: &lt;= 7.8.11</li>
-<li>7.0: &lt;= 7.0.52</li>
-</ul>
-</li>
-</ul>
-<p>Not affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>8.0: &gt;= 8.0.6</li>
-<li>7.8: &gt;= 7.8.12</li>
-<li>7.0: &gt;= 7.0.53</li>
-</ul>
-</li>
-</ul>
-<p><em>Some custom reports may fail after the upgrade because they are using dynamic or private attributes. Such reports must be updated to use only the allowed statements.</em></p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39937-reference-4" name="p-39937-reference-4"></a>Reference</h2>
-<ul>
-<li><a class="inline-onebox" href="https://bugs.tryton.org/5160">Report customisation (#5160) · Issues · Tryton / Tryton · GitLab</a></li>
-<li><a class="inline-onebox" href="https://bugs.tryton.org/14869">Remote Code Execution via Template Injection (#14869) · Issues · Tryton / Tryton · GitLab</a></li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39937-concerns-5" name="p-39937-concerns-5"></a>Concerns?</h2>
-<p>Any security concerns should be reported on the bug-tracker at <a href="https://bugs.tryton.org/">https://bugs.tryton.org/</a> with the confidential checkbox checked.</p>
-            <p><small>3 posts - 2 participants</small></p>
-            <p><a href="https://discuss.tryton.org/t/security-release-for-issue-5160-and-14869/9266">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 03, 2026 06:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/security-release-for-issue-5160-and-14869/9266"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/security-release-for-issue-14907/9267" class="hover:underline"
-              >Security Release for issue 14907</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><a href="https://foss.heptapod.net/ced">Cédric Krier</a> has discovered that <a href="https://bugs.tryton.org/14907">access is not enforced when browsing record instances in template</a>.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39938-impact-1" name="p-39938-impact-1"></a>Impact</h2>
-<p><a href="https://www.first.org/cvss/calculator/3-0#CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N/E:H/RL:O/RC:C">CVSS v3.0 Base Score: 6.5</a></p>
-<ul>
-<li>Attack Vector: Network</li>
-<li>Attack Complexity: Low</li>
-<li>Privileges Required: Low</li>
-<li>User Interaction: None</li>
-<li>Scope: Unchanged</li>
-<li>Confidentiality: High</li>
-<li>Integrity: None</li>
-<li>Availability: None</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39938-workaround-2" name="p-39938-workaround-2"></a>Workaround</h2>
-<p>There is no workaround.</p>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39938-resolution-3" name="p-39938-resolution-3"></a>Resolution</h2>
-<p>All affected users should upgrade <code>trytond</code>, <code>marketing_automation</code> and <code>marketing_email</code> to the latest version.</p>
-<p>Affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>8.0: &lt;= 8.0.5</li>
-<li>7.8: &lt;= 7.8.11</li>
-<li>7.0: &lt;= 7.0.52</li>
-</ul>
-</li>
-<li><code>markting_automation</code>:
-<ul>
-<li>8.0: &lt;= 8.0.0</li>
-<li>7.8: &lt;= 7.8.2</li>
-<li>7.0: &lt;= 7.0.3</li>
-</ul>
-</li>
-<li><code>marketing_email</code>:
-<ul>
-<li>8.0: &lt;= 8.0.0</li>
-<li>7.8: &lt;= 7.8.2</li>
-<li>7.0: &lt;= 7.0.2</li>
-</ul>
-</li>
-</ul>
-<p>Not affected versions per series:</p>
-<ul>
-<li><code>trytond</code>:
-<ul>
-<li>8.0: &gt;= 8.0.6</li>
-<li>7.8: &gt;= 7.8.12</li>
-<li>7.0: &gt;= 7.0.53</li>
-</ul>
-</li>
-<li><code>markting_automation</code>:
-<ul>
-<li>8.0: &gt;= 8.0.1</li>
-<li>7.8: &gt;= 7.8.3</li>
-<li>7.0: &gt;= 7.0.4</li>
-</ul>
-</li>
-<li><code>marketing_email</code>:
-<ul>
-<li>8.0: &gt;= 8.0.1</li>
-<li>7.8: &gt;= 7.8.3</li>
-<li>7.0: &gt;= 7.0.3</li>
-</ul>
-</li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39938-reference-4" name="p-39938-reference-4"></a>Reference</h2>
-<ul>
-<li><a class="inline-onebox" href="https://bugs.tryton.org/14907">Marketing template allow unrestricted browsing (#14907) · Issues · Tryton / Tryton · GitLab</a></li>
-</ul>
-<h2><a class="anchor" href="https://discuss.tryton.org#p-39938-concerns-5" name="p-39938-concerns-5"></a>Concerns?</h2>
-<p>Any security concerns should be reported on the bug-tracker at <a href="https://bugs.tryton.org/">https://bugs.tryton.org/</a> with the confidential checkbox checked.</p>
-            <p><small>1 post - 1 participant</small></p>
-            <p><a href="https://discuss.tryton.org/t/security-release-for-issue-14907/9267">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 03, 2026 06:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/security-release-for-issue-14907/9267"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://anweshadas.in/dreams-are-real-so-chase-them/" class="hover:underline"
-              >Dreams are real, so chase them</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>A Mortgage lawyer had dream to work full time in technology and policy,<br />
-The journey started long ago with a new mum reading &quot;Intellectual Property and Open Source: A Practical Guide to Protecting Code&quot; by Van Lindberg, to her keep entertained during breastfeeding sessions.Then from meaning of</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 02, 2026 08:16 PM UTC by
-            <a href="https://anweshadas.in/tag/python/rss/" class="link link-hover text-primary"
-              >Anwesha Das</a
-            >
-          </div>
-          <a
-            href="http://anweshadas.in/dreams-are-real-so-chase-them/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.europython.eu/europython-2026-job-opportunities-from-our-sponsors/" class="hover:underline"
               >EuroPython 2026 Job Opportunities from Our Sponsors</a
             >
@@ -1202,47 +591,6 @@ The journey started long ago with a new mum reading &quot;Intellectual Property 
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/06/29/python-ebook-and-course-summer-sale/" class="hover:underline"
-              >Python eBook and Course Summer Sale</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>It&#8217;s officially summer, and I am bringing you some HOT Python deals today! Get 33% off almost all my books and courses on Gumroad today using the following H5N5F7K You can start learning the basics of Python with Python 101, or get more targeted learning with my book, Python Logging. If you want to create [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/06/29/python-ebook-and-course-summer-sale/">Python eBook and Course Summer Sale</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on June 29, 2026 05:38 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/06/29/python-ebook-and-course-summer-sale/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/github-copilot-cli/" class="hover:underline"
               >How to Get Started With the GitHub Copilot CLI</a
             >
@@ -1726,6 +1074,542 @@ its main use case is to filter false positives.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/jun/25/how-the-django-software-foundation-became-a-cna/" class="hover:underline"
+              >How the Django Software Foundation Became a CNA</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <h2 id="s-why-the-dsf-pursued-cna-status">Why the DSF pursued CNA status</h2>
+<p>Django has a long history of responsible security practices: a dedicated, private security mailing list, clear advisory policies, and predictable security releases. Even so, we relied on external organizations to assign <a href="https://www.cve.org/ResourcesSupport/Glossary#glossaryCVEID">CVE IDs (Common Vulnerabilities and Exposures)</a>. This sometimes introduced administrative delays and extra coordination overhead.</p>
+<p>Becoming a <a href="https://www.cve.org/ResourcesSupport/Glossary?activeTerm=glossaryCNA">CNA (CVE Numbering Authority)</a> allows the DSF to:</p>
+<ul>
+<li>Assign CVEs ourselves for vulnerabilities in Django and selected community projects.</li>
+<li>Publish advisories more efficiently and in closer alignment with Django's established release workflow.</li>
+<li>Maintain strong independence in how Django handles security incidents.</li>
+</ul>
+<h2 id="s-the-initial-exploration">The initial exploration</h2>
+<p>The process began with internal discussions within the DSF Board and <a href="https://www.djangoproject.com/foundation/teams/#security-team">Django Security Team</a>. We evaluated:</p>
+<ul>
+<li>Whether our existing security process already met CNA expectations.</li>
+<li>Whether we had the organizational stability to take on long term responsibility for CVE assignment.</li>
+<li>The scope of projects we would cover.</li>
+<li>How to ensure we could meet the operational requirements without overloading volunteers and <a href="https://www.djangoproject.com/foundation/teams/#django-fellows-team">Django Fellows</a>.</li>
+</ul>
+<p>After confirming that our policies were mature and that the administrative workload would be manageable, we initiated the <a href="https://www.cve.org/PartnerInformation/Partner#CNA">CNA application with MITRE</a>.</p>
+<h2 id="s-preparing-the-application">Preparing the application</h2>
+<p>MITRE requires that new CNAs document their security processes and demonstrate that they can meet CNA obligations. Our preparation included:</p>
+<ol>
+<li>
+<p>Reviewing and updating the <a href="https://docs.djangoproject.com/en/stable/internals/security/">Django Security Policy</a>.</p>
+</li>
+<li>
+<p>Mapping our existing workflows to MITRE's CNA rules, including:</p>
+<ol>
+<li>How reports are received.</li>
+<li>How vulnerabilities are validated.</li>
+<li>How advisories are produced.</li>
+<li>How CVEs will be assigned and published.</li>
+</ol>
+</li>
+<li>
+<p>Defining the scope of the CNA:</p>
+<ol>
+<li>Django itself as the core product.</li>
+<li>A small, clearly bounded set of related ecosystem projects.</li>
+</ol>
+</li>
+<li>
+<p>Ensuring we had private communication channels and documented procedures for confidential handling.</p>
+</li>
+<li>
+<p>Drafting the required procedural documentation for MITRE.</p>
+</li>
+</ol>
+<p>Most of the work here was not about creating new processes but about articulating long standing Django practices in the format MITRE expects.</p>
+<h2 id="s-training-and-review">Training and review</h2>
+<p>Once our initial documentation was accepted, MITRE scheduled us for CNA onboarding training. This covered:</p>
+<ul>
+<li>CNA rules and responsibilities.</li>
+<li>Required data fields for CVE Records.</li>
+<li>Expectations for coordination with reporters and downstream consumers.</li>
+<li>The publication workflow for CVE Records.</li>
+</ul>
+<p>We also completed MITRE's required CNA onboarding exercises. As part of this process, we worked through sample security reports and demonstrated how we would determine CVE assignments, including cases where multiple CVEs may or may not be warranted for a single report.</p>
+<h2 id="s-approval-and-onboarding">Approval and onboarding</h2>
+<p>After MITRE approved our documentation, training, and exercise submissions, the DSF was formally granted CNA status. The announcements steps were:</p>
+<ul>
+<li>MITRE published <a href="https://www.cve.org/PartnerInformation/ListofPartners/partner/DSF">our CNA scope on the official CNA directory</a>.</li>
+<li>MITRE issued <a href="https://www.cve.org/Media/News/item/news/2025/10/28/Django-Added-as-CNA">a press release</a>.</li>
+<li>The DSF published <a href="https://www.djangoproject.com/weblog/2025/oct/30/django-is-now-a-cve-numbering-authority-cna/">a blog post announcing our new CNA status</a>.</li>
+</ul>
+<h2 id="s-lessons-learned">Lessons learned</h2>
+<p>A few procedural insights for other projects considering CNA status:</p>
+<ul>
+<li>If your project already has a mature and documented security process, becoming a CNA is mostly about formalizing what you already do.</li>
+<li>The documentation and validation steps take time. Most delays come from ensuring that all fields conform to the CVE schema. The whole process took about four months.</li>
+<li>The training is detailed and helpful. It clarifies exactly what CNAs are expected to produce and how CVE Records flow through the broader ecosystem.</li>
+<li>It is worth being explicit about scope early. Defining the boundary of responsibility reduces ambiguity later.</li>
+</ul>
+<h2 id="s-what-changes-for-django-users">What changes for Django users</h2>
+<p>For most contributors and users, nothing changes. Django will continue to follow its established process for receiving reports, coordinating fixes, and publishing security releases.</p>
+<p>The difference is that the DSF can now assign CVE IDs directly, which simplifies coordination and allows us to publish advisories with fewer external dependencies.</p>
+<h2 id="s-acknowledgments">Acknowledgments</h2>
+<p>This work was led by Django Fellows Natalia Bidart and Jacob Walls, with support from the Django Security Team and the DSF Board. We are grateful to MITRE for their guidance during the onboarding process.</p>
+<p>If you have questions about Django's CNA scope or security process, <a href="mailto:security@djangoproject.com">contact the Django Security Team</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 25, 2026 11:00 AM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/jun/25/how-the-django-software-foundation-became-a-cna/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2026/06/explicit-lazy-imports-are-coming-to-python-3-15/" class="hover:underline"
+              >Explicit Lazy Imports Are Coming to Python 3.15</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            A while ago at PyCon US 2026, I had the pleasure of listening to the Python Steering Council give updates about new features that are being added in Python 3.15. One that stood out was explicit lazy imports (via PEP 810), which defer module loading until first use. I am curious to see how this [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 25, 2026 08:21 AM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2026/06/explicit-lazy-imports-are-coming-to-python-3-15/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://snarky.ca/why-i-wrote-pep-832-virtual-environment-discovery/" class="hover:underline"
+              >Why I wrote PEP 832 -- virtual environment discovery</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>While I decide what to do with <a href="https://peps.python.org/pep-0832/">PEP 832</a> after <a href="https://discuss.python.org/t/pep-832-virtual-environment-discovery/106998/117">polling folks on their opinion</a>, I thought I would write out why I&apos;m even bothering with any of this.</p><p>I&apos;m going to talk from the perspective of VS Code and its <a href="https://marketplace.visualstudio.com/items?itemName=ms-python.python">Python extensions</a>, but you could</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 24, 2026 11:08 PM UTC by
+            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
+              >Brett Cannon</a
+            >
+          </div>
+          <a
+            href="https://snarky.ca/why-i-wrote-pep-832-virtual-environment-discovery/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://death.andgravity.com/reader-3-26" class="hover:underline"
+              >reader 3.26 released – discovery, exports, demo</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Hi there!</p>
+<p>I'm happy to announce version 3.26 of <strong><a class="external" href="https://github.com/lemon24/reader">reader</a></strong>, a Python feed reader library.</p>
+<h2 id="what-s-new">What's new?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#what-s-new" title="permalink">#</a></span></h2>
+<p>Here are the highlights since <a class="internal" href="https://death.andgravity.com/reader-3-24">reader 3.24</a>.</p>
+<h3 id="feed-autodiscovery">Feed autodiscovery<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#feed-autodiscovery" title="permalink">#</a></span></h3>
+<p><em>reader</em> now discovers feeds automatically
+– instead of searching for feed links, just add the website URL,
+and the web app will suggest any feeds it finds.</p>
+<p>Behind the scenes,
+this is enabled by the <a class="external" href="https://reader.readthedocs.io/en/latest/plugins.html#module-reader.plugins.autodiscover">autodiscover</a> plugin,
+which stores discovered feeds in a <a class="external" href="https://reader.readthedocs.io/en/latest/guide.html#resource-tags">feed tag</a>,
+so you can use it without the web app,
+or even <a class="external" href="https://reader.readthedocs.io/en/latest/api.html#module-reader.discover">without <em>reader</em></a>.
+For a short related rant about standards,
+check out <a class="external" href="https://bsky.app/profile/andgravity.com/post/3mmotccu3h22j">this Bluesky thread</a> (there are cats!).</p>
+<hr />
+<div class="columns"><div class="column col-sm-6 col-xs-12">
+
+<figure class="figure">
+<img alt="feed autodiscovery" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-26/autodiscovery.png" /><figcaption class="figure-caption text-center text-small">
+feed autodiscovery
+</figcaption>
+</figure>
+
+
+
+</div>
+<div class="column col-sm-6 col-xs-12">
+
+<figure class="figure">
+<img alt="database exports" class="img-responsive" src="https://death.andgravity.com/_file/reader-3-26/export-database.png" /><figcaption class="figure-caption text-center text-small">
+database exports
+</figcaption>
+</figure>
+
+
+
+</div>
+</div>
+
+<h3 id="database-exports">Database exports<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#database-exports" title="permalink">#</a></span></h3>
+<p>This
+is an optional feature that
+I really wanted in the hosted <em>reader</em> MVP –
+it should be possible to <strong>get <em>all your data</em> out</strong>,
+not just lists of feeds and read / starred articles.</p>
+<p>So yeah,
+now you can download a copy of your entire database from the web app,
+which means you can always migrate to another <em>reader</em> installation.
+(If you're using <em>reader</em> locally or self-hosting,
+the <a class="external" href="https://reader.readthedocs.io/en/latest/cli.html#reader-export">command</a> might be handy for backups.)</p>
+<h2 id="hosted-reader-status-update">Hosted <em>reader</em> status update<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#hosted-reader-status-update" title="permalink">#</a></span></h2>
+<p>Speaking of,
+did I tell you
+I'm working on a <strong>hosted version of <em>reader</em></strong>? :D</p>
+<p>Background:
+<a class="internal" href="https://death.andgravity.com/reader-3-23#why-another-feed-reader-web-app">Why another feed reader web app?</a>,
+<a class="internal" href="https://death.andgravity.com/reader-3-23#why-not-just-self-host-it">Why not just self-host it?</a></p>
+<h3 id="public-demo">Public demo<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#public-demo" title="permalink">#</a></span></h3>
+<p>Another thing I wanted for the MVP was a demo (no login needed):</p>
+<blockquote>
+<p><strong><a class="external" href="https://beta.reader.andgravity.com/demo/">https://beta.reader.andgravity.com/demo/</a></strong></p>
+</blockquote>
+<p>Go forth and click all the things! (it's read-only, nothing should break™)</p>
+<h3 id="ok-so-what-now">OK, so what now?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#ok-so-what-now" title="permalink">#</a></span></h3>
+<p>This is what is finished so far:</p>
+<ul>
+<li>multi-user version of the web app</li>
+<li>authentication via email</li>
+<li>infrastructure deployments using <a class="external" href="https://pyinfra.com/">pyinfra</a></li>
+<li><a class="internal" href="https://death.andgravity.com/reader-3-24#multi-user-feed-updates">multi-user feed updates</a></li>
+<li><a class="internal" href="https://death.andgravity.com/reader-3-24#context-sensitive-help">context-sensitive help</a></li>
+<li><small>(new)</small> <a class="anchor" href="https://death.andgravity.com/reader-3-26#public-demo">public demo</a></li>
+</ul>
+<p>So just launch the damn thing already:</p>
+<ul>
+<li>set up a landing page</li>
+<li>give it a good name</li>
+<li>publish a launch announcement + roadmap</li>
+</ul>
+<p>Meanwhile,
+if this sounds like something you'd like to use,
+<a class="internal" href="https://death.andgravity.com/about#contact">get in touch</a>.</p>
+<hr />
+<p>That's it for now.
+For more details, see the full <a class="external" href="https://reader.readthedocs.io/en/stable/changelog.html#version-3-26">changelog</a>.</p>
+<p><strong>Want to contribute?</strong>
+Check out the <a class="external" href="https://reader.readthedocs.io/en/latest/contributing.html">docs</a> and the <a class="external" href="https://reader.readthedocs.io/en/latest/dev.html#roadmap">roadmap</a>.</p>
+<p><strong>Learned something new today?</strong> Share it with others, it really helps! <span class="text-large">
+<span class="share-icons">
+<a class="share-icon pycoders color" href="https://pycoders.com/submissions" target="_blank">PyCoder's Weekly</a>
+<a class="share-icon hacker-news color" href="https://news.ycombinator.%63%6f%6d/submitlink?u=https%3A//death.andgravity.com/reader-3-26&amp;t=reader%203.26%20released%20%E2%80%93%20discovery%2C%20exports%2C%20demo">HN</a>
+<a class="share-icon bluesky color" href="https://bsky.%61%70%70/intent/compose?text=reader%203.26%20released%20%E2%80%93%20discovery%2C%20exports%2C%20demo%20https%3A//death.andgravity.com/reader-3-26">Bluesky</a>
+<!--
+<a
+    class="share-icon reddit color"
+    href="https://www.reddit.%63%6f%6d/%73%75%62%6d%69%74?url=https%3A//death.andgravity.com/reader-3-26&title=reader%203.26%20released%20%E2%80%93%20discovery%2C%20exports%2C%20demo"
+>Reddit</a>
+-->
+<a class="share-icon linkedin color" href="https://www.linkedin.%63%6f%6d/sharing/share-offsite/?url=https%3A//death.andgravity.com/reader-3-26">linkedin</a>
+<a class="share-icon twitter color" href="https://twitter.%63%6f%6d/%73%68%61%72%65?text=reader%203.26%20released%20%E2%80%93%20discovery%2C%20exports%2C%20demo&amp;url=https%3A//death.andgravity.com/reader-3-26&amp;via=_andgravity">Twitter</a>
+</span>
+</span></p>
+
+<h2 id="what-is-reader">What is <em>reader</em>?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#what-is-reader" title="permalink">#</a></span></h2>
+<p><strong>reader</strong> takes care
+of the core functionality required by a feed reader,
+so you can focus on what makes <strong>yours</strong> different.</p>
+<p><img alt="reader in action" class="img-responsive" src="https://death.andgravity.com/_file/reader-2-0/reader.png" />
+<em>reader</em> allows you to:</p>
+<ul>
+<li>retrieve, store, and manage <strong>Atom</strong>, <strong>RSS</strong>, and <strong>JSON</strong> feeds</li>
+<li>mark articles as read or important</li>
+<li>add arbitrary tags/metadata to feeds and articles</li>
+<li>filter feeds and articles</li>
+<li>full-text search articles</li>
+<li>get statistics on feed and user activity</li>
+<li>import / export feeds as OPML</li>
+<li>automatically discover feeds in web pages</li>
+<li>write plugins to extend its functionality</li>
+</ul>
+<p>...all these with:</p>
+<ul>
+<li>a stable, clearly documented API</li>
+<li>excellent test coverage</li>
+<li>fully typed Python</li>
+</ul>
+<p>To find out more, check out the <a class="external" href="https://github.com/lemon24/reader">GitHub repo</a> and the <a class="external" href="https://reader.readthedocs.io/en/stable/">docs</a>,
+or give the <a class="external" href="https://reader.readthedocs.io/en/stable/tutorial.html">tutorial</a> a try.</p>
+<h2 id="why-use-a-feed-reader-library">Why use a feed reader library?<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#why-use-a-feed-reader-library" title="permalink">#</a></span></h2>
+<p>Have you been unhappy with existing feed readers and wanted to make your own, but:</p>
+<ul>
+<li>never knew where to start?</li>
+<li>it seemed like too much work?</li>
+<li>you don't like writing backend code?</li>
+</ul>
+<p>Are you already working with <a class="external" href="https://feedparser.readthedocs.io/en/latest/">feedparser</a>, but:</p>
+<ul>
+<li>want an easier way to store, filter, sort and search feeds and entries?</li>
+<li>want to get back type-annotated objects instead of dicts?</li>
+<li>want to restrict or deny file-system access?</li>
+<li>want to change the way feeds are retrieved by using <a class="external" href="https://requests.readthedocs.io">Requests</a>?</li>
+<li>want to also support <a class="external" href="https://jsonfeed.org/">JSON Feed</a>?</li>
+<li>want to support custom information sources?</li>
+</ul>
+<p>... while still supporting all the feed types feedparser does?</p>
+<p>If you answered yes to any of the above, <em>reader</em> can help.</p>
+<h2 id="the-reader-philosophy">The <em>reader</em> philosophy<span class="headerlink">&nbsp;<a href="https://death.andgravity.com/reader-3-26#the-reader-philosophy" title="permalink">#</a></span></h2>
+<ul>
+<li><em>reader</em> is a library</li>
+<li><em>reader</em> is for the long term</li>
+<li><em>reader</em> is extensible</li>
+<li><em>reader</em> is stable (within reason)</li>
+<li><em>reader</em> is simple to use; API matters</li>
+<li><em>reader</em> features work well together</li>
+<li><em>reader</em> is tested</li>
+<li><em>reader</em> is documented</li>
+<li><em>reader</em> has minimal dependencies</li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 24, 2026 06:00 PM UTC by
+            <a href="https://death.andgravity.com/_feed/index/_tags/python.xml" class="link link-hover text-primary"
+              >death and gravity</a
+            >
+          </div>
+          <a
+            href="https://death.andgravity.com/reader-3-26"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/jun/24/django-61-beta-1-released/" class="hover:underline"
+              >Django 6.1 beta 1 released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Django 6.1 beta 1 is now available. It represents the second
+stage in the 6.1 release cycle and is an opportunity to try out
+the changes coming in Django 6.1.</p>
+<p>Django 6.1 offers a harmonious mélange of new features and usability improvements, which you
+can read about in
+<a href="https://docs.djangoproject.com/en/dev/releases/6.1/">the in-development 6.1 release notes</a>.</p>
+<p>Only bugs in new features and regressions from earlier Django versions will be
+fixed between now and the 6.1 final release. Translations will
+be updated following the "string freeze", which occurs when the release
+candidate is issued. The
+<a href="https://www.djangoproject.com/download/6.1/roadmap/">current release schedule</a>
+calls for a release candidate in about a month, with the final release
+scheduled roughly two weeks later on August 5.</p>
+<p>Early and frequent testing from the community will help minimize the number of
+bugs in the release. Updates on the release schedule are available
+<a href="https://forum.djangoproject.com/t/django-6-1-release-timeline-and-next-steps/43929">on the Django forum</a>.</p>
+<p>As with all alpha and beta packages, this release is <strong>not</strong> for production
+use. However, if you'd like to try some of the new features or help find and
+fix bugs (which should be reported to
+<a href="https://code.djangoproject.com/newticket">the issue tracker</a>),
+you can grab a copy of the beta package from
+<a href="https://www.djangoproject.com/download/">our downloads page</a> or on PyPI.</p>
+<p>The PGP key ID used for this release is Jacob Walls: <a href="https://github.com/jacobtylerwalls.gpg">131403F4D16D8DC7</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 24, 2026 05:00 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/jun/24/django-61-beta-1-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/django-tasks/" class="hover:underline"
+              >Django Tasks: Exploring the Built-in Tasks Framework</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Explore Django Tasks, the new built-in framework in Django 6.0, and run background jobs with @task, named queues, and a lightweight alternative to Celery.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 24, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/django-tasks/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.spyder-ide.org/blog/oc-progress-report-2025" class="hover:underline"
+              >How your donations transformed Spyder in 2025</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Thanks to the community's financial support, Spyder has not only survived but thrived in 2025. Read on as we share the new features, releases and interface improvements from the last year that your donations directly made possible.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on June 24, 2026 12:00 AM UTC by
+            <a href="https://www.spyder-ide.org/blog/feed.xml" class="link link-hover text-primary"
+              >Spyder IDE</a
+            >
+          </div>
+          <a
+            href="https://www.spyder-ide.org/blog/oc-progress-report-2025"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1737,8 +1621,8 @@ its main use case is to filter false positives.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8328</a></li>
-    <li><a>Unique Feeds: 379</a></li>
+    <li><a>Total Entries: 8246</a></li>
+    <li><a>Unique Feeds: 376</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
