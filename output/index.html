@@ -53,6 +53,160 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss" class="hover:underline"
+              >Extracting “Ocarina of Time: Master Quest” ROM from the Legend of Zelda: Wind Waker bonus disc</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Another day, another extracting ROMs from GameCube
+titles mini-tutorial. This time it’s the PAL
+Legend of Zelda: Wind Waker Bonus Disc that I
+<a href="https://sethmlarson.dev/pal-gamecube-haul-from-krakow-poland">recently purchased from Kraków, Poland</a>. This
+disc contains two N64 games: <a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time">Legend of Zelda:
+Ocarina of Time</a> and the “<a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time#Master_Quest">Master Quest</a>”
+version of Ocarina of Time. Let’s extract those ROMs
+from the GameCube ROM so we can play on other emulators.</p>
+
+<p>Going from a GameCube disc to an ISO ROM is the usual
+process, for me that means using the <a href="https://docs.flippydrive.com/backup.html">FlippyDrive Disc Backup
+Utility</a> but CleanRip on a GameCube or Wii also works.
+To extract the individual files from the ISO open
+the ISO in Dolphin, right-click the ISO, <code>Properties</code>,
+<code>Filesystem</code>, and extract the <code>zlj_f.tgc</code> file into
+your working directory.</p>
+
+<p>According to <a href="https://tcrf.net/The_Legend_of_Zelda:_Ocarina_of_Time_Bonus_Disc">The Cutting Room Floor</a> both N64 ROMs
+are included in the file <code>zlj_f.tgc</code>. TGC is an
+archive format that Nintendo uses often in this generation
+of games. Thanks to resources like <a href="https://no-intro.org/">No Intro</a>
+we have the known-good ROM lengths and hashes for both Ocarina of
+Time and Master Quest for all regions. Using this information
+(along with the N64 ROM header) we can find the embedded N64 ROMs
+within <code>zlj_f.tgc</code> without understanding the TGC format at all:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="c1"># License: MIT</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+
+<span class="n">ROM_HEADER</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x80\x37\x12\x40</span><span class="s2">&quot;</span>
+<span class="n">ROM_LENGTH</span> <span class="o">=</span> <span class="mh">0x2000000</span>
+<span class="n">ROM_HASHES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;1618403427e4344a57833043db5ce3c3&quot;</span><span class="p">:</span> <span class="s2">&quot;Legend of Zelda, The - Ocarina of Time - Master Quest (Europe) (En,Fr,De) (Zelda Collection).n64&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;2c27b4e000e85fd78dbca551f1b1c965&quot;</span><span class="p">:</span> <span class="s2">&quot;Extracted Legend of Zelda, The - Ocarina of Time (Europe) (GameCube).n64&quot;</span><span class="p">,</span>
+    <span class="c1"># If you see 'Unknown ROM', paste the MD5 into</span>
+    <span class="c1"># https://datomatic.no-intro.org/index.php</span>
+    <span class="c1"># searching on 'hash-data' and add the values here.</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;zlj_f.tgc&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+    <span class="c1"># Find the embedded ROMs from the N64 ROM header.</span>
+    <span class="n">offset1</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
+    <span class="n">offset2</span> <span class="o">=</span> <span class="p">(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">)</span> <span class="o">+</span> <span class="n">data</span><span class="p">[(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">):]</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">offset</span> <span class="ow">in</span> <span class="p">(</span><span class="n">offset1</span><span class="p">,</span> <span class="n">offset2</span><span class="p">):</span>
+
+        <span class="c1"># Determine which ROM we have based on MD5.</span>
+        <span class="n">rom</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">offset</span><span class="p">:</span><span class="n">offset</span> <span class="o">+</span> <span class="n">ROM_LENGTH</span><span class="p">]</span>
+        <span class="n">rom_md5</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+        <span class="n">to_file</span> <span class="o">=</span> <span class="n">ROM_HASHES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rom_md5</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">to_file</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown ROM (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">to_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">truncate</span><span class="p">()</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Extracted </span><span class="si">{</span><span class="n">to_file</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)...&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre>
+</div>
+
+<p>The script above only knows about the ROM hashes for
+the PAL revision of the Bonus Disc, so if you see <code>Unknown ROM (...)</code>,
+don't panic! You can search the MD5 you receive on <a href="https://datomatic.no-intro.org/index.php?page=search&amp;s=64">No Intro</a>
+by filtering on <code>hash-data</code> to discover whether the ROM
+is correct and add the value to <code>ROM_HASHES</code> in the script.</p>
+
+<p>With my Master Quest ROM in hand I can load the game into
+<a href="https://sethmlarson.dev/getting-started-with-gamesir-pocket-taco-iphone-delta-emulator">Delta Emulator</a> and play on my iPhone:</p>
+
+<p><center>
+<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/loz-wind-waker-bonus-disk/loz-oot-master-quest.png" style="border: 2px black solid;" />
+<br /><small><em>Legend of Zelda: Ocarina of Time Master Quest running in the Delta Emulator</em></small>
+</center></p>
+
+<p>I won’t be playing much because I have never played
+Ocarina of Time before and want to play the <a href="https://www.nintendo.com/us/store/products/the-legend-of-zelda-ocarina-of-time-switch-2/">upcoming remake
+for the Nintendo Switch 2</a> with a completely blank slate.
+I’m excited to try one of the most universally acclaimed
+games ever made for the first time soon! :)</p>
+
+<h2>What’s new in the blogroll?</h2>
+
+<p>I <a href="https://sethmlarson.dev/blogroll">publish a blogroll</a> containing links to
+websites that I've enjoyed recently.</p>
+
+<p>Pokémon cards were on the mind the past few weeks! My
+brother is a collector so we've been discussing the
+different artists and sets that he's interested in.
+While I was doing research I came across two websites
+that seemed useful for this: collating <a href="https://pokesymbols.com/tcg/sets">Pokémon set symbols</a>
+and <a href="https://www.artofpkm.com">Pokémon card artwork by artist</a>.
+A comedic graphic design YouTuber
+“Elliot” also published a <a href="https://www.youtube.com/watch?v=p0m5nuygU5w">new video about Pokémon’s
+graphic designs</a> which I found entertaining.</p>
+
+<p>I purchased “<a href="https://swag.htmx.org/en-usd/products/htmx-4-the-game">htmx 4: the game</a>”, the first JavaScript library published
+exclusively to the Nintendo Game Boy platform. The package (hah)
+arrives today and I plan to post about the experience with the
+game and discussing the form factor as a software distribution mechanism,
+look forward to that blog post soon.</p>
+
+<p>I found a <a href="https://gblink.io/">Game Boy Link Cable to internet adapter</a> hardware project
+which looks intriguing if you've got friends
+that are far away that you still want to play Generation 3 Pokémon
+with (<em>Pokémon Emerald forever</em>). This hardware enables trading, battling, record mixing, and
+more by pretending to be your peer in a GBA Link Cable connection.</p>
+<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 01, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.programiz.com/python-programming/booleans" class="hover:underline"
               >Python Booleans and Boolean Expressions</a
             >
@@ -213,46 +367,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://wrongsideofmemphis.com/2026/07/31/python-automation-cookbook-3rd-edition-now-with-ai-recipes/" class="hover:underline"
-              >Python Automation Cookbook 3rd edition:  now with AI recipes.</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Exciting news! The third edition of the Python Automation Cookbook is out, featuring a vibrant new cover and over 100 pages of fresh AI content. Aimed at Python enthusiasts of all levels, it retains classic recipes while introducing innovative ways to incorporate AI in code. A fantastic addition to any developer's library!
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 31, 2026 10:37 AM UTC by
-            <a href="http://wrongsideofmemphis.wordpress.com/feed/atom/?tag=english+python" class="link link-hover text-primary"
-              >Jaime Buelta</a
-            >
-          </div>
-          <a
-            href="https://wrongsideofmemphis.com/2026/07/31/python-automation-cookbook-3rd-edition-now-with-ai-recipes/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/quizzes/numpy-tutorial/" class="hover:underline"
               >Quiz: NumPy Tutorial: Your First Steps Into Data Science in Python</a
             >
@@ -316,7 +430,7 @@
 <p>During my internship at CFS/Britannia Building Society in England, I was immersed in technology and loved it. Although it was a tumultuous time due to the subprime mortgage crisis, I was left with an insatiable curiosity about programming. That is how I learned about Django, and I have been using Django ever since.  </p>
 <h2 id="s-what-other-framework-do-you-know-and-if-there-is-anything-you-would-like-to-have-in-django-if-you-had-magical-powers">What other framework do you know and if there is anything you would like to have in Django if you had magical powers?</h2>
 <p>In addition to Python/Django, I work with React.  </p>
-<p>At DjangoCon US 2025, Will Vincent commented during his talk "Django for AI" that Django "never really 'owned'" the niche of classic Machine Learning models, but should have, because it's great for small and medium ML models. He recently asked Django Project Forum if Django should have an official skills.md like FastAPI now has. These are important conversations to have.  </p>
+<p>At DjangoCon US 2025, Will Vincent commented during his <a href="https://www.youtube.com/watch?v=zIQZXr6XIU0">talk "Django for AI"</a> that Django "never really 'owned'" the niche of classic Machine Learning models, but should have, because it's great for small and medium ML models. He recently asked Django Project Forum if Django should have an official skills.md like FastAPI now has. These are important conversations to have.  </p>
 <p>If I had magical powers, I would maintain the stability and maturity many Django users celebrate while making targeted enhancements to help it better serve developers who are reaching for FastAPI or JavaScript frameworks first. Providing Django's benefits while meeting the use case is win-win.  </p>
 <p>Django already supports many modern patterns. Clear starter guides and code examples showing how to build a classic ML application, LLM chat bot, async workflows, React/Angular/Vue integration, and APIs, while taking advantage of the benefits Django offers, could help developers discover it better.  </p>
 <p>Marlene Mhangami and Benjamin "Zags" Zagorsky also gave some ideas for how to approach this in their respective DjangoCon US 2025 keynotes.</p>
@@ -355,7 +469,7 @@
 <p>I enjoy the Django tool ecosystem, and the people are wonderful. I have a lot of friends in this community who inspire me and are there for me.  </p>
 <h2 id="s-how-do-you-envision-the-future-of-django-from-your-perspective">How do you envision the future of Django from your perspective?</h2>
 <p>Last year was Django's 20th birthday. I’m optimistic that Django and its community will be thriving 20 years from now.  </p>
-<h2 id="s-do-you-remember-your-first-contribution-to-django-and-in-open-source-can-be-django-ecosystem-code-contribution-or-not">Do you remember your first contribution to Django and in open source? (Can be Django ecosystem, code contribution or not)</h2>
+<h2 id="s-do-you-remember-your-first-contribution-to-django-and-in-open-source">Do you remember your first contribution to Django and in open source?</h2>
 <p>At DjangoCon US 2019 sprints, I made my first contribution to Django Core with the help of Carlton Gibson. I added instructions for running tests using <a href="https://github.com/django/django-docker-box">django-docker-box</a>. I would love to contribute to Django again.  </p>
 <h2 id="s-what-are-your-hobbies-or-what-do-you-do-when-youre-not-working">What are your hobbies or what do you do when you’re not working?</h2>
 <p>In my personal time, I love exploring new and interesting places, discovering great food, watching documentaries, and taking photographs.</p>
@@ -1591,8 +1705,8 @@ Or maybe it&#8217;s done.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8144</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8266</a></li>
+    <li><a>Unique Feeds: 376</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
