@@ -53,6 +53,113 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2026/aug/10/newlines/" class="hover:underline"
+              >Breaking up (lines) is hard to do</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Here’s a seemingly simple question: given a chunk of multi-line text, how do you split it and return an array whose members are the constituent lines of the&nbsp;text?</p>
+<p>Hopefully, your first instinct is to reach for some sort of standard-library function, maybe something like&nbsp;the <code>splitlines()</code> method of&nbsp;Python’s <code>str</code> type. Because it turns out this “simple” question is actually pretty complex to answer! For example, quite some time ago I read <a href="https://yossarian.net/til/post/python-s-splitlines-does-a-lot-more-than-just-newlines/">a post by William Woodruff</a> pointing out the surprising discovery that Python treats up to eleven different Unicode code points or code point sequences as indicating a line&nbsp;break.</p>
+<p>At the time I meant to write about that, but a lot of other things started fighting for my time, and it’s only now that I’m finally digging it out of my drafts. Still, better late than never, so today let’s dig into some of the many ways there are to break a line of text and how they&#8217;ve been standardized and specified and ultimately wound up in the set Python&nbsp;uses.</p>
+<h2>In the&nbsp;beginning&#8230;</h2>
+<p>Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. Of course there were other things before <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, and alongside <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, but for today’s discussion we really only need to go back to <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>; if you want the full history of physical teletypes, how they evolved from typewriters and influenced character sets for computing and so on, I suggest Wikipedia. Here, I’m just going to gloss over and simplify a lot of that to focus on the topic at&nbsp;hand.</p>
+<p>So. Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. And it wound up being incredibly influential and important in computing, to an extent other early character sets couldn’t match. And because it was used on computers which used teletypes (basically electronic typewriters connected as input/output devices) as a user interface, it contained control characters for sending commands to the teletype. Such as&nbsp;a <code>LINE FEED</code> (byte&nbsp;value <code>0x0A</code>) to advance the paper vertically to the next line, and&nbsp;a <code>CARRIAGE RETURN</code> (byte&nbsp;value <code>0x0D</code>) to re-align the print head/carriage with the horizontal start point of the&nbsp;line.</p>
+<p>These are often&nbsp;abbreviated <code>LF</code> and <code>CR</code> (or by their C-family escape&nbsp;sequences <code>\n</code> and <code>\r</code>, respectively), and you might think that since physically advancing a typewriter-style device to be ready to print the next line requires both operations, that would have just become the universal way everybody did new lines. Or at least the universal way everybody did them in English, or in the <span class="caps">US</span>, where <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> dominated.&nbsp;Right?</p>
+<p>Well, nothing is ever that simple. Physical teletypes apparently benefited from the two-character approach (as opposed to a single “new line” character) because it gave them time to physically move everything into the right position. But as <em>virtual</em> teletypes&#8212;“printing” to a television-like display instead of to paper&#8212;became more common, that was less of an issue. So there were multiple possible options for representing line breaks, and several of them showed up in historical systems. For&nbsp;example:</p>
+<ul>
+<li><span class="caps">CP</span>/M&nbsp;used <code>CR LF</code>. And so <span class="caps">MS</span>-<span class="caps">DOS</span>, which aimed for compatibility with it,&nbsp;used <code>CR LF</code> too. And so Microsoft Windows, which wanted to be compatible with <span class="caps">MS</span>-<span class="caps">DOS</span>, <em>also</em> used&nbsp;it.</li>
+<li>Meanwhile, Multics chose to use&nbsp;just <code>LF</code> with&nbsp;no <code>CR</code>, and Unix went along with that&nbsp;choice.</li>
+<li>But Commodore and Apple and many others went yet another way and used&nbsp;plain <code>CR</code> , with&nbsp;no <code>LF</code>.</li>
+</ul>
+<p>This meant “plain text” was not easily portable between these various systems, since none of them could agree on how to represent a line break. Which led to one of my all-time favorite programming jokes, in the infamous <a href="https://xml.coverpages.org/sgmlFAQ-NOT-19990401.html">“<span class="caps">NOT</span>&nbsp;the <code>comp.text.sgml</code> <span class="caps">FAQ</span>”</a>&nbsp;document:</p>
+<blockquote>
+<p>Q.  What&#8217;s an <span class="caps">RE</span>?</p>
+<p>A.  <span class="caps">RE</span> is an acronym for Record End, which is sort of like a newline, only different. Goldfarb&#8217;s First Law of Text Processing states&nbsp;that:</p>
+<blockquote>
+<p><span class="dquo">&#8220;</span>&#8230; if a text processing system has bugs, at least one of them will have to do with the handling of input line&nbsp;endings.&#8221;</p>
+<p>[The Handbook, footnote p.&nbsp;321]</p>
+</blockquote>
+<p>The Record End concept was introduced to make sure that <span class="caps">SGML</span> parsers don&#8217;t violate Goldfarb&#8217;s First&nbsp;Law.</p>
+</blockquote>
+<p>(for the uninitiated, <a href="https://en.wikipedia.org/wiki/Charles_Goldfarb">Charles Goldfarb</a> created <span class="caps">SGML</span>)</p>
+<p>Anyway, over twenty years ago Python tried (in Python 2.3) to smooth this over by introducing <a href="https://peps.python.org/pep-0278/">“universal newline” mode</a> for opening files, which accepts all three options: a&nbsp;plain <code>\n</code> (Unix), or a&nbsp;plain <code>\r</code> (classic Mac), or&nbsp;an <code>\r\n</code> sequence (<span class="caps">DOS</span> and Windows) will all be interpreted as line&nbsp;breaks.</p>
+<p>But even in <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> there there are other ways of breaking a line. For example, at byte&nbsp;value <code>0x0C</code> <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> includes&nbsp;the <code>FORM FEED</code> control character&nbsp;(<code>FF</code>,&nbsp;or <code>\f</code>). Which is not one of the traditional characters used by major operating systems as a “newline”, but nonetheless does cause a new line to occur: it moves to the next page (if necessary, by ejecting the current sheet of paper from the printer and feeding in a new one). And there’s&nbsp;also <code>0x0B</code>, <code>VERTICAL TAB</code> (<code>VT</code> or <code>\v</code>): just as a “regular” tab&nbsp;(<code>\t</code>) causes a horizontal adjustment, a vertical tab causes a vertical one. So it, too, causes output to advance to another line (probably skipping several in the&nbsp;process).</p>
+<p>And <a href="https://en.wikipedia.org/wiki/C0_and_C1_control_codes#C1_controls">the C1 control characters</a>&nbsp;added <code>0x85</code>,&nbsp;the <code>NEXT LINE</code> character (typically&nbsp;abbreviated <code>NEL</code>), useful for translating back and forth between <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> and <span class="caps">IBM</span>’s <span class="caps">EBCDIC</span> character set (which had “New Line” as a single&nbsp;character).</p>
+<h2>Then Unicode&nbsp;happened</h2>
+<p>Today we live in a Unicode world, and Unicode tries its hardest to catalog and standardize and describe how to work with all the world’s writing systems. <a href="https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-5/#G10213">Chapter 5, Section 8 of the Unicode Standard, “Newline Guidelines”</a>, lists seven code points to recognize as causing new lines. Five of them we’ve seen&nbsp;already:</p>
+<ul>
+<li><code>U+000A LINE FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000B LINE TABULATION</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>’s vertical&nbsp;tab</li>
+<li><code>U+000C FORM FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000D CARRIAGE RETURN</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+0085 NEXT LINE</code>, from the C1 control&nbsp;codes</li>
+</ul>
+<p>The <code>CR LF</code> sequence is also recognized, on systems which use&nbsp;it.</p>
+<p>But the other two code points are new and were created specifically for&nbsp;Unicode:</p>
+<ul>
+<li><code>U+2028 LINE SEPARATOR</code> (which Unicode likes to abbreviate&nbsp;as <code>LS</code>)</li>
+<li><code>U+2029 PARAGRAPH SEPARATOR</code> (similarly abbreviated&nbsp;as <code>PS</code>)</li>
+</ul>
+<p>The Unicode Standard explains that the traditional newline characters had started to become ambiguous, because of the rise of tools such as word-processing programs which automatically wrapped lines for display and so began using explicit “newline” characters to mean a <em>paragraph</em> break rather than a line break. So Unicode <a href="https://xkcd.com/927/">added two new code points</a> whose purposes are explicit. And the standard says that “[I]n Unicode text, the <span class="caps">PS</span> and <span class="caps">LS</span> characters should be used wherever the desired function is&nbsp;unambiguous.”</p>
+<p>This set of line-breaking code points originated in version 5.0 of Unicode, with <a href="https://www.unicode.org/standard/reports/tr13/tr13-5.html">Unicode Technical Report #13</a>, which lists the seven “newline” code points and&nbsp;the <code>CR LF</code> sequence. This is also the set of code points and sequences defined for <a href="https://www.unicode.org/reports/tr18/#Line_Boundaries">line boundaries in Unicode regular expressions, Unicode Technical Standard #18</a>.</p>
+<p>And expanding on Chapter 5 of the Standard, there&#8217;s <a href="https://www.unicode.org/reports/tr14/">Unicode Standard Annex #14, “Unicode Line Breaking Algorithm”</a>. As the name implies, this document formally specifies the line-breaking algorithm for Unicode, including defining things like which characters offer an opportunity to break a line, whether the break is mandatory, and whether the break would come before or after the character in question. It does this in a typical Unicode way: by <a href="https://www.unicode.org/reports/tr14/#DescriptionOfProperties">defining a set of named properties</a> and specifying which characters have which&nbsp;properties.</p>
+<h2>Two ways about&nbsp;it</h2>
+<p>But there are still three “newline” characters supported by Python that we haven’t seen yet, and they come from a place that might be surprising: <a href="https://www.unicode.org/reports/tr9/">Unicode Standard Annex #9, the bidirectional algorithm</a>. And it’s <span class="caps">OK</span> if you’re wondering what that has to do with newlines, because it’s not immediately obvious if you don’t already know about&nbsp;it.</p>
+<p>Some written scripts, like the Latin script this blog post is written in, are written and read left-to-right: the start of a line of text is on the left-hand side, and the end is on the right-hand side. Other scripts, such as Arabic or Hebrew, do the opposite, and are right-to-left. And so Unicode, which again wants to cover <em>all</em> the world’s writing systems and let you use any or all of them, has to support both left-to-right and right-to-left horizontal text&nbsp;direction.</p>
+<p>But more than that, it has to support switching direction within a single piece of text. You might have something that’s in, say, Arabic but quotes something in Spanish in the middle of a line; that would require a short section of left-to-right inside an otherwise right-to-left text. Or you might be writing something that uses <a href="https://en.wikipedia.org/wiki/Boustrophedon">boustrophedon</a>, switching directions on each line. So Unicode includes direction-control characters&nbsp;like <code>U+200E LEFT-TO-RIGHT MARK</code> and <code>U+200F RIGHT-TO-LEFT MARK</code> to handle this. But it also needs to know the scope of a direction change, and that’s where the last “newline” characters come in: the Unicode bidirectional algorithm says that “[t]he effects of all of these formatting characters are limited to the current paragraph; thus, they are terminated by a <em>paragraph separator</em>”.</p>
+<p>So Unicode characters have, among their properties, a “bidirectional class” which influences how they affect the bidirectional algorithm. And the characters which act as paragraph separators for purposes of ending the effects of an explicit directional marker all share a common value for this: bidirectional&nbsp;class <code>B</code>. The characters with that class include quite a few that we’ve already seen, along with three more&nbsp;characters:</p>
+<ul>
+<li><code>U+001C INFORMATION SEPARATOR FOUR</code></li>
+<li><code>U+001D INFORMATION SEPARATOR THREE</code></li>
+<li><code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>But these are better known by their original <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>&nbsp;names: <code>FILE SEPARATOR</code>, <code>GROUP SEPARATOR</code>,&nbsp;and <code>RECORD SEPARATOR</code>. <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> provided these to help represent data structures in memory and on storage media. Today it’s not as common to try to use control characters for this purpose, though they do have the virtue of being rare in actual text, unlike other common delimiters such as <a href="https://en.wikipedia.org/wiki/Tab-separated_values">tab</a> or <a href="https://en.wikipedia.org/wiki/Comma-separated_values">comma</a>.</p>
+<h2>End of the&nbsp;line</h2>
+<p>And now, after looking at multiple character sets and five Unicode technical documents, we can finally state clearly what’s going on in&nbsp;Python.</p>
+<p>Python’s <code>splitlines()</code> treats ten different code points, and one multi-code-point sequence, as causing a line break. These&nbsp;are:</p>
+<ul>
+<li>The&nbsp;sequence <code>U+000D U+000A</code> (<code>CR LF</code>).</li>
+<li>The four code points which have line-breaking&nbsp;property <code>BK</code> (Mandatory Break&nbsp;(Non-tailorable)): <code>U+000B LINE TABULATION</code> , <code>U+000C    FORM FEED</code>, <code>U+2028 LINE SEPARATOR</code>,&nbsp;and <code>U+2029 PARAGRAPH SEPARATOR</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>CR</code> (Carriage Return&nbsp;(Non-tailorable)): <code>U+000D CARRIAGE RETURN</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>LF</code> (Line Feed&nbsp;(Non-tailorable)): <code>U+000A LINE FEED</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>NL</code> (Next Line&nbsp;(Non-tailorable)): <code>U+0085 NEXT LINE</code>.</li>
+<li>The three code points which don’t have any of the above line-breaking properties, but do have bidirectional&nbsp;property <code>B</code>:  <code>U+001C INFORMATION SEPARATOR FOUR</code>, <code>U+001D INFORMATION SEPARATOR THREE</code>,&nbsp;and <code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>Which is also exactly what’s stated by <a href="https://github.com/python/cpython/blob/87b120fdb58afd8f7cb79daa87122334e295b70c/Objects/unicodetype_db.h#L6583">a comment in the CPython source code</a> accompanying the list of individual code points that are considered to break lines, but hopefully now you have a better understanding of what that comment means and how this particular set was arrived&nbsp;at.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 06:06 PM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2026/aug/10/newlines/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/qt-designer-python/" class="hover:underline"
               >Qt Designer and Python: Build Your GUI Applications Faster</a
             >
@@ -246,7 +353,7 @@ Steering Council for its consideration.</p>
             <p>I&#8217;ve had an idea rattling around to get more detail from coverage
 measurement.  Can we measure the coverage in a function separately for each
 caller of the function?</p><p>Here&#8217;s why I want it: in <a href="https://nedbatchelder.com/blog/202607/acidica">Acidica</a>, my toy
-BASIC interpreter, I have code to implement the built-in functions that looks
+BASIC interpreter, I had code to implement the built-in functions that looked
 something like this:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">match</span>&#xa0;<span class="n">func_name</span><span class="p">:</span>
 <br />
 <br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">case</span>&#xa0;<span class="s2">&quot;LEN&quot;</span><span class="p">:</span>
@@ -1703,48 +1810,6 @@ information.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/" class="hover:underline"
-              >OMI Audio extension for glTF</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Another OMI-based extension, this time for positional audio mixing. Again, Claude-coded, using the OMI/KHR audio extensions for glTF as the base model and then implementing the actual mixing using Numpy. Supports mp3, wav, opus and flac inputs and stereo (headset) outputs. Up on github as <a href="https://github.com/mcfletch/omi_audio">omi_audio</a> and on PyPI as <a href="https://pypi.org/project/omi-audio/">omi_audio</a> as well.</p>
-
-<p>This is loosely the same model as Web Audio's Panner Node. The only significant difference from the KHR extension is that we also support VRML97 style double-ellipse emitter. The package delegates file retrieval to the application, and doesn't include any special effects or the like.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 02, 2026 04:06 PM UTC by
-            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
-              >Mike C. Fletcher</a
-            >
-          </div>
-          <a
-            href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1756,8 +1821,8 @@ information.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8020</a></li>
-    <li><a>Unique Feeds: 368</a></li>
+    <li><a>Total Entries: 8119</a></li>
+    <li><a>Unique Feeds: 374</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
