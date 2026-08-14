@@ -53,180 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://www.peterbe.com/plog/how-to-use-a-listtuplearray-in-django-with-a-raw-sql-cursor" class="hover:underline"
-              >How to use a list/tuple/array in Django with a raw SQL cursor</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>This does <strong><em>not</em></strong> work:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> connection
-
-list_of_values = [<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>]
-<span class="hljs-keyword">with</span> connection.cursor() <span class="hljs-keyword">as</span> cursor:
-    cursor.execute(<span class="hljs-string">&quot;&quot;&quot;
-        SELECT *
-        FROM my_model_table
-        WHERE some_value IN %s
-    &quot;&quot;&quot;</span>, [
-        <span class="hljs-built_in">tuple</span>(list_of_values),
-    ])
-    results = cursor.fetchall()
-</code></pre>
-
-<p>It will give you:</p>
-<pre>django.db.utils.ProgrammingError: syntax error at or near &quot;&#x27;(1,2,3)&#x27;&quot;
-LINE 4:         WHERE id IN &#x27;(1,2,3)&#x27;</pre>
-
-<p>It <em>used</em> to work with <code>psycopg</code> v2. Now, in psycopg v3, you have to use the <code>ANY</code> operator. See <a href="https://www.psycopg.org/psycopg3/docs/basic/from_pg2.html#you-cannot-use-in-s-with-a-tuple">"You cannot use IN %s with a tuple"</a></p>
-<p>This <em>will</em> work:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> connection
-
-list_of_values = [<span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>]
-<span class="hljs-keyword">with</span> connection.cursor() <span class="hljs-keyword">as</span> cursor:
-    cursor.execute(
-        <span class="hljs-string">&quot;&quot;&quot;
-        SELECT *
-        FROM my_model_table
-        WHERE some_value = ANY(%s)
-    &quot;&quot;&quot;</span>,
-        [
-            list_of_values,
-        ],
-    )
-    results = cursor.fetchall()
-</code></pre>
-
-<p>Note the <code>ANY(%s)</code>, and instead of a list that has a tuple, it's a list that has a list.</p>
-<h4 id="what-about-a-list-of-strings"><a class="toclink" href="#what-about-a-list-of-strings">What About a List of Strings</a></h4>
-<p>Consider...</p>
-<pre><code class="hljs">
-from django.db import connection
-
-<span class="hljs-deletion">-list_of_values = [1, 2, 3]</span>
-<span class="hljs-addition">+list_of_values = [&#x27;foo&#x27;, &#x27;bar&#x27;, &#x27;fiz&#x27;]</span>
-with connection.cursor() as cursor:
-    cursor.execute(
-        &quot;&quot;&quot;
-        SELECT *
-        FROM my_model_table
-        WHERE some_value = ANY(%s)
-    &quot;&quot;&quot;,
-        [
-            list_of_values,
-        ],
-    )
-    results = cursor.fetchall()
-</code></pre>
-
-<p>That will result in:</p>
-<pre>django.db.utils.DataError: invalid input syntax for type integer: &quot;foo&quot;
-LINE 4:         WHERE some_value = ANY(&#x27;{foo,bar,fiz}&#x27;)</pre>
-
-<p>My solution was to rewrite the SQL string itself and treat each value as a parameter each. In other words, the SQL string, before being sent to <code>cursor.execute(...)</code> will contain something like this:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">AND</span> (
-  some_value <span class="hljs-operator">=</span> <span class="hljs-operator">%</span> <span class="hljs-keyword">OR</span>
-  some_value <span class="hljs-operator">=</span> <span class="hljs-operator">%</span> <span class="hljs-keyword">OR</span>
-  some_value <span class="hljs-operator">=</span> <span class="hljs-operator">%</span> <span class="hljs-keyword">OR</span>
-  some_value <span class="hljs-operator">=</span> <span class="hljs-operator">%</span> <span class="hljs-keyword">OR</span>
-  <span class="hljs-comment">-- ...etc...</span>
-  some_value <span class="hljs-operator">=</span> <span class="hljs-operator">%</span>
-)
-</code></pre>
-
-<p>This will work and is safe:</p>
-<pre><code class="hljs">
-<span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> connection
-
-list_of_values = [<span class="hljs-string">&quot;foo&quot;</span>, <span class="hljs-string">&quot;bar&quot;</span>, <span class="hljs-string">&quot;fiz&quot;</span>]
-<span class="hljs-keyword">with</span> connection.cursor() <span class="hljs-keyword">as</span> cursor:
-    cursor.execute(
-        <span class="hljs-string">f&quot;&quot;&quot;
-        SELECT *
-        FROM my_model_table
-        WHERE (<span class="hljs-subst">{<span class="hljs-string">&quot; OR &quot;</span>.join([<span class="hljs-string">&quot;some_value = %s&quot;</span> <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> list_of_values])}</span>)
-    &quot;&quot;&quot;</span>,
-        list_of_values,
-    )
-    results = cursor.fetchall()
-</code></pre>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 14, 2026 01:14 PM UTC by
-            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
-              >Peter Bengtsson</a
-            >
-          </div>
-          <a
-            href="http://www.peterbe.com/plog/how-to-use-a-listtuplearray-in-django-with-a-raw-sql-cursor"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonlibrary.org/2026/07/14/python-101-3rd-edition-kickstarter-launch/" class="hover:underline"
-              >Python 101 3rd Edition Kickstarter Launch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Learn Python with a Book Designed for Beginners Hello! I&#8217;m Michael Driscoll, and I&#8217;m excited to announce the third edition of Python 101. For years, Python 101 has helped readers take their first steps into programming. Whether you&#8217;re a complete beginner, a student, or someone looking to learn Python for work or personal projects, the [&#8230;]</p>
-<p>The post <a href="https://blog.pythonlibrary.org/2026/07/14/python-101-3rd-edition-kickstarter-launch/">Python 101 3rd Edition Kickstarter Launch</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 14, 2026 01:05 PM UTC by
-            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
-              >Mike Driscoll</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonlibrary.org/2026/07/14/python-101-3rd-edition-kickstarter-launch/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/488/tau-its-2pi-and-it-writes-code" class="hover:underline"
               >#488 tau - it's 2pi and it writes code</a
             >
@@ -2116,6 +1942,86 @@ into problems or have any questions.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/adding-new-tabs-in-tabwidget-appears-as-a-seperate-window-when-tab-is-selected/" class="hover:underline"
+              >Why Widgets Appear as Separate Windows — Understanding widget parenting in Qt and how to fix widgets that float outside your main window</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Sometimes when I dynamically add widgets to tabs in my PyQt6 application, they pop out as windows instead. What's going on?
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 08, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/adding-new-tabs-in-tabwidget-appears-as-a-seperate-window-when-tab-is-selected/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://snarky.ca/how-to-publish-to-pypi-using-github-actions-securely/" class="hover:underline"
+              >How to publish to PyPI using GitHub Actions securely</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>There have been several security incidents lately that involved compromising GitHub Actions workflows. This has led some to say &quot;<a href="https://nesbitt.io/2026/04/28/github-actions-is-the-weakest-link.html">GitHub Actions is the weakest link</a>&quot; in publishing and to GitHub publishing a <a href="https://github.blog/news-insights/product-news/whats-coming-to-our-github-actions-2026-security-roadmap/">GitHub Actions security roadmap update</a>. But saying it&apos;s an issue and acknowledging the fact</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 07, 2026 08:44 PM UTC by
+            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
+              >Brett Cannon</a
+            >
+          </div>
+          <a
+            href="https://snarky.ca/how-to-publish-to-pypi-using-github-actions-securely/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2127,8 +2033,8 @@ into problems or have any questions.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8305</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8272</a></li>
+    <li><a>Unique Feeds: 372</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
