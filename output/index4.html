@@ -53,6 +53,503 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss" class="hover:underline"
+              >Extracting “Ocarina of Time: Master Quest” ROM from the Legend of Zelda: Wind Waker bonus disc</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Another day, another extracting ROMs from GameCube
+titles mini-tutorial. This time it’s the PAL
+Legend of Zelda: Wind Waker Bonus Disc that I
+<a href="https://sethmlarson.dev/pal-gamecube-haul-from-krakow-poland">recently purchased from Kraków, Poland</a>. This
+disc contains two N64 games: <a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time">Legend of Zelda:
+Ocarina of Time</a> and the “<a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time#Master_Quest">Master Quest</a>”
+version of Ocarina of Time. Let’s extract those ROMs
+from the GameCube ROM so we can play on other emulators.</p>
+
+<!-- more -->
+
+<p>Going from a GameCube disc to an ISO ROM is the usual
+process, for me that means using the <a href="https://docs.flippydrive.com/backup.html">FlippyDrive Disc Backup
+Utility</a> but CleanRip on a GameCube or Wii also works.
+To extract the individual files from the ISO open
+the ISO in Dolphin, right-click the ISO, <code>Properties</code>,
+<code>Filesystem</code>, and extract the <code>zlj_f.tgc</code> file into
+your working directory.</p>
+
+<p>According to <a href="https://tcrf.net/The_Legend_of_Zelda:_Ocarina_of_Time_Bonus_Disc">The Cutting Room Floor</a> both N64 ROMs
+are included in the file <code>zlj_f.tgc</code>. TGC is an
+archive format that Nintendo uses often in this generation
+of games. Thanks to resources like <a href="https://no-intro.org/">No Intro</a>
+we have the known-good ROM lengths and hashes for both Ocarina of
+Time and Master Quest for all regions. Using this information
+(along with the N64 ROM header) we can find the embedded N64 ROMs
+within <code>zlj_f.tgc</code> without understanding the TGC format at all:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="c1"># License: MIT</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+
+<span class="n">ROM_HEADER</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x80\x37\x12\x40</span><span class="s2">&quot;</span>
+<span class="n">ROM_LENGTH</span> <span class="o">=</span> <span class="mh">0x2000000</span>
+<span class="n">ROM_HASHES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;1618403427e4344a57833043db5ce3c3&quot;</span><span class="p">:</span> <span class="s2">&quot;Legend of Zelda, The - Ocarina of Time - Master Quest (Europe) (En,Fr,De) (Zelda Collection).n64&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;2c27b4e000e85fd78dbca551f1b1c965&quot;</span><span class="p">:</span> <span class="s2">&quot;Extracted Legend of Zelda, The - Ocarina of Time (Europe) (GameCube).n64&quot;</span><span class="p">,</span>
+    <span class="c1"># If you see 'Unknown ROM', paste the MD5 into</span>
+    <span class="c1"># https://datomatic.no-intro.org/index.php</span>
+    <span class="c1"># searching on 'hash-data' and add the values here.</span>
+<span class="p">}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;zlj_f.tgc&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+    <span class="c1"># Find the embedded ROMs from the N64 ROM header.</span>
+    <span class="n">offset1</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
+    <span class="n">offset2</span> <span class="o">=</span> <span class="p">(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">)</span> <span class="o">+</span> <span class="n">data</span><span class="p">[(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">):]</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">offset</span> <span class="ow">in</span> <span class="p">(</span><span class="n">offset1</span><span class="p">,</span> <span class="n">offset2</span><span class="p">):</span>
+
+        <span class="c1"># Determine which ROM we have based on MD5.</span>
+        <span class="n">rom</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">offset</span><span class="p">:</span><span class="n">offset</span> <span class="o">+</span> <span class="n">ROM_LENGTH</span><span class="p">]</span>
+        <span class="n">rom_md5</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+        <span class="n">to_file</span> <span class="o">=</span> <span class="n">ROM_HASHES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rom_md5</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">to_file</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown ROM (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+            <span class="k">continue</span>
+
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">to_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">truncate</span><span class="p">()</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Extracted </span><span class="si">{</span><span class="n">to_file</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)...&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre>
+</div>
+
+<p>The script above only knows about the ROM hashes for
+the PAL revision of the Bonus Disc, so if you see <code>Unknown ROM (...)</code>,
+don't panic! You can search the MD5 you receive on <a href="https://datomatic.no-intro.org/index.php?page=search&amp;s=64">No Intro</a>
+by filtering on <code>hash-data</code> to discover whether the ROM
+is correct and add the value to <code>ROM_HASHES</code> in the script.</p>
+
+<p>With my Master Quest ROM in hand I can load the game into
+<a href="https://sethmlarson.dev/getting-started-with-gamesir-pocket-taco-iphone-delta-emulator">Delta Emulator</a> and play on my iPhone:</p>
+
+<p><center>
+<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/loz-wind-waker-bonus-disk/loz-oot-master-quest.png" style="border: 2px black solid;" />
+<br /><small><em>Legend of Zelda: Ocarina of Time Master Quest running in the Delta Emulator</em></small>
+</center></p>
+
+<p>I won’t be playing much because I have never played
+Ocarina of Time before and want to play the <a href="https://www.nintendo.com/us/store/products/the-legend-of-zelda-ocarina-of-time-switch-2/">upcoming remake
+for the Nintendo Switch 2</a> with a completely blank slate.
+I’m excited to try one of the most universally acclaimed
+games ever made for the first time soon! :)</p>
+
+<h2>What’s new in the blogroll?</h2>
+
+<p>I <a href="https://sethmlarson.dev/blogroll">publish a blogroll</a> containing links to
+websites that I've enjoyed recently.</p>
+
+<p>Pokémon cards were on the mind the past few weeks! My
+brother is a collector so we've been discussing the
+different artists and sets that he's interested in.
+While I was doing research I came across two websites
+that seemed useful for this: collating <a href="https://pokesymbols.com/tcg/sets">Pokémon set symbols</a>
+and <a href="https://www.artofpkm.com">Pokémon card artwork by artist</a>.
+A comedic graphic design YouTuber
+“Elliot” also published a <a href="https://www.youtube.com/watch?v=p0m5nuygU5w">new video about Pokémon’s
+graphic designs</a> which I found entertaining.</p>
+
+<p>I purchased “<a href="https://swag.htmx.org/en-usd/products/htmx-4-the-game">htmx 4: the game</a>”, the first JavaScript library published
+exclusively to the Nintendo Game Boy platform. The package (hah)
+arrives today and I plan to post about the experience with the
+game and discussing the form factor as a software distribution mechanism,
+look forward to that blog post soon.</p>
+
+<p>I found a <a href="https://gblink.io/">Game Boy Link Cable to internet adapter</a> hardware project
+which looks intriguing if you've got friends
+that are far away that you still want to play Generation 3 Pokémon
+with (<em>Pokémon Emerald forever</em>). This hardware enables trading, battling, record mixing, and
+more by pretending to be your peer in a GBA Link Cable connection.</p>
+<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 31, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/jul/29/dsf-member-of-the-month-katherine-michel/" class="hover:underline"
+              >DSF member of the month - Katherine &quot;Kati&quot; Michel</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>For July 2026, we welcome Katherine "Kati" Michel as our DSF member of the month! ⭐</p>
+<p><img alt="Kati, with a short haircut and a little smile. She is in front of some buildings." src="https://media.djangoproject.com/blog/images/2026/07/kati-profile.png" /></p>
+<p>Kati is involved in the Django community for many years. She was a DEFNA Director for 8 years and DjangoCon US Website Chair and Co-Chair. She is a DSF member since December 2017!</p>
+<p>You can learn more about Kati by visiting <a href="https://katherinemichel.github.io/">Kati's website</a> and <a href="https://github.com/KatherineMichel">her GitHub Profile</a>.</p>
+<p>Let’s spend some time getting to know Kati better!</p>
+<h2 id="s-can-you-tell-us-a-little-about-yourself-hobbies-education-etc">Can you tell us a little about yourself? (hobbies, education, etc)</h2>
+<p>In 2002, I was living in Lawrence, Kansas and working for government contracts supporting US Citizenship and Immigration Services and the US Department of Education. While working for USCIS, I spoke to tens of thousands of people from around the world, but hadn't seen much of the world myself. In 2009, I decided to move to England and earn a master's degree from Lancaster University Management School. During the program, I was fortunate to have an internship in the IT Change Management Department of Co-operative Financial Services/Britannia Building Society.  </p>
+<p>It feels full circle that I am now a software engineer at JPMorganChase, working in Infrastructure Platforms, Databases Department.  </p>
+<h2 id="s-how-did-you-start-using-django">How did you start using Django?</h2>
+<p>While living in Lawrence, I visited the Lawrence Public Library often. I would sometimes drive past the nearby Lawrence Journal World and had no idea that Django was being invented there.  </p>
+<p>During my internship at CFS/Britannia Building Society in England, I was immersed in technology and loved it. Although it was a tumultuous time due to the subprime mortgage crisis, I was left with an insatiable curiosity about programming. That is how I learned about Django, and I have been using Django ever since.  </p>
+<h2 id="s-what-other-framework-do-you-know-and-if-there-is-anything-you-would-like-to-have-in-django-if-you-had-magical-powers">What other framework do you know and if there is anything you would like to have in Django if you had magical powers?</h2>
+<p>In addition to Python/Django, I work with React.  </p>
+<p>At DjangoCon US 2025, Will Vincent commented during his <a href="https://www.youtube.com/watch?v=zIQZXr6XIU0">talk "Django for AI"</a> that Django "never really 'owned'" the niche of classic Machine Learning models, but should have, because it's great for small and medium ML models. He recently asked Django Project Forum if Django should have an official skills.md like FastAPI now has. These are important conversations to have.  </p>
+<p>If I had magical powers, I would maintain the stability and maturity many Django users celebrate while making targeted enhancements to help it better serve developers who are reaching for FastAPI or JavaScript frameworks first. Providing Django's benefits while meeting the use case is win-win.  </p>
+<p>Django already supports many modern patterns. Clear starter guides and code examples showing how to build a classic ML application, LLM chat bot, async workflows, React/Angular/Vue integration, and APIs, while taking advantage of the benefits Django offers, could help developers discover it better.  </p>
+<p>Marlene Mhangami and Benjamin "Zags" Zagorsky also gave some ideas for how to approach this in their respective DjangoCon US 2025 keynotes.</p>
+<p><em>Author's note: You can watch <a href="https://www.youtube.com/watch?v=VwqFx9Tup0A">Marlene Mhangami's keynote</a> and <a href="https://www.youtube.com/watch?v=7SGqZcrUGSU">Benjamin "Zags" Zagorsky's keynote</a> here.</em> </p>
+<h2 id="s-what-projects-are-you-working-on-now">What projects are you working on now?</h2>
+<p>In my work, I am part of a team building a new on-premises caching service from the ground up. I design distributed system topology, write code for a React UI and Django control plane that orchestrate tasks to provision these distributed systems based on internal customer requirements, create Ansible playbooks to manage the servers, and do Red Hat Enterprise Linux admin. It's not a typical Django use case, but fun and fascinating in its own right.  </p>
+<h2 id="s-which-django-libraries-are-your-favorite-core-or-3rd-party">Which Django libraries are your favorite (core or 3rd party)?</h2>
+<p>I had a website query that was becoming progressively slower as the data in the database grew. I installed <a href="https://github.com/jazzband/django-silk">django-silk</a>, a live profiling and inspection library, diagnosed an N+1 problem, and had an aha moment as I watched the number of SQL queries in the django-silk dashboard greatly reduce with each new addition of a prefetch_related or select_related. It felt like magic. django-silk has been one of my favorite libraries ever since.  </p>
+<p><a href="https://htmx.org/">htmx</a> and <a href="https://github.com/carltongibson/django-template-partials">django-template-partials</a> have been a joy to use together to create AJAX-like web UI functionality directly in HTML, without the need for JavaScript. As of Django 6.0, the Django Template Language now supports template partials. The htmx website has a fun UI Examples page to demo what it can do.  </p>
+<p>I am a fan of <a href="https://github.com/vitalik/django-ninja">django-ninja</a>. I like its use of Pydantic schemas, type hinting, and OpenAPI integration.    </p>
+<h2 id="s-what-are-the-top-three-things-in-django-that-you-like">What are the top three things in Django that you like?</h2>
+<ol>
+<li>
+<p>Django was invented at a newspaper. The Django ORM and admin are arguably its killer feature. Not every popular framework has a built-in ORM and admin that enable users to quickly structure and manage data.  </p>
+</li>
+<li>
+<p>Django's "batteries included" philosophy and rich library ecosystem enable developers to focus on building applications without re-inventing the wheel.  </p>
+</li>
+<li>
+<p>Django has strong security protections out of the box and a mature security policy.  </p>
+</li>
+</ol>
+<h2 id="s-im-curious-how-did-you-started-to-contribute-to-djangocon-us-do-you-have-any-advice-for-someone-who-might-be-considering-joining-the-board-of-directors-if-the-opportunity-arose">I'm curious, how did you started to contribute to DjangoCon US? Do you have any advice for someone who might be considering joining the board of directors if the opportunity arose?</h2>
+<p>While looking through GitHub projects, I stumbled upon the <a href="https://djangocon.us/">DjangoCon US website</a> code. I had a feeling that becoming part of a community like this would be life-changing, and it was. In March of 2016, I began helping with the DjangoCon US 2016 website. It was an invaluable opportunity to learn my way around Git, GitHub, and the website code. 2017 was a very eventful year. I became the DjangoCon US 2017 Website Chair, joined the <a href="https://www.defna.org/">DEFNA</a> Board, and was hired by the web development agency contracted to create the DjangoCon US website.  </p>
+<p>I served as DjangoCon US Website Chair or Co-chair from 2017 to 2021 and DEFNA Board Member from 2017 to 2025, including several years as corporate secretary. Serving on the board gives you the opportunity to manage the higher level details of DjangoCon US, such as budgeting, location selection, contractor procurement, and volunteer oversight. You will also have the opportunity to grow Django outreach across North America, for instance, by awarding event grants. Being on the board was an honor and one of the most rewarding experiences of my life.  </p>
+<p>I've never seen a more practical write-up of how to excel in a board position than former DEFNA President <a href="https://jefftriplett.com/2024/psf-elections-how-i-am-voting/">Jeff Triplett's post "PSF Elections how I am voting."</a>.   </p>
+<h2 id="s-you-have-been-a-speaker-an-organizer-of-djangocon-us-and-a-member-of-defnas-board-of-directors-having-observed-the-conference-from-many-different-perspectives-over-a-period-of-time-how-do-you-think-djangocon-us-has-evolved">You have been a speaker, an organizer of DjangoCon US, and a member of DEFNA’s board of directors. Having observed the conference from many different perspectives over a period of time, how do you think DjangoCon US has evolved?</h2>
+<p>The conference structure has evolved to fit the times and talk subject trends have evolved (async, locality of behavior ecosystem, and AI come to mind), but my favorite evolution of all has been the major improvement in diversity and inclusion over time.  </p>
+<p>DjangoCon US increased the number of talks by women from around 6% in 2010 to nearly 50% in 2016. This was accomplished through intentional outreach. PyLadies and Django Girls have both played a major role.  </p>
+<p>In 2023, the conference was an important platform for the newly formed, self-organized Black Python Devs organization. By one organizer's count, we had around 10 Black speakers, and a Django Girls workshop had a majority of Black participants. In 2024, the conference hosted the Black Python Devs Leadership Summit.  </p>
+<p>From a Django Core perspective, at DjangoCon US 2018, former Django Fellow Carlton Gibson acknowledged that the community had become more diverse than ever, but the core contributors had continued to be white guys. The launch of Djangonaut Space in 2024 by a small group of community members has been a game changer. Djangonaut Space is a highly effective mentorship program that equips its cohort members to contribute to Django and its ecosystem, with a focus on inclusion.  </p>
+<h2 id="s-you-have-been-a-speaker-multiple-times-do-you-have-any-advice-for-someone-considering-starting-speaking-one-day">You have been a speaker multiple times, do you have any advice for someone considering starting speaking one day?</h2>
+<p>My advice to aspiring public speakers is to start with the opportunities you can get and work your way up: give a presentation to your department (do a practice run to colleagues for feedback), give a talk to a local meetup, give a lightning talk at a conference, enlist the help of a talk mentor and submit to a conference CfP (especially those that welcome newcomers - DjangoCon US is one of them), and don't be discouraged by rejections.  </p>
+<p>As a conference attendee, I've seen some incredible speakers. Russell Keith-Magee immediately comes to mind. I appreciate the candor of highly effective public speakers who acknowledge that it is a skill that can be developed. I often remember an anecdote Nina Zakharenko once told. She got her start in public speaking when someone challenged her to do a lightning talk at a conference. She got the microphone caught in her hair during the talk. Years later, she expertly keynoted PyCon US. Don't wait for, or expect perfection.  </p>
+<h2 id="s-after-so-many-times-in-the-django-community-what-makes-you-stay">After so many times in the Django community, what makes you stay?</h2>
+<p>I enjoy the Django tool ecosystem, and the people are wonderful. I have a lot of friends in this community who inspire me and are there for me.  </p>
+<h2 id="s-how-do-you-envision-the-future-of-django-from-your-perspective">How do you envision the future of Django from your perspective?</h2>
+<p>Last year was Django's 20th birthday. I’m optimistic that Django and its community will be thriving 20 years from now.  </p>
+<h2 id="s-do-you-remember-your-first-contribution-to-django-and-in-open-source">Do you remember your first contribution to Django and in open source?</h2>
+<p>At DjangoCon US 2019 sprints, I made my first contribution to Django Core with the help of Carlton Gibson. I added instructions for running tests using <a href="https://github.com/django/django-docker-box">django-docker-box</a>. I would love to contribute to Django again.  </p>
+<h2 id="s-what-are-your-hobbies-or-what-do-you-do-when-youre-not-working">What are your hobbies or what do you do when you’re not working?</h2>
+<p>In my personal time, I love exploring new and interesting places, discovering great food, watching documentaries, and taking photographs.</p>
+<h2 id="s-is-there-anything-else-youd-like-to-say">Is there anything else you’d like to say?</h2>
+<p>Thank you for having me! I really enjoyed this interview.</p>
+<hr />
+<p><strong>Thank you for doing the interview, Kati !</strong></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 29, 2026 09:48 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/jul/29/dsf-member-of-the-month-katherine-michel/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.jetbrains.com/pycharm/2026/07/pytorch-tutorial-for-deep-learning/" class="hover:underline"
+              >PyTorch Tutorial for Deep Learning</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            This is a guest post from Naa Ashiorkor, a data scientist and tech community builder. Building intelligent systems that can see, hear, understand language, and make decisions was previously the domain of specialized researchers with massive computing resources only – today, deep learning has made this accessible to developers and data scientists across the world, [&#8230;]
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 29, 2026 04:18 PM UTC by
+            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
+              >PyCharm</a
+            >
+          </div>
+          <a
+            href="https://blog.jetbrains.com/pycharm/2026/07/pytorch-tutorial-for-deep-learning/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonmorsels.com/binary-search/" class="hover:underline"
+              >Binary search in Python with bisect</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python's <code>bisect</code> module implements binary search for you. Here's how <code>bisect_left</code>, <code>bisect_right</code>, and <code>insort</code> work, plus recipes for finding the closest match or all values in a range.</p>
+
+
+<div>
+  
+  <p>
+  <strong>Table of contents</strong>
+  <ol>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#binary-search-explained" target="_blank">Binary search explained</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#why-not-use-a-set-instead-of-binary-search" target="_blank">Why not use a set instead of binary search?</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#binary-search-with-the-bisect-module" target="_blank">Binary search with the <code>bisect</code> module</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#pythons-bisect-functions-explained" target="_blank">Python's <code>bisect</code> functions explained</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#binary-search-recipes-using-pythons-bisect" target="_blank">Binary search recipes using Python's <code>bisect</code></a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#binary-insert-with-insort" target="_blank">Binary insert with <code>insort</code></a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#using-bisect-with-a-key-function" target="_blank">Using <code>bisect</code> with a <code>key</code> function</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#realistic-examples-of-binary-search" target="_blank">Realistic examples of binary search</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#dont-use-binary-search-on-an-unsorted-collection" target="_blank">Don't use binary search on an unsorted collection</a></li>
+  
+  <li><a href="https://www.pythonmorsels.com/binary-search/#use-bisect-to-search-sorted-sequences-in-python" target="_blank">Use <code>bisect</code> to search sorted sequences in Python</a></li>
+  
+  </ol>
+  </p>
+</div>
+<div>
+  
+    <h2>Binary search explained</h2>
+    
+      
+        <p>I'm thinking of a number between 1 and 100.
+You have 7 guesses.
+After each wrong guess I'll tell you whether the number I'm thinking of is higher or lower.</p>
+
+      
+        <p>What should you guess?</p>
+
+      
+        <p>Here's the approach I'd use:</p>
+
+      
+        <ul>
+<li>Guess 50 first, splitting the possible guess pool in half (<em>bisecting</em> it)</li>
+<li>If the correct number is below 50, guess 25 (bisecting the remaining pool)</li>
+<li>If the correct number is above 50, guess 75 (bisecting the remaining pool)</li>
+<li>Repeat, splitting the possible remaining numbers in half each time</li>
+</ul>
+
+      
+        <p>That's binary search in a nutshell.</p>
+
+      
+        <p>The <strong>binary</strong> in binary search means <em>two</em>: every guess splits the remaining search space into <strong>two</strong> groups and rules out one of them.
+It has nothing to do with binary numbers or ones and zeroes.
+That same <em>two</em> is in the word <em>bisect</em>, which means to cut something into two pieces.</p>
+
+      
+        <p>Try it below: each guess rules out every number on one side of it, and guessing the middle number every time will always find my number within 7 guesses.</p>
+
+      
+        
+
+
+      
+        <div class="tw-my-8 tw-rounded-lg tw-border tw-border-slate-200 tw-bg-slate-50 tw-p-3 sm:tw-px-4 sm:tw-py-4">
+<div class="tw-mb-2 tw-flex tw-flex-wrap tw-items-baseline tw-justify-between tw-gap-2">
+<p class="tw-mb-0 tw-text-balance tw-font-semibold tw-text-slate-900">I'm thinking of a number from 1 to 100</p>
+<p class="tw-mb-0 tw-text-sm tw-text-slate-500"></p>
+</div>
+<p class="tw-mb-2 tw-rounded-r-lg tw-border-0 tw-border-l-4 tw-border-solid tw-px-3 tw-py-1.5 tw-text-sm"></p>
+<div class="binary-search-grid tw-mb-2 tw-grid tw-gap-1">
+
+<button class="tw-h-7 sm:tw-h-10 tw-w-full tw-appearance-none tw-rounded tw-border tw-p-0 tw-text-xs tw-font-medium tw-leading-none tw-tabular-nums tw-transition-colors focus:tw-outline-none focus-visible:tw-outline focus-visible:tw-outline-2 focus-visible:tw-outline-offset-2 focus-visible:tw-outline-blue-600" type="button"></button>
+
+</div>
+<div class="tw-flex tw-flex-wrap tw-items-center tw-gap-2">
+<button class="tw-appearance-none tw-rounded-md tw-border tw-border-blue-500 tw-bg-blue-600 tw-px-3 tw-py-1.5 tw-text-sm tw-font-semibold tw-text-white hover:tw-bg-blue-500 focus:tw-outline-none focus-visible:tw-outline focus-visible:tw-outline-2 focus-visible:tw-outline-offset-2 focus-visible:tw-outline-blue-600" type="button">Guess the middle (<span></span>)</button>
+<button class="tw-appearance-none tw-rounded-md tw-border tw-border-slate-300 tw-bg-white tw-px-3 tw-py-1.5 tw-text-sm tw-font-semibold tw-text-slate-700 hover:tw-bg-slate-100 focus:tw-outline-none focus-visible:tw-outline focus-visible:tw-outline-2 focus-visible:tw-outline-offset-2 focus-visible:tw-outline-blue-600" type="button">New number</button>
+<p class="tw-mb-0 tw-ml-auto tw-text-sm tw-text-slate-500"></p>
+</div>
+</div>
+
+
+      
+        &#11014;&#65039;&#11015;&#65039;
+
+
+      
+        <p>If you'd prefer to see code, here's an example:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">binary_search</span><span class="p">(</span><span class="n">sequence</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Return the index where the target number would belong."""</span>
+    <span class="k">if</span> <span class="n">high</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">high</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span>
+    <span class="k">while</span> <span class="n">low</span> <span class="o">&lt;</span> <span class="n">high</span><span class="p">:</span>
+        <span class="n">middle</span> <span class="o">=</span> <span class="p">(</span><span class="n">low</span> <span class="o">+</span> <span class="n">high</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="k">if</span> <span class="n">sequence</span><span class="p">[</span><span class="n">middle</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">target</span><span class="p">:</span>
+            <span class="n">low</span> <span class="o">=</span> <span class="n">middle</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">high</span> <span class="o">=</span> <span class="n">middle</span>
+    <span class="k">return</span> <span class="n">low</span>
+</code></pre></div>
+
+
+      
+        <p>That <code>binary_search</code> function looks for a <em>potential</em> match within a sorted <a href="https://www.pythonmorsels.com/sequence/" target="_blank">sequence</a>.</p>
+
+      
+        <p>Why should we care about this, though?
+Why not just use <a href="https://www.pythonmorsels.com/list-containment-checks/" target="_blank">a containment check with the <code>in</code> operator</a>?</p>
+
+      
+        <p>Well, this binary search among 10 million items does <strong>23 comparisons</strong>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="n">sequence</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">))</span>
+<span class="n">target</span> <span class="o">=</span> <span class="mi">2_728_839</span>
+
+<span class="n">index</span> <span class="o">=</span> <span class="n">binary_search</span><span class="p">(</span><span class="n">sequence</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">index</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">sequence</span><span class="p">)</span> <span class="ow">and</span> <span class="n">sequence</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">==</span> <span class="n">target</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">target</span><span class="si">}</span><span class="s2"> found"</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>But this containment check of the same items does well <strong>over 2 million comparisons</strong>:</p>
+
+      
+        <div class="codehilite"><pre><span></span><code><span class="n">sequence</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">))</span>
+<span class="n">target</span> <span class="o">=</span> <span class="mi">2_728_839</span>
+
+<span class="k">if</span> <span class="n">target</span> <span class="ow">in</span> <span class="n">sequence</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">target</span><span class="si">}</span><span class="s2"> found"</span><span class="p">)</span>
+</code></pre></div>
+
+
+      
+        <p>You can <a href="https://pym.dev/p/2frpw/" target="_blank">see for yourself how much quicker binary search is</a>.
+That's the difference between <a href="https://www.pythonmorsels.com/time-complexities/#time-complexity" target="_blank"><code>O(log n)</code> and <code>O(n)</code></a>: doubling the size of our sorted list adds just <em>one</em> more comparison to a binary search.</p>
+
+      
+        <p>Note that both of those examples above are a bit silly because those "sorted sequences" are consecutive numbers without gaps or duplicates.
+We'll take a look at a more realistic example below.
+But first, let's talk about why we can't always use a set or a dictionary instead of binary search.</p>
+
+      
+    
+  
+    <h2>Why not use a set instead of binary search?</h2>
+    
+      <p>If you&#x27;re familiar with the …</p>
+    
+  
+</div>
+<h3><a href="https://www.pythonmorsels.com/binary-search/" target="_blank">Read the full article: https://www.pythonmorsels.com/binary-search/</a></h3>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 29, 2026 02:20 PM UTC by
+            <a href="https://www.pythonmorsels.com/topics/feed/" class="link link-hover text-primary"
+              >Python Morsels</a
+            >
+          </div>
+          <a
+            href="https://www.pythonmorsels.com/binary-search/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/crewai-python/" class="hover:underline"
               >CrewAI in Python: Coordinating Teams of AI Agents</a
             >
@@ -1134,8 +1631,8 @@ email with information on how to affirm your voting status.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://blog.vrplumber.com/b/2026/07/22/omi-physics-extension-for-gltf/" class="hover:underline"
-              >OMI Physics Extension for glTF</a
+            <a href="https://www.pythonguis.com/faq/constantly-print-subprocess-output-while-process-is-running/" class="hover:underline"
+              >Constantly Print Subprocess Output While Process is Running — How to stream live output from a subprocess into your PyQt6 GUI without freezing the interface</a
             >
           </h2>
           
@@ -1144,271 +1641,20 @@ email with information on how to affirm your voting status.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>I had Claude code up an <a href="https://github.com/mcfletch/omi_physics">OMI Physics</a> package using Numpy. It's up on pypi as <a href="https://pypi.org/project/omi-physics/">omi_physics</a>. This follows the <a href="https://github.com/omigroup/gltf-extensions/tree/main/extensions/2.0/OMI_physics_shape">OMI extensions to glTF</a> pretty closely to create an engine with the common features you need. It's not trying to be real-world physics, it's just a game engine style simulation.</p>
-
-<p>The core is GL-free, with a few GPGPU kernels to optimise certain bits over 10,000 objects, but in testing any more than about 300 objects brings the rendering below 60fps in OpenGLContext. To get around that we'd need to move the whole physics process into the GPU with a very different solver, and I don't currently need that.</p>
-
-<p>License is MIT, though most of the code is written by Claude, so arguably it's non-copyright.</p>
+            I need to call a legacy Bash program and display the results in a Qt window. The problem is the subprocess doesn't return each output line as it happens &mdash; it waits until the entire command is finished, then dumps everything to the window at once. If the command takes a long time, the user thinks the system is frozen. How can I get live, line-by-line output from a subprocess into my Qt application?
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 22, 2026 05:13 AM UTC by
-            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
-              >Mike C. Fletcher</a
+            Posted on July 22, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
             >
           </div>
           <a
-            href="http://blog.vrplumber.com/b/2026/07/22/omi-physics-extension-for-gltf/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/pal-gamecube-haul-from-krakow-poland?utm_campaign=rss" class="hover:underline"
-              >PAL GameCube haul from Kraków, Poland (EuroPython 2026)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>While I was in Kraków, Poland during <a href="https://ep2026.europython.eu/">EuroPython 2026</a>
-I was able to sneak away from sprints and buy a few
-PAL region GameCube games for my collection. This was on
-Sunday, which means that many stores are closed
-until Monday... <em>except for one!</em> “<a href="https://www.krakow.gameover.pl">Game Over</a>”
-was open and the owner was very friendly and
-chatted with me as I browsed the selection.</p>
-
-<!-- more -->
-
-<div class="row">
-<div class="col-6">
-<p>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/pal-krakow-poland/IMG_5808.jpeg" style="border: 2px black solid;" />
-</p>
-</div>
-<div class="col-6">
-<p>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/pal-krakow-poland/IMG_5809.jpeg" style="border: 2px black solid;" />
-</p>
-</div>
-</div>
-
-<p>I purchased three complete-in-box games: The <a href="https://www.pricecharting.com/game/pal-gamecube/zelda-wind-waker-limited-edition">Legend of Zelda: Wind Waker &amp; Ocarina of Time Master Quest</a> (UK),
-<a href="https://www.pricecharting.com/game/pal-gamecube/pikmin">Pikmin</a> (UK), and <a href="https://www.pricecharting.com/game/pal-gamecube/billy-hatcher-and-the-giant-egg">Billy Hatcher and the Giant Egg</a> (Swedish/Finnish).
-Prior to these new
-purchases the only PAL title I owned was <a href="https://www.pricecharting.com/game/pal-gamecube/pikmin-2">Pikmin 2</a>,
-as this was necessary to complete the <a href="https://sethmlarson.dev/pikmin-2-international-treasure-hoard">Pikmin 2 International
-Treasure Hoard</a>.</p>
-
-<div>
-<p>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/pal-krakow-poland/IMG_5878.jpeg" style="border: 2px black solid;" />
-</p>
-</div>
-
-<p>The fun thing about PAL releases is that they are usually the
-last release a game receives in terms of time, so these revisions
-often have the most bug fixes and quality-of-life improvements
-compared to earlier revisions. They also often support multiple
-languages and have unique box and disk artwork.</p>
-
-<p>The most exciting game I purchased was Legend of Zelda: Wind Waker
-with the Ocarina of Time Master Quest bonus disk included.
-This is my first multi-disk GameCube game that I own, and I'm excited
-to see if it's possible to extract the N64 ROMs from the ISO
-like <a href="https://sethmlarson.dev/extracting-nes-and-n64-from-zelda-collectors-edition">Zelda Collector’s Edition</a>.
-You can see the box has a “flap” with a second disk tray, allowing two
-games to be included.</p>
-
-<div class="row">
-<div class="col-6">
-<p>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/pal-krakow-poland/IMG_5879.jpeg" style="border: 2px black solid;" />
-</p>
-</div>
-<div class="col-6">
-<p>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/pal-krakow-poland/IMG_5880.jpeg" style="border: 2px black solid;" />
-</p>
-</div>
-</div>
-
-<p>The second game is Pikmin, which the PAL region has <a href="https://tcrf.net/Pikmin_(GameCube)#Regional_Differences">relatively
-few changes</a>.
-The major change is that you can <em>skip the End of Day cutscenes</em>, which
-you'll likely be watching 10-15 times on a typical playthrough.
-This small change makes the PAL revision the definitive edition ;)</p>
-
-<p>Another small change for Pikmin is the manual. This game had to introduce
-the world to Pikmin which are very, very small. Depending on your region
-the height of Olimar, the protagonist of Pikmin, is compared either to
-a “US quarter” or a “50 pence piece”.</p>
-
-<p>Finally, Billy Hatcher and the Giant Egg. This is one of my favorite games ever,
-I've played it through to 99% completion multiple times (the last emblem is
-not fun to achieve). It's a <em>different</em> game, if you like action adventure
-then maybe you'll have fun with it, but in particular it's mostly a
-special title for me. I purchased this one in particular because I
-didn't have a single “Player’s Choice” for the PAL region which feature
-silver splines instead of the typical yellow splines for NTSC-J/NTSC.</p>
-
-<p>I was able to dump the ROMs from each of these disks easily using
-a <a href="https://docs.flippydrive.com/index.html">FlippyDrive-modded GameCube</a> and the <a href="https://docs.flippydrive.com/backup.html">included <code>backup</code> utility</a>.
-I've been thinking about investing in an OmniDrive-compatible disk reader
-so that I don't have to use my GameCube for this task to avoid
-tiring out the laser. Maybe a gift idea for the future?</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 22, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/pal-gamecube-haul-from-krakow-poland?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/pycharm/2026/07/what-s-new-in-pycharm-2026-2/" class="hover:underline"
-              >What’s New in PyCharm 2026.2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            In PyCharm 2026.2, you can build Python extensions with the new Rust plugin and debug them using debugpy, which is now the default engine. Running external utilities is now managed through a redesigned settings UI for uvx, while multi-project setups are supported out of the box for uv, Poetry, and Hatch workspaces. This release also [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 21, 2026 03:53 PM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/pycharm/2026/07/what-s-new-in-pycharm-2026-2/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/exploring-pythons-built-in-functions/" class="hover:underline"
-              >Exploring Python's Built-in Functions</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn Python's built-in functions for math, data types, iterables, and I/O, and when to use each to write more Pythonic code.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 21, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/exploring-pythons-built-in-functions/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/489/or-json" class="hover:underline"
-              >#489 Or JSON?</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include django-orjson, Best Django Redis configuration for speed and size, puts the foot down, and Django Steering Council backs the Triptych Project.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 21, 2026 07:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/489/or-json"
+            href="https://www.pythonguis.com/faq/constantly-print-subprocess-output-while-process-is-running/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1428,8 +1674,8 @@ tiring out the laser. Maybe a gift idea for the future?</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8201</a></li>
-    <li><a>Unique Feeds: 374</a></li>
+    <li><a>Total Entries: 8131</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
