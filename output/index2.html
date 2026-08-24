@@ -53,6 +53,142 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/when-str-lower-is-a-security-vulnerability?utm_campaign=rss" class="hover:underline"
+              >When str.lower() is a security vulnerability in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Some internet standards only support ASCII characters, but the world uses
+much more than the Latin alphabet. Thus, a mapping from Unicode to
+ASCII for use in domain names is required.</p>
+
+<p><a href="https://en.wikipedia.org/wiki/Nameprep">NamePrep</a> was part of that solution,
+defined in <a href="https://datatracker.ietf.org/doc/html/rfc3491">RFC 3491</a> as a profile of StringPrep,
+and is crucially a component of Internationalizing Domain Names in Applications
+(IDNA), also known as “IDNA 2003”. The StringPrep algorithm is defined in
+<a href="https://datatracker.ietf.org/doc/html/rfc3454">RFC 3454</a>. IDNA 2003
+has been obsoleted by IDNA 2008 defined in <a href="https://datatracker.ietf.org/doc/html/rfc5890">RFC
+ 5890</a>,
+<a href="https://datatracker.ietf.org/doc/html/rfc5891">5891</a>,
+<a href="https://datatracker.ietf.org/doc/html/rfc5892">5892</a>, and 
+<a href="https://datatracker.ietf.org/doc/html/rfc5893">5893</a>.</p>
+
+<!-- more -->
+
+<p>Python supports IDNA 2003 through the <code>idna</code> codec (<code>str.encode('idna')</code>) and
+IDNA 2008 is supported by the <a href="https://pypi.org/project/idna/"><code>idna</code> package on the Python package Index</a>. 
+Python's implementation of StringPrep is implemented in the <a href="https://docs.python.org/3/library/stringprep.html"><code>stringprep</code> module</a>
+in the standard library. In general, you should be using the <code>idna</code> package (IDNA 2008)
+and not <code>.encode("idna")</code> (IDNA 2003), but sometimes you
+do need the older behavior.</p>
+
+<!-- more -->
+
+<p>StringPrep defines the “case folding” step (case folding is approximately “how to lowercase/uppercase a codepoint”) in <a href="https://datatracker.ietf.org/doc/html/rfc3454#section-3.2">Section 3.2</a>, enabling case-insensitive
+comparisons of strings, by mapping all characters through mapping <a href="https://datatracker.ietf.org/doc/html/rfc3454#appendix-B.2">tables B.2</a> and <a href="https://datatracker.ietf.org/doc/html/rfc3454#appendix-B.3">B.3</a>.
+B.2 is effectively <code>str.lower()</code>, lowercasing all characters according to
+Unicode rules and B.3 contains the exceptions. The Python code implementing
+this (and assuming B.3 table is captured correctly) is the following code below:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map_table_b3</span><span class="p">(</span><span class="n">code</span><span class="p">):</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">b3_exceptions</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">ord</span><span class="p">(</span><span class="n">code</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">r</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="k">return</span> <span class="n">r</span>
+    <span class="k">return</span> <span class="n">code</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+</code></pre>
+</div>
+
+<p>And that might seem fine... and the title probably gave it away already.
+The <code>str.lower()</code> call in this function is a vulnerability!</p>
+
+<p>Why? Because <code>str</code> uses whatever Unicode data that the particular Python
+interpreter is shipped with, you can figure out what Unicode version your
+Python interpreter uses by accessing <code>unicodedata.unidata_version</code>:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">unicodedata</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">unicodedata</span><span class="o">.</span><span class="n">unidata_version</span>
+<span class="go">'17.0.0'</span>
+</code></pre>
+</div>
+
+<p>There's also a database of Unicode 3.2.0 data available on every version
+of Python (<a href="https://docs.python.org/3/library/unicodedata.html#unicodedata.ucd_3_2_0"><code>unicodedata.ucd_3_2_0</code></a>) specifically for the StringPrep and IDNA algorithms:</p>
+
+<pre><code>$ grep -I "ucd_3_2_0" -R Lib/
+Lib/stringprep.py:from unicodedata import ucd_3_2_0 as unicodedata
+Lib/encodings/idna.py:from unicodedata import ucd_3_2_0 as unicodedata
+</code></pre>
+
+<p>This is important! StringPrep depends on this specific version of Unicode
+to operate consistently, the B.2 and B.3 tables in RFC 3454 are essentially
+Unicode 3.2.0 case-folding rules encoded into
+a table. So we need to use Unicode 3.2.0 case-folding rules, not newer
+Unicode case-folding rules. This is why calling <code>str.lower()</code> represents
+a difference in the implementation and the specification,
+and therefore a vulnerability:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="c1"># RFC 3454 compliant value ('Ꭰ' is U+13A0)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="s2">&quot;ᎠᎠ&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;idna&quot;</span><span class="p">)</span>
+<span class="s1">'xn--58da'</span>
+
+<span class="c1"># Value if using Unicode 17.0.0 case-folding</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="s2">&quot;ᎠᎠ&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;idna&quot;</span><span class="p">)</span>
+<span class="s1">'xn--kz9aa'</span>
+</code></pre>
+</div>
+
+<p>The fix was to create new exceptions so that <code>str.lower()</code> would behave
+as if it was using Unicode 3.2.0 for only particular function. So, we
+go through <a href="https://github.com/python/cpython/pull/155293/changes#diff-83ae79799190e9f5924d155d940386cb7adce6470c053997791ed79e9370bf20R206-R215">each Unicode codepoint</a> and record when the behavior of
+<code>str.lower()</code> is different when comparing the Unicode version shipped with Python and Unicode 3.2.0.
+And that's all, now IDNA 2003 is consistent with the specification.</p>
+
+<p>Thanks to <a href="https://github.com/TheShiftedBit">Bitshift</a> for reporting the vulnerability, <a href="https://github.com/StanFromIreland">Stan Ulbrych</a> for co-developing
+the remediation, and <a href="https://github.com/malemburg">Marc-Andre Lemburg</a> and <a href="https://github.com/encukou">Petr Viktorin</a> for reviewing the
+remediation. See <a href="https://www.cve.org/CVERecord?id=CVE-2026-17084">CVE-2026-17084</a> for more details.</p>
+
+<blockquote>
+  <p>My work as the Security Developer-in-Residence at the <a href="https://www.python.org/psf-landing/">Python Software Foundation</a> is sponsored
+  by <a href="https://alpha-omega.dev/">Alpha-Omega</a>. Thanks to Alpha-Omega for supporting
+  security in the Python ecosystem.</p>
+</blockquote>
+<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 18, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/when-str-lower-is-a-security-vulnerability?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/ai-debugging/" class="hover:underline"
               >How to Debug Python Code With an AI Agent</a
             >
@@ -117,58 +253,6 @@
           </div>
           <a
             href="https://realpython.com/quizzes/ai-debugging/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythontest.com/lean-tdd-launch/" class="hover:underline"
-              >Lean TDD Book Launch</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Hey all. I&rsquo;m super excited to announce the launch of my new book.</p>
-<p>It&rsquo;s <a href="https://leantdd.com">Lean TDD: TDD Without the Waste</a>.</p>
-<p>That link in the last sentence is a link to <a href="https://leantdd.com">leantdd.com</a>.</p>
-<p>There you&rsquo;ll find links to all the places you can read or listen to it.</p>
-<p>Right now, it&rsquo;s available at:</p>
-<ul>
-<li><a href="https://www.amazon.com/Lean-TDD-Without-Waste/dp/B0HCHDVPBZ/?tag=testandcode-20">Amazon as a paperback</a></li>
-<li><a href="https://www.amazon.com/dp/B0HC2YQ18H?tag=testandcode-20">Amazon as an ebook</a></li>
-<li><a href="https://www.amazon.com/Lean-TDD-Without-Waste/dp/B0HDV78XD5/?tag=testandcode-20">Audible as an audio book</a></li>
-<li>Other platforms to come later &hellip;</li>
-</ul>
-<p>In the next few months, it will get onto other platforms.
-I&rsquo;ve already had requests for Kobo, and just raw files sold through my site, and I&rsquo;d also like to get it onto library platforms.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 17, 2026 12:00 AM UTC by
-            <a href="http://pythontest.com/posts/index.xml" class="link link-hover text-primary"
-              >Brian Okken</a
-            >
-          </div>
-          <a
-            href="https://pythontest.com/lean-tdd-launch/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1467,8 +1551,8 @@ And if other code relies on the old flat names, a module-level <code>__getattr__
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8205</a></li>
-    <li><a>Unique Feeds: 373</a></li>
+    <li><a>Total Entries: 8224</a></li>
+    <li><a>Unique Feeds: 376</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
