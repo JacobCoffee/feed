@@ -53,6 +53,235 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/08/how-aws-powers-pypi-and-psf.html" class="hover:underline"
+              >How AWS Powers PyPI and the PSF</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><i>Written by Jacob Coffee, Director of Engineering at the Python Software Foundation</i></p>
+
+<p>Working on infrastructure at the Python Software Foundation (PSF) as the Director of Engineering is a broad job with many hats. Python turns up everywhere. It's in healthcare systems and government agencies, in research labs and classrooms, in one-person side projects and in infrastructure at companies with six-figure headcounts. Somebody is using it to analyze a genome right now and somebody else is using it to automate a spreadsheet they hate arranging by hand. That range has always been the interesting part of the PSF's work, and it's only broadened in the last couple of years as AI continues to pull people from many disciplines into writing Python.</p>
+
+<p>At the PSF we support and maintain the infrastructure behind PyPI, Python.org, PyCon US, CPython, and a growing number of community services. The majority of the PSF's infrastructure runs on <a href="https://aws.amazon.com/opensource/">AWS</a>, and nearly all of that bill is covered by credits from the <a href="https://aws.amazon.com/blogs/opensource/aws-cloud-credits-for-open-source-projects-affirming-our-commitment/">AWS Open Source Credits Program</a>.</p>
+
+<h3>The shape of it</h3>
+
+<p>PyPI takes over six billion requests a day and about thirteen billion counting file downloads. Package egress runs around 10 petabytes a day.</p>
+
+<p>Almost none of that reaches AWS. Fastly serves it at the edge through their Fast Forward program at a hit ratio just under 99%, so only about one request in seventy makes it to origin. That caching is the core reason our AWS bill is not measured in the millions of dollars a year.</p>
+
+<p>What does reach us is the part that is not cached, including things like user uploads, logins, and account management. That work runs on:</p>
+
+<ul>
+<li><b>Amazon EC2</b> for the application fleet, almost entirely Graviton at this point. We're <a href="https://newsroom.arm.com/blog/how-the-python-software-foundation-future-proofed-its-infrastructure-with-arm">huge fans of Arm-based hardware</a> at the PSF!</li>
+<li><b>Amazon RDS</b> for the Postgres database behind Warehouse, which is the application you're looking at when you're on pypi.org.</li>
+<li><b>Amazon OpenSearch Service</b> for project search.</li>
+<li><b>Amazon S3</b> holds ~100 TB of package archives, plus the release history (that nobody ever wants to need).</li>
+<li><b>Amazon EKS</b>, newly stood up, as the target for migrating the whole fleet.</li>
+</ul>
+
+<h3>What changed this year</h3>
+
+<p>Our AWS spend is up about 69% comparing July 2026 to July 2025, and 40% across the trailing twelve months. That's new.</p>
+
+<p>For context on how new: last October, Ee Durbin, our former Director of Infrastructure, noted that <a href="https://pyfound.blogspot.com/2025/10/open-infrastructure-is-not-free-pypi.html">PSF's AWS credit usage had grown 25% over eight years</a> while daily requests went from millions to billions. Eight years of holding that line. 2026 is the first year it broke.</p>
+
+<p>Some of it is simply more of everything. Compute, search, and load balancing all climbed from 30% to 80%, which is the profile of more people and machines using the service. There are certainly more of both. A lot more Python being written, a lot more agents installing packages on someone's behalf, and a lot more CI runs from all the projects those people and agents are creating. Package repositories were designed around the assumption that a human decides to run pip install some number of times a day. That assumption is well past its expiration.</p>
+
+<h3>What we do about it</h3>
+
+<p>At the PSF, we take the credits seriously, which means spending real engineering time on utilizing what we have in an optimal way so our usage doesn't increase. Being frugal with the credits entrusted to us is vital.</p>
+
+<p>When a widely used GitHub Action makes requests it doesn't need to make, fixing the Action beats anything we can do on our side. A popular Action can quietly turn a cache hit into a fresh download from PyPI on every run, and that adds up fast across thousands of CI pipelines. <a href="https://github.com/astral-sh/setup-uv/pull/967">astral-sh/setup-uv shipped</a> exactly that kind of fix.</p>
+
+<p>On the PSF side, the EKS migration is the big one. Once we're there, autoscaling lets capacity track demand instead of sitting provisioned for peak at 3 AM (San Francisco time) on a Sunday.</p>
+
+<p>There's just one little (read: major) constraint: Ee left the PSF earlier this year, and I'm currently the only person here working full time on infrastructure. Every item on that list is real and every one is slower than it should be. <a href="https://jobs.pyfound.org/">The PSF is hiring</a>, and that hiring is possible in part because we aren't spending the same money on servers.</p>
+
+<p>That said, hiring has a ceiling set by funding, and the growing gap between the demand placed on PyPI relative to staff operating and securing the service represents a risk to Python packaging. There is a very large amount of the software industry that sits on top of our services. Feature development, a rising volume of security reports, and day to day maintenance are currently being carried by one and a half full-time employees and one full-time employee on PyPI support requests. If your company installs from PyPI, ask internally about what your organization would be willing to fund. That question can be worth much more coming from inside a company than from the PSF. If you are interested in securing a service agreement with PyPI, please <a href="https://www.surveymonkey.com/r/H53HHSS">fill out our survey</a>.</p>
+
+<h3>What the funding actually bought</h3>
+
+<p>AWS has backed PyPI two different ways, and both are worth outlining.</p>
+
+<p>A very exciting investment was made in 2023, when AWS became <a href="https://blog.pypi.org/posts/2023-05-09-announcing-pypi-safety-and-security-engr-role/">PyPI's inaugural Security Sponsor</a>, putting $144,000 into creating the PyPI Safety &amp; Security Engineer role. That role is now funded by <a href="http://alpha-omega.dev/">Alpha-Omega</a>, and it's the reason malware comes down off PyPI in hours instead of whenever a volunteer has a spare moment. This investment also followed a pattern AWS had already established, having helped fund the rewrite, internationalization, and 2FA support for PyPI.</p>
+
+<p>The credits do something quieter. They hold the infrastructure bill near zero, which means the PSF's general fund goes to employees, PyCon US, and other operational costs instead of servers. That's what pays for support staff handling the account recovery and project ownership requests that arrive every single day, and what makes it possible to ship things like Trusted Publishing, digital attestations, and organization accounts, instead of just keeping the lights on.</p>
+
+<p>PyPI is free to use and will stay free to use at reasonable levels. Core publishing and installing stay free, permanently. What we are doing is building out real benefits for Organization accounts, and looking at sensible rate limits for the heaviest consumers at the top of the curve.</p>
+
+<p>Which is exactly why in-kind support isn't just a line item to us. A sponsor choosing not to renew would mean an emergency migration or tens of thousands of dollars a month, either of which comes straight out of the work above. AWS has renewed every year since 2018, and the predictability of that is worth as much as the amount. The same goes for Fastly, Google Cloud, Datadog, Sentry, Depot, and PagerDuty, who carry other parts of this mountain of infrastructure.</p>
+
+<h3>How you can help</h3>
+
+<p>Four things, in order of how much they matter:</p>
+
+<ol>
+<li><b>Cache your installs.</b> If your CI pulls from PyPI on every run with a cold cache, you're a meaningful part of the graph. The PSF uses Docker cache mounts and pip's cache on our own builds, and npm and apt caching too, because it's faster for us and cheaper for everyone. <a href="https://pyfound.blogspot.com/2025/10/open-infrastructure-is-not-free-pypi.html">Free package repositories aren't a limitless resource</a>, and the fix is usually about six lines of config.</li>
+<li><b><a href="https://pypi.org/manage/organizations/">Sign up for a PyPI Organization</a></b> if your company publishes to PyPI. Recurring revenue from Organizations is the most sustainable funding base we have, and Community organizations remain free. Look forward to announcements about future features for PyPI organization accounts soon.</li>
+<li><b>Interested in a PyPI service agreement?</b> Enhanced options like annual bulk seat purchases, higher project size limits, and prioritized support are available. The revenue helps fund the broader PyPI ecosystem while giving your organization benefits at scale. Fill out <a href="https://www.surveymonkey.com/r/H53HHSS">our service agreement interest survey</a> and we'll follow up.</li>
+<li><b>Ask your infrastructure vendors for multi-year commitments with open source foundations.</b> Annual renewal cycles carry real risk for projects like ours. The five-year agreement the PSF signed with Fastly in 2024 is a sustainable model, and we'd like more of them.</li>
+</ol>
+
+<p>The <a href="https://openssf.org/blog/2025/09/23/open-infrastructure-is-not-free-a-joint-statement-on-sustainable-stewardship/">open letter the PSF co-signed last year</a> called this a critical inflection point rather than a crisis. A year on, with our first real break in eight years of flat infrastructure costs, that still reads about right.</p>
+
+<p>A big thanks to Mila Zhou and the AWS Open Source team, who have made the credits process about as painless as an annual funding renewal can be, and to everyone at AWS who's kept this program going for so long. PyPI would look very different without it.</p>
+
+<p><i>This blog was recently edited to more accurately reflect numbers presented and work done.</i></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 19, 2026 12:53 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/08/how-aws-powers-pypi-and-psf.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/review-ai-generated-code/" class="hover:underline"
+              >Quiz: How to Review AI-Generated Python Code Efficiently</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Test your understanding of how to review AI-generated Python code, from automated checks to the bugs that coding agents get wrong most often.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 19, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/review-ai-generated-code/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/how-to-use-claude-code/" class="hover:underline"
+              >Quiz: How to Use Claude Code to Write and Debug Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Test your understanding of Claude Code by working through installation, plan mode, diff review, and debugging a Python project.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 19, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/how-to-use-claude-code/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/creating-pyside2-ui-without-ui-qt-designer/" class="hover:underline"
+              >Creating PySide6 UI without .ui / Qt Designer — Build your entire GUI in pure Python code, no .ui files required</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Is it possible to write a PySide6 application without using .ui files or Qt Designer? How can I create widgets and lay out a window entirely in Python code?
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 19, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/creating-pyside2-ui-without-ui-qt-designer/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lucumr.pocoo.org/2026/8/19/what-is-reasoning/" class="hover:underline"
               >What Is Reasoning</a
             >
@@ -309,46 +538,6 @@ on this blog post because of safety filters.  Had to switch to Kimi.</p>
           </div>
           <a
             href="https://realpython.com/quizzes/arduino-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/working-with-pythons-deque/" class="hover:underline"
-              >Quiz: Working With Python's deque</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Test your understanding of Python's deque. Practice fast appends and pops at both ends, building queues and stacks, and setting maxlen.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 18, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/working-with-pythons-deque/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1502,126 +1691,6 @@ And if other code relies on the old flat names, a module-level <code>__getattr__
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/pycharm/2026/08/we-gave-ai-agents-a-live-jupyter-kernel-in-pycharm/" class="hover:underline"
-              >We Gave AI Agents a Live Jupyter Kernel in PyCharm</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            If you&#8217;ve handed notebook work to an AI agent, you know how it tends to go: More often than not, it corrupts your .ipynb, loses your trained model the moment the run finishes, or burns budget sitting idle through a long job while you watch. To solve this, we’re introducing a brand-new Jupyter skill. Built [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 12, 2026 12:00 PM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/pycharm/2026/08/we-gave-ai-agents-a-live-jupyter-kernel-in-pycharm/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/pycharm/2026/08/unbundling-and-deprecating-low-usage-plugins-in-pycharm/" class="hover:underline"
-              >Unbundling and Deprecating Low-Usage Plugins in PyCharm</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            As part of ongoing maintenance, we are unbundling and deprecating low-usage plugins starting with PyCharm 2026.2. This includes support for Data Wrangler, Hugging Face, and Google Colab, among others.&#160; A more focused set of bundled plugins means a leaner codebase, enabling us to keep PyCharm fast and responsive and invest our effort where it has [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 12, 2026 11:59 AM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/pycharm/2026/08/unbundling-and-deprecating-low-usage-plugins-in-pycharm/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/faq/cant-integrate-qtabwidget-into-a-layout/" class="hover:underline"
-              >Adding QTabWidget to a Layout Alongside Other Widgets in PyQt6 — How to combine QTabWidget with other layouts without it taking over your entire window</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            I'm trying to create a layout in PyQt and implement different layouts into one QHBoxLayout. Everything works fine, but when I add a QTabWidget alongside other layouts, it becomes the only visible widget &mdash; as if everything else disappears. Isn't it possible to have a QTabWidget in a layout beside other layouts?
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 12, 2026 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/faq/cant-integrate-qtabwidget-into-a-layout/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -1633,8 +1702,8 @@ And if other code relies on the old flat names, a module-level <code>__getattr__
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8097</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8272</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
