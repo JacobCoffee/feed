@@ -53,6 +53,448 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/when-str-lower-is-a-security-vulnerability?utm_campaign=rss" class="hover:underline"
+              >When str.lower() is a security vulnerability in Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Some internet standards only support ASCII characters, but the world uses
+much more than the Latin alphabet. Thus, a mapping from Unicode to
+ASCII for use in domain names is required.</p>
+
+<p><a href="https://en.wikipedia.org/wiki/Nameprep">NamePrep</a> was part of that solution,
+defined in <a href="https://datatracker.ietf.org/doc/html/rfc3491">RFC 3491</a> as a profile of StringPrep,
+and is crucially a component of Internationalizing Domain Names in Applications
+(IDNA), also known as “IDNA 2003”. The StringPrep algorithm is defined in
+<a href="https://datatracker.ietf.org/doc/html/rfc3454">RFC 3454</a>. IDNA 2003
+has been obsoleted by IDNA 2008 defined in <a href="https://datatracker.ietf.org/doc/html/rfc5890">RFC
+ 5890</a>,
+<a href="https://datatracker.ietf.org/doc/html/rfc5891">5891</a>,
+<a href="https://datatracker.ietf.org/doc/html/rfc5892">5892</a>, and 
+<a href="https://datatracker.ietf.org/doc/html/rfc5893">5893</a>.</p>
+
+<!-- more -->
+
+<p>Python supports IDNA 2003 through the <code>idna</code> codec (<code>str.encode('idna')</code>) and
+IDNA 2008 is supported by the <a href="https://pypi.org/project/idna/"><code>idna</code> package on the Python package Index</a>. 
+Python's implementation of StringPrep is implemented in the <a href="https://docs.python.org/3/library/stringprep.html"><code>stringprep</code> module</a>
+in the standard library. In general, you should be using the <code>idna</code> package (IDNA 2008)
+and not <code>.encode("idna")</code> (IDNA 2003), but sometimes you
+do need the older behavior.</p>
+
+<!-- more -->
+
+<p>StringPrep defines the “case folding” step (case folding is approximately “how to lowercase/uppercase a codepoint”) in <a href="https://datatracker.ietf.org/doc/html/rfc3454#section-3.2">Section 3.2</a>, enabling case-insensitive
+comparisons of strings, by mapping all characters through mapping <a href="https://datatracker.ietf.org/doc/html/rfc3454#appendix-B.2">tables B.2</a> and <a href="https://datatracker.ietf.org/doc/html/rfc3454#appendix-B.3">B.3</a>.
+B.2 is effectively <code>str.lower()</code>, lowercasing all characters according to
+Unicode rules and B.3 contains the exceptions. The Python code implementing
+this (and assuming B.3 table is captured correctly) is the following code below:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">map_table_b3</span><span class="p">(</span><span class="n">code</span><span class="p">):</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">b3_exceptions</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">ord</span><span class="p">(</span><span class="n">code</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">r</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span> <span class="k">return</span> <span class="n">r</span>
+    <span class="k">return</span> <span class="n">code</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+</code></pre>
+</div>
+
+<p>And that might seem fine... and the title probably gave it away already.
+The <code>str.lower()</code> call in this function is a vulnerability!</p>
+
+<p>Why? Because <code>str</code> uses whatever Unicode data that the particular Python
+interpreter is shipped with, you can figure out what Unicode version your
+Python interpreter uses by accessing <code>unicodedata.unidata_version</code>:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="gp">&gt;&gt;&gt; </span><span class="kn">import</span><span class="w"> </span><span class="nn">unicodedata</span>
+<span class="gp">&gt;&gt;&gt; </span><span class="n">unicodedata</span><span class="o">.</span><span class="n">unidata_version</span>
+<span class="go">'17.0.0'</span>
+</code></pre>
+</div>
+
+<p>There's also a database of Unicode 3.2.0 data available on every version
+of Python (<a href="https://docs.python.org/3/library/unicodedata.html#unicodedata.ucd_3_2_0"><code>unicodedata.ucd_3_2_0</code></a>) specifically for the StringPrep and IDNA algorithms:</p>
+
+<pre><code>$ grep -I "ucd_3_2_0" -R Lib/
+Lib/stringprep.py:from unicodedata import ucd_3_2_0 as unicodedata
+Lib/encodings/idna.py:from unicodedata import ucd_3_2_0 as unicodedata
+</code></pre>
+
+<p>This is important! StringPrep depends on this specific version of Unicode
+to operate consistently, the B.2 and B.3 tables in RFC 3454 are essentially
+Unicode 3.2.0 case-folding rules encoded into
+a table. So we need to use Unicode 3.2.0 case-folding rules, not newer
+Unicode case-folding rules. This is why calling <code>str.lower()</code> represents
+a difference in the implementation and the specification,
+and therefore a vulnerability:</p>
+
+<div class="codehilite">
+<pre><span></span><code><span class="c1"># RFC 3454 compliant value ('Ꭰ' is U+13A0)</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="s2">&quot;ᎠᎠ&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;idna&quot;</span><span class="p">)</span>
+<span class="s1">'xn--58da'</span>
+
+<span class="c1"># Value if using Unicode 17.0.0 case-folding</span>
+<span class="o">&gt;&gt;&gt;</span> <span class="s2">&quot;ᎠᎠ&quot;</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;idna&quot;</span><span class="p">)</span>
+<span class="s1">'xn--kz9aa'</span>
+</code></pre>
+</div>
+
+<p>The fix was to create new exceptions so that <code>str.lower()</code> would behave
+as if it was using Unicode 3.2.0 for only particular function. So, we
+go through <a href="https://github.com/python/cpython/pull/155293/changes#diff-83ae79799190e9f5924d155d940386cb7adce6470c053997791ed79e9370bf20R206-R215">each Unicode codepoint</a> and record when the behavior of
+<code>str.lower()</code> is different when comparing the Unicode version shipped with Python and Unicode 3.2.0.
+And that's all, now IDNA 2003 is consistent with the specification.</p>
+
+<p>Thanks to <a href="https://github.com/TheShiftedBit">Bitshift</a> for reporting the vulnerability, <a href="https://github.com/StanFromIreland">Stan Ulbrych</a> for co-developing
+the remediation, and <a href="https://github.com/malemburg">Marc-Andre Lemburg</a> and <a href="https://github.com/encukou">Petr Viktorin</a> for reviewing the
+remediation. See <a href="https://www.cve.org/CVERecord?id=CVE-2026-17084">CVE-2026-17084</a> for more details.</p>
+
+<blockquote>
+  <p>My work as the Security Developer-in-Residence at the <a href="https://www.python.org/psf-landing/">Python Software Foundation</a> is sponsored
+  by <a href="https://alpha-omega.dev/">Alpha-Omega</a>. Thanks to Alpha-Omega for supporting
+  security in the Python ecosystem.</p>
+</blockquote>
+<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 18, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/when-str-lower-is-a-security-vulnerability?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/ai-debugging/" class="hover:underline"
+              >How to Debug Python Code With an AI Agent</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn AI debugging by pairing with an AI coding agent: reproduce the bug with a failing test, give your agent context, then verify the fix.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 17, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/ai-debugging/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythontest.com/lean-tdd-launch/" class="hover:underline"
+              >Lean TDD Book Launch</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Hey all. I&rsquo;m super excited to announce the launch of my new book.</p>
+<p>It&rsquo;s <a href="https://leantdd.com">Lean TDD: TDD Without the Waste</a>.</p>
+<p>That link in the last sentence is a link to <a href="https://leantdd.com">leantdd.com</a>.</p>
+<p>There you&rsquo;ll find links to all the places you can read or listen to it.</p>
+<p>Right now, it&rsquo;s available at:</p>
+<ul>
+<li><a href="https://www.amazon.com/Lean-TDD-Without-Waste/dp/B0HCHDVPBZ/?tag=testandcode-20">Amazon as a paperback</a></li>
+<li><a href="https://www.amazon.com/dp/B0HC2YQ18H?tag=testandcode-20">Amazon as an ebook</a></li>
+<li><a href="https://www.amazon.com/Lean-TDD-Without-Waste/dp/B0HDV78XD5/?tag=testandcode-20">Audible as an audio book</a></li>
+<li>Other platforms to come later &hellip;</li>
+</ul>
+<p>In the next few months, it will get onto other platforms.
+I&rsquo;ve already had requests for Kobo, and just raw files sold through my site, and I&rsquo;d also like to get it onto library platforms.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 17, 2026 12:00 AM UTC by
+            <a href="http://pythontest.com/posts/index.xml" class="link link-hover text-primary"
+              >Brian Okken</a
+            >
+          </div>
+          <a
+            href="https://pythontest.com/lean-tdd-launch/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://snarky.ca/whats-missing-to-have-reproducible-builds-on-pypi/" class="hover:underline"
+              >What's missing to have reproducible builds on PyPI</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>While writing the section of my <a href="https://snarky.ca/my-nomination-statement-for-the-2026-python-packaging-council/">2026 Python Packaging Council (PPC) nomination</a> on secure supply chain, I realized that one thing related to having a secure supply chain that we lack is a defined way to perform <a href="https://reproducible-builds.org/">reproducible builds</a>. The reason I like the idea of making reproducible builds work</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 16, 2026 03:36 AM UTC by
+            <a href="https://snarky.ca/rss/" class="link link-hover text-primary"
+              >Brett Cannon</a
+            >
+          </div>
+          <a
+            href="https://snarky.ca/whats-missing-to-have-reproducible-builds-on-pypi/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://juripakaste.fi/swift-do-typed/" class="hover:underline"
+              >TIL: Typed do in Swift</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>TL;DR: Swift has <code>do throws(MyError)</code>. It's helpful.</p>
+<p>This is one of those "I can't believe I had missed that" things.</p>
+<p>I've been pretty enthusiastic about adopting typed throws in Swift. If you
+need to process certain kinds of errors, it just makes sense to me. However, it
+was always a bit painful. You have this:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">do</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // throwing code here</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #859900;"> catch</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // error is precisely typed here, assuming</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // the block above throws just one type</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>… and all is fine and good, except that the "throwing code" doesn't need to
+grow particularly complex before Swift decides to widen the type to <code>any Error</code>
+and your catch block starts producing compilation errors.</p>
+<p>When I ran into this, I'd use <code>catch let error as MyError</code>. Fine. Except it
+isn't, because now your error-handling code is incomplete: you have to add
+an unreachable catch-all block, and you're unhappy with the language and
+your life choices.</p>
+<p>I did page through the enhancement proposal when it passed through Swift
+Evolution, but I just never noticed that it doesn't end there. What you do in
+this situation is this:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">do</span><span style="color: #586E75; font-weight: bold;"> throws</span><span>(MyError) {</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // throwing code here</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #859900;"> catch</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // now the compiler doesn't get confused and</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">    // all is well-typed unicorns and sunshine</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Now you know too.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 15, 2026 11:30 AM UTC by
+            <a href="http://www.iki.fi/juri/blog/index.rss" class="link link-hover text-primary"
+              >Juri Pakaste</a
+            >
+          </div>
+          <a
+            href="https://juripakaste.fi/swift-do-typed/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://kushaldas.in/posts/replyfast-0-4-0-is-available.html" class="hover:underline"
+              >replyfast 0.4.0 is available</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <!--
+.. title: replyfast 0.4.0 is available
+.. slug: replyfast-0-4-0-is-available
+.. date: 2026-08-15T09:57:55+02:00
+.. tags: Blog, Signal, Privacy, Security, Python, Rust
+.. link:
+.. description:
+.. type: text
+-->
+<p>Yesterday I released <a href="https://pypi.org/project/replyfast">replyfast</a> version
+0.4.0, which is a Python module to receive and send messages on
+<a href="https://signal.org/">Signal</a></p>
+<p>You can install it via </p>
+<p><code>python3 -m pip install replyfast</code> </p>
+<p>or </p>
+<p><code>uv pip install replyfast</code> </p>
+<p>I have a <a href="https://github.com/kushaldas/replyfast/blob/main/register.py">script</a>
+to help you to register as a device, and then you can send and receive
+messages. You can use the same script to re-register.</p>
+<p>I also have a <a href="https://github.com/kushaldas/replyfast/blob/main/examples/demo_bot.py">demo bot</a> which shows both sending and rreceiving messages, and also how to schedule work following the <code>crontab</code> syntaxt.</p>
+<pre><code class="language-Python">    scheduler.register(
+        &quot;*/5 * * * *&quot;,
+        send_disk_usage,
+        args=(client,),
+        name=&quot;disk-usage&quot;,
+    )
+</code></pre>
+<p>replyfast is written using <a href="https://github.com/whisperfish/presage">presage</a> library, which does the actual work of communication via Signal protocol.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 15, 2026 07:57 AM UTC by
+            <a href="http://kushaldas.in/categories/python.xml" class="link link-hover text-primary"
+              >Kushal Das</a
+            >
+          </div>
+          <a
+            href="https://kushaldas.in/posts/replyfast-0-4-0-is-available.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/podcasts/rpp/307/" class="hover:underline"
+              >The Real Python Podcast – Episode #307: Improving NumPy Performance on Free-Threaded Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            What bottlenecks were preventing NumPy from scaling on free-threaded Python? Christopher Trudeau is back on the show this week with another batch of PyCoder's Weekly articles and projects.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 14, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/podcasts/rpp/307/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2026/08/announcing-packaging-council-election.html" class="hover:underline"
               >Announcing the Packaging Council Election Candidates for 2026!</a
             >
@@ -836,46 +1278,6 @@ And if other code relies on the old flat names, a module-level <code>__getattr__
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/faq/cant-integrate-qtabwidget-into-a-layout/" class="hover:underline"
-              >Adding QTabWidget to a Layout Alongside Other Widgets in PyQt6 — How to combine QTabWidget with other layouts without it taking over your entire window</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            I'm trying to create a layout in PyQt and implement different layouts into one QHBoxLayout. Everything works fine, but when I add a QTabWidget alongside other layouts, it becomes the only visible widget &mdash; as if everything else disappears. Isn't it possible to have a QTabWidget in a layout beside other layouts?
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 12, 2026 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/faq/cant-integrate-qtabwidget-into-a-layout/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/491/feeling-judged" class="hover:underline"
               >#491 Feeling Judged</a
             >
@@ -1217,755 +1619,6 @@ And if other code relies on the old flat names, a module-level <code>__getattr__
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/558/hyper-personal-software-with-python" class="hover:underline"
-              >#558: Hyper-Personal Software with Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Every company has one. The little internal tool that Jane built back in 2021, and then Jane left. Nobody understands it, nobody will touch it. There are two unwritten rules around it: don't change it, it's working. And if you break it, you bought it. That's dark-matter enterprise software. For every app you can actually see, there are ten of these sitting in the shadows, frozen. Michael Booth thinks that just changed. He read my article on hyper-personal software and ran with it, writing about hyper-team software: small teams inside big companies finally building the tools that were never going to get built. We cover where this works, where it quietly goes wrong, and the guardrails that keep it from turning into a mess. Let's get into it.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 10, 2026 01:21 PM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/558/hyper-personal-software-with-python"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/aug/10/annual-release-cycle/" class="hover:underline"
-              >Django is moving to an annual release cycle</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Django's Steering Council has accepted the Django Enhancement Proposal <a href="https://github.com/django/deps/blob/main/accepted/0020-annual-release-cycle.rst">DEP
-20</a> to move Django to an annual release cycle. From January 2028, Django
-will make one feature release a year, giving every feature release the
-LTS-level three years of support, and version numbers will carry the feature
-release year: Django 2028, then Django 2029, and so on.</p>
-<h2 id="s-better-python-support">Better Python support</h2>
-<p>Python releases annually, each October. Django's eight-month cycle hasn't fit
-that well: LTS releases carried a wide Python matrix, including versions long
-past their upstream end-of-life.</p>
-<p>Under the new cycle, each Django version supports the three latest Python
-versions at release, and picks up the new Python version during its first year.
-Django's support window ends in step with its oldest supported Python.</p>
-<h2 id="s-every-release-is-an-lts">Every release is an LTS</h2>
-<p>Every feature release gets three years of support: one year of mainstream
-bugfixes, then two years of security and data-loss fixes. The "LTS" label is
-retired — every feature release now carries that same, unique commitment.</p>
-<p>No more LTS gap: no racing a deadline to jump two years of changes at once.
-Upgrade one year at a time, whenever suits you within the support window. Three
-versions are supported at any time, giving third-party packages a clear,
-rolling target.</p>
-<p>API stability and deprecation policies are unchanged — deprecation periods
-actually get longer in calendar terms.</p>
-<h2 id="s-transition-timeline">Transition timeline</h2>
-<p>Django 2028 will be the first release under the new cycle.</p>
-<table>
-<thead>
-<tr>
-<th>Release</th>
-<th>Date</th>
-<th>End of mainstream support</th>
-<th>End of extended support</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Django 6.1</td>
-<td>August 2026</td>
-<td>April 2027</td>
-<td>December 2027</td>
-</tr>
-<tr>
-<td>Django 6.2 LTS</td>
-<td>April 2027</td>
-<td>December 2027</td>
-<td>April 2030</td>
-</tr>
-<tr>
-<td>Django 2028</td>
-<td>January 2028</td>
-<td>January 2029</td>
-<td>January 2031</td>
-</tr>
-<tr>
-<td>Django 2029</td>
-<td>January 2029</td>
-<td>January 2030</td>
-<td>January 2032</td>
-</tr>
-<tr>
-<td>Django 2030</td>
-<td>January 2030</td>
-<td>January 2031</td>
-<td>January 2033</td>
-</tr>
-</tbody>
-</table>
-<p>Nothing changes before 2028. Support commitments for Django 5.2 LTS and 6.2
-LTS stand as made.</p>
-<h2 id="s-read-the-dep">Read the DEP</h2>
-<p><a href="https://github.com/django/deps/blob/main/accepted/0020-annual-release-cycle.rst">DEP 20</a> has the full specification and the reasoning behind each
-decision. Thanks to everyone who took part in the discussion, and to the
-Steering Council for its consideration.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 10, 2026 09:00 AM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/aug/10/annual-release-cycle/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nedbatchelder.com/blog/202608/callerspecific_coverage" class="hover:underline"
-              >Caller-specific coverage</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I&#8217;ve had an idea rattling around to get more detail from coverage
-measurement.  Can we measure the coverage in a function separately for each
-caller of the function?</p><p>Here&#8217;s why I want it: in <a href="https://nedbatchelder.com/blog/202607/acidica">Acidica</a>, my toy
-BASIC interpreter, I had code to implement the built-in functions that looked
-something like this:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">match</span>&#xa0;<span class="n">func_name</span><span class="p">:</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">case</span>&#xa0;<span class="s2">&quot;LEN&quot;</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>&#xa0;<span class="o">!=</span>&#xa0;<span class="mi">1</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">raise</span>&#xa0;<span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrong&#xa0;arguments&#xa0;for&#xa0;LEN,&#xa0;got&#xa0;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">case</span>&#xa0;<span class="s2">&quot;LEFT$&quot;</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>&#xa0;<span class="o">!=</span>&#xa0;<span class="mi">2</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">raise</span>&#xa0;<span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrong&#xa0;arguments&#xa0;for&#xa0;LEFT$,&#xa0;got&#xa0;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">][:</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;...&#xa0;19&#xa0;other&#xa0;built-ins&#xa0;...</span>
-<br /></pre></div>
-</blockquote><p>I didn&#8217;t like the repeated code here: each different <code>func_name</code> has to
-check that it got its expected number of arguments and perhaps raise an error.
-So I refactored:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">expects</span><span class="p">(</span><span class="n">nargs</span><span class="p">:</span>&#xa0;<span class="nb">int</span><span class="p">,</span>&#xa0;<span class="n">func_name</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">,</span>&#xa0;<span class="n">args</span><span class="p">:</span>&#xa0;<span class="nb">tuple</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="kc">None</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">if</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>&#xa0;<span class="o">!=</span>&#xa0;<span class="n">nargs</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">raise</span>&#xa0;<span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Wrong&#xa0;arguments&#xa0;for&#xa0;</span><span class="si">{</span><span class="n">func_name</span><span class="si">}</span><span class="s2">,&#xa0;got&#xa0;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<br />
-<br /><span class="k">match</span>&#xa0;<span class="n">func_name</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">case</span>&#xa0;<span class="s2">&quot;LEN&quot;</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">expects</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span>&#xa0;<span class="n">func_name</span><span class="p">,</span>&#xa0;<span class="n">args</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">case</span>&#xa0;<span class="s2">&quot;LEFT$&quot;</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">expects</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span>&#xa0;<span class="n">func_name</span><span class="p">,</span>&#xa0;<span class="n">args</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">][:</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">]]</span>
-<br /></pre></div>
-</blockquote><p>Nice. The code is tighter, easier to read, and common behavior is implemented
-in one place.</p><p>But the old code had an advantage: because each error condition had its own
-<code>raise</code> line, coverage measurement could tell me whether I had tested every
-<code>func_name</code> for the wrong number of arguments.  With the error handling
-happening in a helper function, that information is lost. I&#8217;ll know that
-<i>some</i> <code>func_name</code> had a test for the wrong number of arguments, but
-not that all of them did.</p><p>Here&#8217;s where the new idea comes in. What if I could indicate that for the
-<code>expects</code> function, I want separate coverage data for each distinct calling
-site? Then I could see that every <code>func_name</code> had a test for both the wrong
-number of arguments and the right number of arguments.  The simple branch inside
-<code>expects</code> would be measured separately for each caller.</p><p>I have a quick proof-of-concept. A decorator on <code>expects</code> does the work.
-Coverage.py already has dynamic contexts which are used for things like tracking
-which tests called which code. The decorator starts a new context named for the
-calling location, then restores the context when the function returns:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">coverage_per_caller</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="nd">@functools</span><span class="o">.</span><span class="n">wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">def</span><span class="w">&#xa0;</span><span class="nf">_wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span>&#xa0;<span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">cov</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">coverage</span><span class="o">.</span><span class="n">Coverage</span><span class="o">.</span><span class="n">current</span><span class="p">()</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">name</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">caller</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">inspect</span><span class="o">.</span><span class="n">currentframe</span><span class="p">()</span><span class="o">.</span><span class="n">f_back</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">file</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">caller</span><span class="o">.</span><span class="n">f_code</span><span class="o">.</span><span class="n">co_filename</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">lineno</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">caller</span><span class="o">.</span><span class="n">f_lineno</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">prev_context</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">cov</span><span class="o">.</span><span class="n">switch_context</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;per_caller:</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">file</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">lineno</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">try</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">ret</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span>&#xa0;<span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">finally</span><span class="p">:</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">cov</span><span class="o">.</span><span class="n">switch_context</span><span class="p">(</span><span class="n">prev_context</span><span class="p">)</span>
-<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">ret</span>
-<br />
-<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">_wrapper</span>
-<br /></pre></div>
-</blockquote><p>I had to make one tiny (unreleased) change to coverage.py for this:
-<code>switch_context</code> used to return None, but now it returns the previous
-context so that we can nest them properly.</p><p>To my delight, this works! I can look at the HTML coverage report and see the
-caller contexts for the lines in <code>expects</code>. I can see that 20 callers ran
-the <code>if</code> line, but only 2 ran the <code>raise</code>, and the context names show
-the file and line number of the callers for each:</p><div class="figurep"><a href="https://nedbatchelder.com/pix/per-caller-coverage.png"><figure><source type="image/webp" /><img alt="HTML report showing the contexts that ran each line of expects()" class="hairline" height="555" src="https://nedbatchelder.com/pix/per-caller-coverage.png" width="1624" /></figure></a></div><p>This isn&#8217;t the whole solution yet. Things to improve:</p><ul>
-
-<li>I&#8217;d like to post-process these contexts to show which callers were missing
-lines inside <code>expects</code>.  What I&#8217;m looking for is the same kind of &#8220;this
-line is missing&#8221; information that I got from the original inlined logic.</li>
-
-<li>These per-caller contexts overwrite the contexts we were already collecting
-(the test names). Ideally we&#8217;d have some kind of sub-context so that we could
-track both (or many) at once.</li>
-
-<li>It&#8217;s not great that I had to add a decorator to the source code. Driving
-this through the coverage configuration would keep these kinds of details out of
-the source.</li>
-
-</ul><p>But it&#8217;s a start, and gives me other ideas. I could use some aspect of the
-data passed into a function as the context name. In this example, we could have
-used <code>func_name</code> as the context instead of the caller&#8217;s location. Maybe
-you have ideas for other uses.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 09, 2026 05:56 PM UTC by
-            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
-              >Ned Batchelder</a
-            >
-          </div>
-          <a
-            href="https://nedbatchelder.com/blog/202608/callerspecific_coverage"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://edcrewe.blogspot.com/2026/08/from-routing-checks-to-trajectory.html" class="hover:underline"
-              >From Routing Checks to Trajectory Testing: Evaluating an Agentic Chatbot</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <h2>Which Agentic Chatbot?</h2>
-
-<p>I have been working on a Python based AI test framework for a chatbot interface for&nbsp;<a href="https://www.enterprisedb.com/">my company</a>'s product, Postgres AI Hybrid Manager. The manager allows the setup of Postgres clusters across cloud or on-prem and attaching various AI tools such as <a href="https://www.langflow.org/">Langflow</a>.&nbsp;&nbsp;So a combination of more traditional Postgres backup, migration, telemetry and analytics features along with LLM workflows leveraging the data it holds.</p>
-
-<p>The product already has a control plane UI for managing Postgres estates. It also has full help for the product, all Postgres versions, analytics, AI and add ons. The chatbot brings all these things together: ask a question, get the relevant help, or ask it to do something such as migrate a cluster, or evaluate telemetry that would otherwise require clicking through the UI.</p>
-
-<p>That makes it a pretty handy interface, especially for the less technical. However it is not simple to test and ensure good quality responses.</p>
-
-<p>A normal deterministic API test is simple. Send a request, check the status code, check the JSON body, perhaps check the database state. An LLM-backed agent does not pass or fail so clearly. It can route to the wrong capability and still return fluent text. It can pick a plausible but wrong tool. It can miss half the task and still sound confident. It can complete the first turn of a conversation and lose the plot on the second.
-It could get malformed or missing data from tooling that leads it to deliver a misleading conclusion. It might only provide help to something that should be from tool data or was a request for an action such as create a cluster.</p>
-
-<p>So the testing problem was not “does the chatbot return a reasonable response?” It was “how do we test the whole chat path is doing the right thing?”</p><p>This is the story of how our agent-eval test framework evolved as we worked to see that our chatbot was not only getting the right answer,&nbsp;<span style="background-color: black;">&nbsp;</span><b><span style="background-color: black; color: #f1c232;">4</span><span style="background-color: black; color: #f1c232;">2 </span></b>, but whether it was asking all the right questions of the right tools to get that answer. Known as <b>trajectory</b> testing ...<br /><br /></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/a/AVvXsEhMxyMKsc2kI1qTJAs1_Gb38oivlHwL6t9G2__Wqw9rcRYrvNikRFovf-1u7K2cGe28q-ZBRbJgBli8ZCd6vF6DXtAxLMQk7fOeXF7P3YuPqr59NNGdfZeGpjWHbnRvALpCrjeOYuAQIo-Drf4y9372Ea2h90tasFgmnnElx0GPpRpxcx3XrwI5WXr8tFjr" style="margin-left: 1em; margin-right: 1em;"><img alt="" height="240" src="https://blogger.googleusercontent.com/img/a/AVvXsEhMxyMKsc2kI1qTJAs1_Gb38oivlHwL6t9G2__Wqw9rcRYrvNikRFovf-1u7K2cGe28q-ZBRbJgBli8ZCd6vF6DXtAxLMQk7fOeXF7P3YuPqr59NNGdfZeGpjWHbnRvALpCrjeOYuAQIo-Drf4y9372Ea2h90tasFgmnnElx0GPpRpxcx3XrwI5WXr8tFjr" width="240" /></a></div><p><br /></p>
-
-<h2><span style="background-color: black; color: #f1c232;">&nbsp;You're Golden&nbsp;</span></h2>
-
-<p>Before we can tell our story we need to define some terms.</p>
-
-<p><b>A Golden</b> is an example of a perfect desired output from a test input. They often refer to more complex outputs that may need saving as separate files, but a simple assertable output such as 42, is a golden too! <br />Whilst complex goldens may be used and marked for semantic similarity against the test output. It is more common for complex outputs to be described by a <b>rubric. </b>A&nbsp;rubric is a checklist of qualitative properties a good answer must exhibit, written in plain English as opposed to a golden example of an answer.<br /></p>
-
-<p>For AI testing the <b>tests are termed evals</b>, ie they evaluate the tool, but not by strict assertions, because one thing you can be sure of with an LLM is that given the same input, you usually get subtly different output, ie they are non-deterministic. Which means for LLM outputs the only way to test them is to <b>use an LLM-as-judge,&nbsp;&nbsp;</b>ie give that LLM the test output and a rubric or golden and let it mark it against that.
-Then you set a pass threshold for that mark, to translate your complex output into a pass or fail.</p>
-
-<p>You can also total up all the passes to give you a <b>Task Completion Rate, TCR</b>.
-So with complex AI agentic LLM interactions a 100% pass of all evals is often not realistic.
-Hence you set a TCR below 100% for the whole test suite of evals to pass.
-Start with the smallest useful test.
-The core principle of evals is not complicated, you want the input to give you the expected output.</p>
-
-<p>But for an Agentic application this may require a sequence of LLM calls and tools: Making the final output dependent on the route that should be chosen, the tool(s) that should be called, the actions to be taken, further LLM calls that may be necessary and finally the core data that the response to the user should contain.</p>
-
-<p>Our first version did not try to solve every part of that. It started with routing, simple and deterministic.</p>
-
-<h2>Routing is the starting point</h2>
-
-<p>The chatbot originally had an agent per tool. The tool being the code and API calls that performed actions or returned data or help.</p>
-
-<p>Different specialist agents owned different parts of the product surface: Control-plane actions, Postgres database operations, schema design, roles and permissions, cluster reporting, migration, and so on.</p>
-
-<p>Before any specialist can help, something has to choose the right specialist.</p>
-
-<p>So the first eval suite asked a narrow question:</p>
-
-<blockquote><b>Given this user prompt, did the chatbot route to the expected tool?</b></blockquote>
-
-<p>That gave us a fast health check. We could keep a corpus of prompts, map each one to an expected destination, run them through either a direct model path or against the real deployment and its tools, and score whether the selected destination tool matched the golden.</p><div style="text-align: left;">&nbsp;A golden here is just the name of the tool:</div><p></p>
-
- <pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-yaml">- id: "core-iam-001"
-    prompt: "List all my projects"
-    expected_tool: "control-plane"
-    tags: ["core", "control-plane", "project"]</code></pre>
-
-<p>And the check on the other end is deliberately dumb — an equality test, not a semantic one:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">self.success = tool_match(predicted_tool, expected_tool)<br /></code></pre>
-
-<h2>Agents became skills, but routing remained&nbsp;</h2>
-
-<p>The design moved away from “one agent per tool family” toward a more consolidated orchestrating agent with <a href="https://agentskills.io/home">skills</a>&nbsp;that could better compose different tool use for common tasks.</p>
-
-<p>That is a better fit for how modern agent systems are evolving. A skill = instructions, constraints, and a subset of tools that are relevant for a task. It is a form of progressive disclosure. Give the model the minium it needs at each step to save tokens.</p>
-
-<p>But this did not make routing irrelevant.</p>
-
-<p>Instead of asking “did we transfer to the right sub-agent?”, the eval asks “was the right skill made visible and selected for this task?” The labels changed but a skill could still use the wrong tool.</p>
-
-<p>Routing evals stayed valuable because they were fast, explainable, and easy to run in CI. But they are limited, routing should always be correct but it doesn't mean that the final agent response is too.</p>
-
-<h2>TCR jumps to the endpoint, the response</h2>
-
-<p>Task Completion Rate, or TCR, was the next step.</p>
-
-<p>The user asked for a cluster comparison, or a schema recommendation, or help diagnosing a database issue. We need to know whether the full response actually completed these tasks.</p>
-
-<p>Responses are complex goldens so they need the LLM-as-a-judge pattern: run the chatbot, take the actual response, and ask a judge model to score it against expected sections.</p>
-
-<p>The eval has a rubric here for judging the output:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-yaml">- id: "tcr-core-014"
-  prompt: "Compare CPU usage between these two clusters"
-  expected_sections:
-    - "identifies which cluster has higher CPU usage"
-    - "cites at least one supporting metric"
-    - "suggests a plausible next step"
-</code></pre>
-
-<p>The judge gets one simple instruction: score each <code>expected_sections</code> between 0.0–1.0 A metric class then just thresholds it for pass / fail:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">self.success = score &gt;= 0.7
-</code></pre>
-
-<p>The judge must be calibrated and a consistent model used for comparing runs over time. Consistent judging enables skill and/or prompt tuning from metric trends. The rubric must be specific enough to avoid marking waffle as success. But it turns a non-deterministic complex output into a simple pass and fail. It also separated two different levels of QA:</p>
-
-<ul>
-<li>Can the underlying model answer the task if given the right context?</li>
-<li>Does the deployed chatbot complete the task through the real product path?</li>
-</ul>
-
-<p>That led to two execution modes.</p>
-
-<p>Direct mode calls the model with simulated context. It is faster and useful for prompt and rubric development.</p>
-
-<p>Proxy mode calls the real chatbot.&nbsp;It is slower, but it exercises the production path: routing, skill selection, tool calls, guardrails, streaming responses, conversation state, and the actual service wiring.</p>
-
-<p>Both matter. Direct mode tells you whether the model is capable of the answer. Proxy mode tells you whether your product is capable of really delivering it via agents running your deployment's tools.&nbsp;</p><blockquote><p><b style="background-color: #fff2cc;">This is the major difference from standard AI LLM testing, the model is only a small pluggable engine for the full agentic skill set that requires the actual deployment domain of data, actions and tools. Direct mode testing of only the model, is occasionally useful but E2E testing of the Chatbot deployment is required for agentic AI Chatbot QA, tuning and validation.</b>&nbsp;&nbsp;&nbsp;</p></blockquote>
-
-<h2>Multi-step conversations changed the unit of testing</h2>
-
-<p>Single-turn TCR is still too small for many real chatbot tasks.</p>
-
-<p>Users do not always provide all required information in one message. They ask to create a cluster, then pick a project, then choose a size, then confirm. They ask for a schema review, then refine the problem, then ask for a migration path. They troubleshoot by adding information over time.</p>
-
-<p>So the framework has to exercise test cases that are conversations, not just single prompts.</p>
-
-<p>That sounds like a minor data-model change. It was not. Once a test has steps, the eval runner has to preserve conversation state. In proxy mode, that means carrying the real <code>conversation_id</code> returned by the chatbot and sending each follow-up as part of the same server-side conversation. In direct mode, it means building a synthetic conversation history so the model sees the prior turns.</p>
-
-<p>In code that split is about as literal as it sounds. Proxy mode threads a real id through each call:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">response = client.send_message(prompt=msg, conversation_id=conversation_id)
-conversation_id = response.conversation_id  # captured on turn 1, reused after
-</code></pre>
-
-<p>Direct mode has no server-side conversation to lean on, so it fakes one by re-rendering the transcript into the prompt itself, every turn:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">full_prompt = f"## Conversation History\n{render(history)}\n\n{next_prompt}"
-</code></pre>
-
-<p>Same test case, same expected outcome, but a different code path depending on which half of the system is actually holding the conversation state. That's impacts multi-turn evals because conversation memory is part of the harness code for the actual deployment not just a model issue.</p>
-
-<p>The scoring also becomes more interesting. You want per-step checks, because the assistant should ask the right clarifying question at the right time. You also want an overall score, because a conversation can have reasonable individual turns and still fail to complete the user's goal.<br /></p>
-
-<h2>Coding it yourself: deepeval underneath</h2>
-
-<p>Everything above sits on top of <a href="https://github.com/confident-ai/deepeval">deepeval</a>, the open-source LLM eval library. We add&nbsp;a Synthesize → Execute → Evaluate pipeline, a plugin system, YAML goldens, CI wiring, and <a href="https://langfuse.com/">Langfuse</a> push on top of it But the core library underneath is plain deepeval, and you do not need any of the surrounding machinery we used. Here are routing, TCR and multi-step just built directly on deepeval (simplified deepeval 3.6.9)</p>
-
-<p><strong>A test case is just an input/output pair.</strong> <code>LLMTestCase</code> is the base unit everything else scores:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">from deepeval.test_case import LLMTestCase
-
-test_case = LLMTestCase(
-    input="List all my projects",
-    actual_output=chatbot_response_text,       # what the system under test said
-    expected_output="control-plane",                  # the golden - a skill label here, not prose
-    additional_metadata={"predicted_skill": predicted_skill},
-)
-</code></pre>
-
-<p><strong>Routing is a custom metric, not a built-in one.</strong> deepeval ships plenty of semantic metrics, but “did it route to the right skill” is an exact-match business rule, so you write your own <code>BaseMetric</code>. This is a simplified version of the same shape our real <code>AgentMatch</code> metric takes:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">from deepeval.metrics import BaseMetric
-from deepeval.test_case import LLMTestCase
-
-class AgentMatch(BaseMetric):
-    def __init__(self, threshold: float = 1.0):
-        self.threshold = threshold
-        self.async_mode = False  # routing checks are cheap; no need for async here
-
-    def measure(self, test_case: LLMTestCase) -&gt; float:
-        predicted = test_case.additional_metadata["predicted_skill"]
-        expected = test_case.expected_output
-        self.score = 1.0 if tool_match(predicted, expected) else 0.0
-        self.success = self.score &gt;= self.threshold
-        return self.score
-
-    async def a_measure(self, test_case: LLMTestCase) -&gt; float:
-        return self.measure(test_case)
-
-    def is_successful(self) -&gt; bool:
-        return bool(self.success)
-
-    @property
-    def __name__(self):
-        return "Agent Match"
-</code></pre>
-
-<p><code>tool_match</code> is the check from earlier. Run it with deepeval's own runner rather than hand-rolled assertions, and you get retries, pretty output, and a result object for free:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">from deepeval import evaluate
-
-evaluate(test_cases=[test_case], metrics=[AgentMatch()])
-</code></pre>
-
-<p><strong>TCR is where deepeval's built-in <code>GEval</code> earns its keep.</strong> <code>GEval</code> is deepeval's off-the-shelf LLM-as-judge metric, you give it criteria (or explicit evaluation steps) and it handles the judge prompt, the JSON parsing, and the scoring for you. Our rubric-per-line <code>expected_sections</code> maps onto <code>evaluation_steps</code> almost directly:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">from deepeval.metrics import GEval
-from deepeval.test_case import LLMTestCase, LLMTestCaseParams
-
-task_completion = GEval(
-    name="TaskCompletion",
-    evaluation_steps=[
-        "Check whether the response identifies which cluster has higher CPU usage",
-        "Check whether the response cites at least one supporting metric",
-        "Check whether the response suggests a plausible next step",
-    ],
-    evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT],
-    threshold=0.7,
-)
-
-test_case = LLMTestCase(
-    input="Compare CPU usage between these two clusters",
-    actual_output=chatbot_response_text,
-)
-
-evaluate(test_cases=[test_case], metrics=[task_completion])</code></pre>
-
-<p><strong>Multi-step conversations get their own test case type.</strong> <code>ConversationalTestCase</code> takes a list of <code>Turn</code>s instead of a single input/output pair, and pairs with a <code>BaseConversationalMetric</code> instead of <code>BaseMetric</code>:</p>
-
-<pre style="background-color: #2d2d2d; border-radius: 6px; color: #f8f8f2; font-family: monospace; font-size: 14px; padding: 1em; white-space: pre;"><code class="language-python">from deepeval.test_case import ConversationalTestCase, Turn
-
-convo = ConversationalTestCase(
-    turns=[
-        Turn(role="user", content="Create a new cluster"),
-        Turn(role="assistant", content="Sure - which project should it go in?"),
-        Turn(role="user", content="acme-prod"),
-        Turn(role="assistant", content=final_response_text),
-    ],
-    expected_outcome="A cluster is created in acme-prod after resolving the missing project name",
-)
-</code></pre>
-
-<p>deepeval has a conversational counterpart to <code>GEval</code> too (<code>ConversationalGEval</code>), scored against the whole turn sequence rather than a single response which is the natural fit for “did the assistant ask the right clarifying question at the right time”, the per-step-plus-overall shape TCR needed once prompts became conversations.</p>
-
-<p>Put together, that is the whole starting kit: <code>LLMTestCase</code> plus a hand-written <code>BaseMetric</code> for hard business rules like routing, <code>GEval</code> for rubric-style task completion, <code>ConversationalTestCase</code> plus <code>ConversationalGEval</code> once a prompt becomes a conversation, and <code>evaluate()</code> to run the lot and get a result object back. <br /><br />Everything else we built, the YAML goldens, the plugin architecture, the CI wiring, the Langfuse push exists to run more of these at scale and make the failures easy to find. But none of it is required to get started. If you are testing your own agentic chatbot, this is how to begin.</p>
-
-<p>This is where instrumentation started to matter much more.</p>
-
-<p>For a single-turn answer, a markdown report with pass/fail rows is often enough to start debugging. For multi-step conversations, that is thin. You need to know which turn failed, whether the route changed, whether the wrong tool was called, whether the tool call used correct arguments, whether the model forgot earlier context, or whether the final answer simply missed a required section.</p>
-
-<p>That is why we added span-level telemetry and pushed eval traces into Langfuse.</p>
-
-<h2>Langfuse made the failures inspectable</h2>
-
-<p>The useful thing about Langfuse is not just having another pretty dashboard. Although that is important for spotting quality regressions over time via regular CI/CD automated runs.<br /></p>
-
-<p>The vital thing was being able to treat an eval run as a set of traces. A run becomes a session. Each test case becomes a trace. The trace carries the prompt, response, scores, tags, model, mode, scenario, and the spans emitted by the proxy.</p>
-
-<p>For a chatbot path, those spans are where the debugging starts. You can see routing, tool execution, LLM calls, latency, and token usage where it is available. You can filter by scenario and model. You can compare runs. You can look at a failing conversation and see whether the problem began at route selection, tool selection, tool arguments, or final synthesis.</p>
-
-<p>That changes the tuning loop.</p><p></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/a/AVvXsEgNqASh9hCGmosfhEwze_2epHBQjuO104CjxjPNBoFiqMpKHubTgt4MZceUO8isgH1-iRRr6R9YFEDasBTS0DCEqI9Y8oYQp-5K_guJilM6e6L-YMi0W9hsyzPvx8qKbBT7oii7HVGNkIoLsu0W8a_ZSpVQdYoBMFk_KpcfSBJXSGObY-cMjqgTI81hhvRI" style="margin-left: 1em; margin-right: 1em;"><img src="https://blogger.googleusercontent.com/img/a/AVvXsEgNqASh9hCGmosfhEwze_2epHBQjuO104CjxjPNBoFiqMpKHubTgt4MZceUO8isgH1-iRRr6R9YFEDasBTS0DCEqI9Y8oYQp-5K_guJilM6e6L-YMi0W9hsyzPvx8qKbBT7oii7HVGNkIoLsu0W8a_ZSpVQdYoBMFk_KpcfSBJXSGObY-cMjqgTI81hhvRI=s1600" /></a></div><br /><br /><p></p>
-
-<p>Without traces, an eval failure says “this case failed”. With traces, it can say why it failed.</p>
-
-<p>That distinction matters because the fix lands in different places... <br />Is it a routing rule? <br />Is it a skill description?<br />Is it a tool schema?<br />Is it the judge rubric?<br />Is it that the eval has has an expectation that the product has never actually promised?</p>
-
-<h2><span style="background-color: #38761d; color: white;">&nbsp;Trajectory testing -&gt;&nbsp;</span> knitted the pieces together</h2>
-
-<p>Routing and TCR started as separate signals.</p>
-
-<p>Routing asked whether the right capability was selected. TCR asked whether the final task was completed. Multi-step testing asked whether that held across a conversation. Instrumentation showed what happened between those points.</p>
-
-<p>Trajectory testing is the next natural step: score the path itself.</p>
-
-<p>For an agentic product, the fully correct path is essential to response quality.<br />So trajectory tests add expectations about intermediate actions:</p>
-
-<ul>
-<li>which tool or flow should be used</li>
-<li>whether the arguments are valid</li>
-<li>whether the conversation reached the right state</li>
-<li>whether the final answer completed the task</li>
-</ul>
-
-<p>The label-based routing tests are still useful as fast canaries. They tell us whether the classifier shape has drifted and distinguish tiers - see the next section.<br />But full trajectory tests judge the route by consequence: did the system actually follow the tool path that would satisfy the user?</p>
-
-<p>So retain the fast determisitc routing tests, but move more user-visible behavioural coverage into trajectory and TCR.</p>
-
-<h2>Sovereign AI makes the eval problem tiered <span style="color: #ffa400;">S/M/L/XL</span></h2>
-
-<p>There is one more constraint that makes this more than a generic chatbot-testing story.</p>
-
-<p>Our chatbot has to work for sovereign and air-gapped deployments. In those environments, prompts, tool results, schema details, and operational data cannot be sent to a hosted frontier model outside the customer's trust boundary. The inference model may run inside the customer's environment.</p>
-
-<p>That usually means a smaller model.</p>
-
-<p>Smaller models are not just cheaper versions of larger ones. They have different context limits, weaker tool-selection behaviour, and less tolerance for an over-wide capability surface. If you show a smaller model every possible tool and skill, you have increased the chance that it chooses a bad one.</p>
-
-<p>So the architecture becomes tiered. Models are effectively T-shirt sized. A small self-hosted model sees a curated subset of reliable skills. A larger model can be allowed to see more. Some experimental or complex skills only make sense for the highest tiers.</p>
-
-<p>That changes the meaning of a routing eval again.</p>
-
-<p>The correct visible skill set is no longer universal. It depends on the model tier. A prompt that should route to an advanced skill for an XL model may need to be dropped, refused, or handled differently for a smaller model that should not see that skill at all.</p>
-
-<p>This is why trajectory testing and routing need to be tier-aware. We are not only asking whether the chatbot can complete a task. We are asking whether it can complete the task through the capability surface that a deployment's LLM size allows.</p>
-
-<h2>What I would keep from the journey</h2>
-
-<p>The final shape was not obvious at the start.</p>
-
-<p>We began with routing because it was the first integration failure point and the cheapest one to isolate. We added TCR because correct routing did not prove task completion. We added multi-step cases because real users have conversations, not isolated prompts. We added telemetry because multi-step failures are otherwise too hard to debug. We moved toward trajectory testing because the route, tools, arguments, and answer need to be judged as one path.</p>
-
-<p>If I were starting another agentic product eval framework, I would keep that order.</p>
-
-<p>Do not start by trying to build a grand universal benchmark. Start with the smallest failure point that would embarrass the product if it regressed. Then move the signal closer to the user's actual goal.</p>
-
-<p>For a chatbot wired into a real control plane, that means testing more than the output text. It means testing the route, the skill, the tool call, the arguments, the conversation state, the final answer, and the model tier that made those options visible in the first place.</p>
-
-<p>That is the difference between checking that an AI system said something vaguely relevant and checking that it actually did all the things the user asked of it.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 08, 2026 08:09 PM UTC by
-            <a href="http://edcrewe.blogspot.com/feeds/posts/default/-/python" class="link link-hover text-primary"
-              >Ed Crewe</a
-            >
-          </div>
-          <a
-            href="http://edcrewe.blogspot.com/2026/08/from-routing-checks-to-trajectory.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/306/" class="hover:underline"
-              >The Real Python Podcast – Episode #306: Programmatically Developing LLM Prompts With DSPy</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            How can you move from manually writing prompts for an LLM application toward defining them programmatically? This week on the show, Brett Kennedy returns to discuss his new book "Building LLM Applications with DSPy."
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 07, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/306/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/aug/06/call-for-applicants-for-a-django-executive-directo/" class="hover:underline"
-              >Call for applicants for a Django Executive Director</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The Django Software Foundation is announcing a call for an Executive Director. The Executive Director is the operational leader of the Django Software Foundation, a paid position reporting to the Board of Directors, responsible for setting the Foundation's strategic direction and turning it into action, while managing day-to-day operations. They serve as the main connector between the Board, staff, community, and sponsors.</p>
-<p>The Django Software Foundation (DSF) is a 501(c)(3) nonprofit that develops and maintains Django, a free and open-source web application framework. The Foundation exists to support the development of Django by sponsoring sprints, meetups, gatherings and community events; to promote the use of Django among the web development community; to protect the framework's intellectual property and long-term viability; and to advance the state of the art in web development.</p>
-<p>This is a new role for the Foundation. Django itself has been around since 2005, but the DSF wasn't founded until 2008, and the person who takes on this role will play a key part in maturing the Foundation's internal structure, helping ensure the DSF can properly support and sustain this important ecosystem going forward. The position is initially for a period of one year, renewable subject to an annual performance evaluation. Depending on the candidate, the role may be part-time or full-time.</p>
-<p>Beyond running the Foundation, the Executive Director is a representative of the DSF itself. They embody Django's welcoming culture and help the community sustain the framework's home. The Executive Director is often called upon to represent the Foundation publicly, including at Django conferences and events, and to grow awareness of the DSF as an organization, distinct from the framework it supports.</p>
-<h2 id="s-responsibilities">Responsibilities</h2>
-<p>Executive Director duties include (but are not limited to):</p>
-<ul>
-<li>Fundraising: leading sponsorship development, corporate and individual membership growth, and partner relationships, including support for the jump from our <a href="https://www.djangoproject.com/weblog/2026/jun/10/dsf-2026-fundraising-goals/">current 300K USD annual fundraising goal to 500K USD</a>. At the current funding level (around 300K per year), a full-time Executive Director isn't yet sustainable. We'd like to fix that, and we want you to lead that change.</li>
-<li>Admin and operations management: day-to-day operations and administration of the DSF, financial reporting, grant management, and the general running of the organization. Over time, helping grow the DSF into a more mature organization by establishing the operational foundations that support the nonprofit's growth.</li>
-<li>Managing the DSF Assistant and Fellows: overseeing the DSF Assistant and the Django Fellows program, the paid maintainers funded by the DSF.</li>
-<li>Marketing and outreach: community outreach and communications, representing the DSF publicly (for example, conference representation), and growing awareness of the Foundation as distinct from the framework.</li>
-<li>Legal, trademark, and follow-ups: overseeing international trademark policy enforcement, creating, signing, and renewing contracts, handling legal correspondence, and the unglamorous administrative follow-through that keeps a 501(c)(3) compliant. First-hand legal knowledge isn't required here; you'll work with counsel.</li>
-<li>Working group check-ins: regular coordination with the DSF working groups, the volunteer committees handling events, AI, accessibility, fundraising, and more.</li>
-<li>Working with our Django events and conferences like our DjangoCons.</li>
-</ul>
-<h2 id="s-requirements">Requirements</h2>
-<p>An Executive Director is responsible for fundraising, operations, communications, and community coordination. This is a broad remit, and it isn't our expectation that you come into the job an expert in every part of it. We hope you'll have solid experience in a few of these areas, particularly the ones most central to the role (fundraising and partnership development, nonprofit operations, and stakeholder communication). A willingness to learn and a demonstrated history of doing so are more important than comprehensive knowledge.</p>
-<p>The areas you can expect to work across include (and are not limited to):</p>
-<ul>
-<li>Fundraising, sponsorship, and partnership development</li>
-<li>Nonprofit operations, financial reporting, and grant management</li>
-<li>Contracts, trademark, and 501(c)(3) compliance (in coordination with counsel)</li>
-<li>Public representation, marketing, and communications</li>
-<li>Coordinating staff, volunteers, and working groups</li>
-<li>Technical knowledge is not required, but is a nice-to-have:</li>
-<li>Knowledge of, or familiarity with, the Django and Python community</li>
-<li>Familiarity with open source licenses and communities</li>
-</ul>
-<p>And required professional skills such as:</p>
-<ul>
-<li>Conflict resolution</li>
-<li>Time management and prioritization expertise</li>
-<li>Ability to focus in short periods of time and do substantial context switches</li>
-<li>Self-awareness to recognize their own limits and reach out for help</li>
-<li>Relationship-building and coordination with the Board, staff, working groups, sponsors, and external parties</li>
-<li>Tenacity, patience, compassion and empathy are essential</li>
-</ul>
-<p>Therefore, a Django Executive Director requires the skills and judgment of an experienced nonprofit leader who is comfortable with fundraising, operations, and coordination with community stakeholders. Open-source experience and familiarity with the Django or Python community in particular are a big plus.</p>
-<p>Being part of the Django community isn't a prerequisite for this position. We'll consider applications from anyone with a proven history of nonprofit leadership or comparable experience in an open-source or mission-driven community, but this is a remote position based in the United States, and unfortunately we are not able to offer visa sponsorship for this role.</p>
-<p>The DSF is an equal opportunity employer. We welcome applicants of every background and don't discriminate on the basis of race, color, religion, gender, gender identity or expression, sexual orientation, national origin, disability, age, or veteran status.</p>
-<h2 id="s-how-to-apply">How to apply</h2>
-<p>If you're interested in applying for the position, please submit your application via <a href="mailto:hiring@djangoproject.com">hiring@djangoproject.com</a>. Your application should include:</p>
-<ul>
-<li>A cover letter (optional)</li>
-<li>A resume or CV</li>
-<li>A brief vision statement (500 to 1000 words) addressing your understanding of the Foundation's current position, the key opportunities and challenges you see for the Foundation, and your approach to the role</li>
-</ul>
-<p>References may be requested during the interview process.</p>
-<p>The compensation for this role is a base salary of $90,000 to $120,000, plus a bonus of up to $60,000 tied to our progress toward the <a href="https://www.djangoproject.com/weblog/2026/jun/10/dsf-2026-fundraising-goals/">$500,000 fundraising goal</a>, which we'll tier as we work toward it. Depending on the candidate, the DSF will consider a part-time position and adjust the salary accordingly.</p>
-<p>Applicants will be evaluated based on the following criteria:</p>
-<ul>
-<li>Relevant nonprofit leadership and operational experience</li>
-<li>Track record in fundraising and partnership development</li>
-<li>Understanding of the position and of the DSF's current stage</li>
-<li>Clarity, formality, and precision of communications</li>
-<li>Familiarity with open source and/or the Django and Python community</li>
-<li>Strength of reference(s)</li>
-</ul>
-<p>Applications will be open until midnight Central Time, September 14, 2026, with the expectation that the successful candidate will start around November 1, 2026 (to be confirmed).</p>
-<p>Reference: <a href="https://www.djangoproject.com/weblog/2026/jun/17/announcing-the-search-for-a-dsf-executive-director/">Announcing the Search for a DSF Executive Director</a> (Django Project blog, June 17, 2026).</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 06, 2026 02:45 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/aug/06/call-for-applicants-for-a-django-executive-directo/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1977,12 +1630,12 @@ convo = ConversationalTestCase(
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8292</a></li>
-    <li><a>Unique Feeds: 375</a></li>
+    <li><a>Total Entries: 8189</a></li>
+    <li><a>Unique Feeds: 369</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (559)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (493)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (216)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (202)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (559)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (494)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Python Anywhere (216)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (202)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
