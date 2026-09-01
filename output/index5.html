@@ -53,6 +53,153 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2026/aug/10/newlines/" class="hover:underline"
+              >Breaking up (lines) is hard to do</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Here’s a seemingly simple question: given a chunk of multi-line text, how do you split it and return an array whose members are the constituent lines of the&nbsp;text?</p>
+<p>Hopefully, your first instinct is to reach for some sort of standard-library function, maybe something like&nbsp;the <code>splitlines()</code> method of&nbsp;Python’s <code>str</code> type. Because it turns out this “simple” question is actually pretty complex to answer! For example, quite some time ago I read <a href="https://yossarian.net/til/post/python-s-splitlines-does-a-lot-more-than-just-newlines/">a post by William Woodruff</a> pointing out the surprising discovery that Python treats up to eleven different Unicode code points or code point sequences as indicating a line&nbsp;break.</p>
+<p>At the time I meant to write about that, but a lot of other things started fighting for my time, and it’s only now that I’m finally digging it out of my drafts. Still, better late than never, so today let’s dig into some of the many ways there are to break a line of text and how they&#8217;ve been standardized and specified and ultimately wound up in the set Python&nbsp;uses.</p>
+<h2>In the&nbsp;beginning&#8230;</h2>
+<p>Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. Of course there were other things before <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, and alongside <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, but for today’s discussion we really only need to go back to <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>; if you want the full history of physical teletypes, how they evolved from typewriters and influenced character sets for computing and so on, I suggest Wikipedia. Here, I’m just going to gloss over and simplify a lot of that to focus on the topic at&nbsp;hand.</p>
+<p>So. Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. And it wound up being incredibly influential and important in computing, to an extent other early character sets couldn’t match. And because it was used on computers which used teletypes (basically electronic typewriters connected as input/output devices) as a user interface, it contained control characters for sending commands to the teletype. Such as&nbsp;a <code>LINE FEED</code> (byte&nbsp;value <code>0x0A</code>) to advance the paper vertically to the next line, and&nbsp;a <code>CARRIAGE RETURN</code> (byte&nbsp;value <code>0x0D</code>) to re-align the print head/carriage with the horizontal start point of the&nbsp;line.</p>
+<p>These are often&nbsp;abbreviated <code>LF</code> and <code>CR</code> (or by their C-family escape&nbsp;sequences <code>\n</code> and <code>\r</code>, respectively), and you might think that since physically advancing a typewriter-style device to be ready to print the next line requires both operations, that would have just become the universal way everybody did new lines. Or at least the universal way everybody did them in English, or in the <span class="caps">US</span>, where <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> dominated.&nbsp;Right?</p>
+<p>Well, nothing is ever that simple. Physical teletypes apparently benefited from the two-character approach (as opposed to a single “new line” character) because it gave them time to physically move everything into the right position. But as <em>virtual</em> teletypes&#8212;“printing” to a television-like display instead of to paper&#8212;became more common, that was less of an issue. So there were multiple possible options for representing line breaks, and several of them showed up in historical systems. For&nbsp;example:</p>
+<ul>
+<li><span class="caps">CP</span>/M&nbsp;used <code>CR LF</code>. And so <span class="caps">MS</span>-<span class="caps">DOS</span>, which aimed for compatibility with it,&nbsp;used <code>CR LF</code> too. And so Microsoft Windows, which wanted to be compatible with <span class="caps">MS</span>-<span class="caps">DOS</span>, <em>also</em> used&nbsp;it.</li>
+<li>Meanwhile, Multics chose to use&nbsp;just <code>LF</code> with&nbsp;no <code>CR</code>, and Unix went along with that&nbsp;choice.</li>
+<li>But Commodore and Apple and many others went yet another way and used&nbsp;plain <code>CR</code> , with&nbsp;no <code>LF</code>.</li>
+</ul>
+<p>This meant “plain text” was not easily portable between these various systems, since none of them could agree on how to represent a line break. Which led to one of my all-time favorite programming jokes, in the infamous <a href="https://xml.coverpages.org/sgmlFAQ-NOT-19990401.html">“<span class="caps">NOT</span>&nbsp;the <code>comp.text.sgml</code> <span class="caps">FAQ</span>”</a>&nbsp;document:</p>
+<blockquote>
+<p>Q.  What&#8217;s an <span class="caps">RE</span>?</p>
+<p>A.  <span class="caps">RE</span> is an acronym for Record End, which is sort of like a newline, only different. Goldfarb&#8217;s First Law of Text Processing states&nbsp;that:</p>
+<blockquote>
+<p><span class="dquo">&#8220;</span>&#8230; if a text processing system has bugs, at least one of them will have to do with the handling of input line&nbsp;endings.&#8221;</p>
+<p>[The Handbook, footnote p.&nbsp;321]</p>
+</blockquote>
+<p>The Record End concept was introduced to make sure that <abbr title="Standard Generalized Markup Language"><span class="caps">SGML</span></abbr> parsers don&#8217;t violate Goldfarb&#8217;s First&nbsp;Law.</p>
+</blockquote>
+<p>(for the uninitiated, <a href="https://en.wikipedia.org/wiki/Charles_Goldfarb">Charles Goldfarb</a> created <abbr title="Standard Generalized Markup Language"><span class="caps">SGML</span></abbr>)</p>
+<p>Anyway, over twenty years ago Python tried (in Python 2.3) to smooth this over by introducing <a href="https://peps.python.org/pep-0278/">“universal newline” mode</a> for opening files, which accepts all three options: a&nbsp;plain <code>\n</code> (Unix), or a&nbsp;plain <code>\r</code> (classic Mac), or&nbsp;an <code>\r\n</code> sequence (<span class="caps">DOS</span> and Windows) will all be interpreted as line&nbsp;breaks.</p>
+<p>But even in <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> there there are other ways of breaking a line. For example, at byte&nbsp;value <code>0x0C</code> <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> includes&nbsp;the <code>FORM FEED</code> control character&nbsp;(<code>FF</code>,&nbsp;or <code>\f</code>). Which is not one of the traditional characters used by major operating systems as a “newline”, but nonetheless does cause a new line to occur: it moves to the next page (if necessary, by ejecting the current sheet of paper from the printer and feeding in a new one). And there’s&nbsp;also <code>0x0B</code>, <code>VERTICAL TAB</code> (<code>VT</code> or <code>\v</code>): just as a “regular” tab&nbsp;(<code>\t</code>) causes a horizontal adjustment, a vertical tab causes a vertical one. So it, too, causes output to advance to another line (probably skipping several in the&nbsp;process).</p>
+<p>And <a href="https://en.wikipedia.org/wiki/C0_and_C1_control_codes#C1_controls">the C1 control characters</a>&nbsp;added <code>0x85</code>,&nbsp;the <code>NEXT LINE</code> character (typically&nbsp;abbreviated <code>NEL</code>), useful for translating back and forth between <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> and <span class="caps">IBM</span>’s <span class="caps">EBCDIC</span> character set (which had “New Line” as a single&nbsp;character).</p>
+<h2>Then Unicode&nbsp;happened</h2>
+<p>Today we live in a Unicode world, and Unicode tries its hardest to catalog and standardize and describe how to work with all the world’s writing systems. <a href="https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-5/#G10213">Chapter 5, Section 8 of the Unicode Standard, “Newline Guidelines”</a>, lists seven code points to recognize as causing new lines. Five of them we’ve seen&nbsp;already:</p>
+<ul>
+<li><code>U+000A LINE FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000B LINE TABULATION</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>’s vertical&nbsp;tab</li>
+<li><code>U+000C FORM FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000D CARRIAGE RETURN</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+0085 NEXT LINE</code>, from the C1 control&nbsp;codes</li>
+</ul>
+<p>The <code>CR LF</code> sequence is also recognized, on systems which use&nbsp;it.</p>
+<p>But the other two code points are new and were created specifically for&nbsp;Unicode:</p>
+<ul>
+<li><code>U+2028 LINE SEPARATOR</code> (which Unicode likes to abbreviate&nbsp;as <code>LS</code>)</li>
+<li><code>U+2029 PARAGRAPH SEPARATOR</code> (similarly abbreviated&nbsp;as <code>PS</code>)</li>
+</ul>
+<p>The Unicode Standard explains that the traditional newline characters had started to become ambiguous, because of the rise of tools such as word-processing programs which implicitly broke lines to wrap them for display and so began using explicit “newline” characters to mean a <em>paragraph</em> break rather than a line break. So Unicode <a href="https://xkcd.com/927/">added two new code points</a> whose purposes are explicit. And the standard says that “[I]n Unicode text, the <span class="caps">PS</span> and <span class="caps">LS</span> characters should be used wherever the desired function is&nbsp;unambiguous.”</p>
+<p>This set of line-breaking code points originated in version 5.0 of Unicode, with <a href="https://www.unicode.org/standard/reports/tr13/tr13-5.html">Unicode Technical Report #13</a>, which lists the seven “newline” code points and&nbsp;the <code>CR LF</code> sequence. This is also the set of code points and sequences defined for <a href="https://www.unicode.org/reports/tr18/#Line_Boundaries">line boundaries in Unicode regular expressions, Unicode Technical Standard #18</a>.</p>
+<p>And expanding on Chapter 5 of the Standard, there&#8217;s <a href="https://www.unicode.org/reports/tr14/">Unicode Standard Annex #14, “Unicode Line Breaking Algorithm”</a>. As the name implies, this document formally specifies the line-breaking algorithm for Unicode, including defining things like which characters offer an opportunity to break a line, whether the break is mandatory, and whether the break would come before or after the character in question. It does this in a typical Unicode way: by <a href="https://www.unicode.org/reports/tr14/#DescriptionOfProperties">defining a set of named properties</a> and specifying which characters have which&nbsp;properties.</p>
+<h2>Two ways about&nbsp;it</h2>
+<p>But there are still three “newline” characters supported by Python that we haven’t seen yet, and they come from a place that might be surprising: <a href="https://www.unicode.org/reports/tr9/">Unicode Standard Annex #9, the bidirectional algorithm</a>. And it’s <span class="caps">OK</span> if you’re wondering what that has to do with newlines, because it’s not immediately obvious if you don’t already know about&nbsp;it.</p>
+<p>Some written scripts, like the Latin script this blog post is written in, are written and read left-to-right: the start of a line of text is on the left-hand side, and the end is on the right-hand side. Other scripts, such as Arabic or Hebrew, do the opposite, and are right-to-left. And so Unicode, which again wants to cover <em>all</em> the world’s writing systems and let you use any or all of them, has to support both left-to-right and right-to-left horizontal text&nbsp;direction.</p>
+<p>But more than that, it has to support switching direction within a single piece of text. You might have something that’s in, say, Arabic but quotes something in Spanish in the middle of a line; that would require a short section of left-to-right inside an otherwise right-to-left text. Or you might be writing something that uses <a href="https://en.wikipedia.org/wiki/Boustrophedon">boustrophedon</a>, switching directions on each line. So Unicode includes direction-control characters&nbsp;like <code>U+200E LEFT-TO-RIGHT MARK</code> and <code>U+200F RIGHT-TO-LEFT MARK</code> to handle this. But it also needs to know the scope of a direction change, and that’s where the last “newline” characters come in: the Unicode bidirectional algorithm says that “[t]he effects of all of these formatting characters are limited to the current paragraph; thus, they are terminated by a <em>paragraph separator</em>”.</p>
+<p>So Unicode characters have, among their properties, a “bidirectional class” which influences how they affect the bidirectional algorithm. And the characters which act as paragraph separators for purposes of ending the effects of an explicit directional marker all share a common value for this: bidirectional&nbsp;class <code>B</code>. The characters with that class include quite a few that we’ve already seen, along with three more&nbsp;characters:</p>
+<ul>
+<li><code>U+001C INFORMATION SEPARATOR FOUR</code></li>
+<li><code>U+001D INFORMATION SEPARATOR THREE</code></li>
+<li><code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>But these are better known by their original <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>&nbsp;names: <code>FILE SEPARATOR</code>, <code>GROUP SEPARATOR</code>,&nbsp;and <code>RECORD SEPARATOR</code>. <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> provided these to help represent data structures in memory and on storage media. Today it’s not as common to try to use control characters for this purpose, though they do have the virtue of being rare in actual text, unlike other common delimiters such as <a href="https://en.wikipedia.org/wiki/Tab-separated_values">tab</a> or <a href="https://en.wikipedia.org/wiki/Comma-separated_values">comma</a>.</p>
+<h2>End of the&nbsp;line</h2>
+<p>And now, after looking at multiple character sets and five Unicode technical documents, we can finally state clearly what’s going on in&nbsp;Python.</p>
+<p>Python’s <code>splitlines()</code> treats ten different code points, and one multi-code-point sequence, as causing a line break. These&nbsp;are:</p>
+<ul>
+<li>The&nbsp;sequence <code>U+000D U+000A</code> (<code>CR LF</code>).</li>
+<li>The four code points which have line-breaking&nbsp;property <code>BK</code> (Mandatory Break&nbsp;(Non-tailorable)): <code>U+000B LINE TABULATION</code> , <code>U+000C    FORM FEED</code>, <code>U+2028 LINE SEPARATOR</code>,&nbsp;and <code>U+2029 PARAGRAPH SEPARATOR</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>CR</code> (Carriage Return&nbsp;(Non-tailorable)): <code>U+000D CARRIAGE RETURN</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>LF</code> (Line Feed&nbsp;(Non-tailorable)): <code>U+000A LINE FEED</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>NL</code> (Next Line&nbsp;(Non-tailorable)): <code>U+0085 NEXT LINE</code>.</li>
+<li>The three code points which don’t have any of the above line-breaking properties, but do have bidirectional&nbsp;property <code>B</code>:  <code>U+001C INFORMATION SEPARATOR FOUR</code>, <code>U+001D INFORMATION SEPARATOR THREE</code>,&nbsp;and <code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>Which is also exactly what’s stated by <a href="https://github.com/python/cpython/blob/87b120fdb58afd8f7cb79daa87122334e295b70c/Objects/unicodetype_db.h#L6583">a comment in the CPython source code</a> accompanying the list of individual code points that are considered to break lines, but hopefully now you have a better understanding of what that comment means and how this particular set was arrived&nbsp;at.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 06:06 PM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2026/aug/10/newlines/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/qt-designer-python/" class="hover:underline"
+              >Qt Designer and Python: Build Your GUI Applications Faster</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn how to use Qt Designer to build Python GUIs with PyQt6. Create your main windows and dialogs visually, then load them in your app.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/qt-designer-python/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/558/hyper-personal-software-with-python" class="hover:underline"
               >#558: Hyper-Personal Software with Python</a
             >
@@ -991,6 +1138,46 @@ supported versions and the future release schedule.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/dragging-and-dropping-in-rich-text-example-app/" class="hover:underline"
+              >Handling Image Drag and Drop from Web Browsers in PyQt6 — Why toLocalFile() returns an empty string and how to handle remote image drops correctly</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            When dragging and dropping images from a web browser into a PyQt6 rich text editor, <code>toLocalFile()</code> sometimes returns a blank string. It works for some images (like Google image search results) but fails for others (like images embedded directly on a webpage). Why does this happen, and how can I handle it?
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 05, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/dragging-and-dropping-in-rich-text-example-app/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://malemburg.com/pymmich-an-ai-first-oss-project/" class="hover:underline"
               >Pymmich – an AI-first OSS project 🐍✨</a
             >
@@ -1438,65 +1625,6 @@ information.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonspeed.com/articles/faster-float-math-rust/" class="hover:underline"
-              >Faster floating point math with Rust’s new API</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Floating point math is often slower than integer math because the
-compiler is being conservative about how it optimizes your code. While
-some programming languages already had solutions of a sort, until now
-Rust did not have a good stable way to deal with this limitation. But
-now, starting in version 1.98, Rust will allow telling the compiler it
-can optimize your code further—but with extra control so that you can
-still write numeric algorithms with minimal rounding errors.</p>
-
-<p>In this article you will learn:</p>
-
-<ul>
-  <li>Why by default the compiler won’t optimize floating point math as much
-as it does integer math.</li>
-  <li>Rust’s new API to solve this limitation.</li>
-  <li>Examples of using this new API, its speed impact, and how you can
-control where it is used.</li>
-</ul>
-
-
-   <a href="https://pythonspeed.com/articles/faster-float-math-rust/">Read more...</a>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 02, 2026 12:00 AM UTC by
-            <a href="https://pythonspeed.com/atom.xml" class="link link-hover text-primary"
-              >Python⇒Speed</a
-            >
-          </div>
-          <a
-            href="https://pythonspeed.com/articles/faster-float-math-rust/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://sethmlarson.dev/htmx-4-the-game?utm_campaign=rss" class="hover:underline"
               >Let’s Play “htmx 4: the game”</a
             >
@@ -1749,261 +1877,6 @@ But that's the fun of a project like this.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss" class="hover:underline"
-              >Extracting “Ocarina of Time: Master Quest” ROM from the Legend of Zelda: Wind Waker bonus disc</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Another day, another extracting ROMs from GameCube
-titles mini-tutorial. This time it’s the PAL
-Legend of Zelda: Wind Waker Bonus Disc that I
-<a href="https://sethmlarson.dev/pal-gamecube-haul-from-krakow-poland">recently purchased from Kraków, Poland</a>. This
-disc contains two N64 games: <a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time">Legend of Zelda:
-Ocarina of Time</a> and the “<a href="https://en.wikipedia.org/wiki/The_Legend_of_Zelda:_Ocarina_of_Time#Master_Quest">Master Quest</a>”
-version of Ocarina of Time. Let’s extract those ROMs
-from the GameCube ROM so we can play on other emulators.</p>
-
-<!-- more -->
-
-<p>Going from a GameCube disc to an ISO ROM is the usual
-process, for me that means using the <a href="https://docs.flippydrive.com/backup.html">FlippyDrive Disc Backup
-Utility</a> but CleanRip on a GameCube or Wii also works.
-To extract the individual files from the ISO open
-the ISO in Dolphin, right-click the ISO, <code>Properties</code>,
-<code>Filesystem</code>, and extract the <code>zlj_f.tgc</code> file into
-your working directory.</p>
-
-<p>According to <a href="https://tcrf.net/The_Legend_of_Zelda:_Ocarina_of_Time_Bonus_Disc">The Cutting Room Floor</a> both N64 ROMs
-are included in the file <code>zlj_f.tgc</code>. TGC is an
-archive format that Nintendo uses often in this generation
-of games. Thanks to resources like <a href="https://no-intro.org/">No Intro</a>
-we have the known-good ROM lengths and hashes for both Ocarina of
-Time and Master Quest for all regions. Using this information
-(along with the N64 ROM header) we can find the embedded N64 ROMs
-within <code>zlj_f.tgc</code> without understanding the TGC format at all:</p>
-
-<div class="codehilite">
-<pre><span></span><code><span class="c1"># License: MIT</span>
-
-<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
-
-<span class="n">ROM_HEADER</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x80\x37\x12\x40</span><span class="s2">&quot;</span>
-<span class="n">ROM_LENGTH</span> <span class="o">=</span> <span class="mh">0x2000000</span>
-<span class="n">ROM_HASHES</span> <span class="o">=</span> <span class="p">{</span>
-    <span class="s2">&quot;1618403427e4344a57833043db5ce3c3&quot;</span><span class="p">:</span> <span class="s2">&quot;Legend of Zelda, The - Ocarina of Time - Master Quest (Europe) (En,Fr,De) (Zelda Collection).n64&quot;</span><span class="p">,</span>
-    <span class="s2">&quot;2c27b4e000e85fd78dbca551f1b1c965&quot;</span><span class="p">:</span> <span class="s2">&quot;Extracted Legend of Zelda, The - Ocarina of Time (Europe) (GameCube).n64&quot;</span><span class="p">,</span>
-    <span class="c1"># If you see 'Unknown ROM', paste the MD5 into</span>
-    <span class="c1"># https://datomatic.no-intro.org/index.php</span>
-    <span class="c1"># searching on 'hash-data' and add the values here.</span>
-<span class="p">}</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
-    <span class="n">data</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;zlj_f.tgc&quot;</span><span class="p">,</span> <span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
-
-    <span class="c1"># Find the embedded ROMs from the N64 ROM header.</span>
-    <span class="n">offset1</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
-    <span class="n">offset2</span> <span class="o">=</span> <span class="p">(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">)</span> <span class="o">+</span> <span class="n">data</span><span class="p">[(</span><span class="n">offset1</span> <span class="o">+</span> <span class="mi">4</span><span class="p">):]</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">ROM_HEADER</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">offset</span> <span class="ow">in</span> <span class="p">(</span><span class="n">offset1</span><span class="p">,</span> <span class="n">offset2</span><span class="p">):</span>
-
-        <span class="c1"># Determine which ROM we have based on MD5.</span>
-        <span class="n">rom</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">offset</span><span class="p">:</span><span class="n">offset</span> <span class="o">+</span> <span class="n">ROM_LENGTH</span><span class="p">]</span>
-        <span class="n">rom_md5</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
-        <span class="n">to_file</span> <span class="o">=</span> <span class="n">ROM_HASHES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rom_md5</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">to_file</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown ROM (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
-            <span class="k">continue</span>
-
-        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">to_file</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">truncate</span><span class="p">()</span>
-            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">rom</span><span class="p">)</span>
-        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Extracted </span><span class="si">{</span><span class="n">to_file</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">rom_md5</span><span class="si">}</span><span class="s2">)...&quot;</span><span class="p">)</span>
-
-
-<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
-    <span class="n">main</span><span class="p">()</span>
-</code></pre>
-</div>
-
-<p>The script above only knows about the ROM hashes for
-the PAL revision of the Bonus Disc, so if you see <code>Unknown ROM (...)</code>,
-don't panic! You can search the MD5 you receive on <a href="https://datomatic.no-intro.org/index.php?page=search&amp;s=64">No Intro</a>
-by filtering on <code>hash-data</code> to discover whether the ROM
-is correct and add the value to <code>ROM_HASHES</code> in the script.</p>
-
-<p>With my Master Quest ROM in hand I can load the game into
-<a href="https://sethmlarson.dev/getting-started-with-gamesir-pocket-taco-iphone-delta-emulator">Delta Emulator</a> and play on my iPhone:</p>
-
-<p><center>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/loz-wind-waker-bonus-disk/loz-oot-master-quest.png" style="border: 2px black solid;" />
-<br /><small><em>Legend of Zelda: Ocarina of Time Master Quest running in the Delta Emulator</em></small>
-</center></p>
-
-<p>I won’t be playing much because I have never played
-Ocarina of Time before and want to play the <a href="https://www.nintendo.com/us/store/products/the-legend-of-zelda-ocarina-of-time-switch-2/">upcoming remake
-for the Nintendo Switch 2</a> with a completely blank slate.
-I’m excited to try one of the most universally acclaimed
-games ever made for the first time soon! :)</p>
-
-<h2>What’s new in the blogroll?</h2>
-
-<p>I <a href="https://sethmlarson.dev/blogroll">publish a blogroll</a> containing links to
-websites that I've enjoyed recently.</p>
-
-<p>Pokémon cards were on the mind the past few weeks! My
-brother is a collector so we've been discussing the
-different artists and sets that he's interested in.
-While I was doing research I came across two websites
-that seemed useful for this: collating <a href="https://pokesymbols.com/tcg/sets">Pokémon set symbols</a>
-and <a href="https://www.artofpkm.com">Pokémon card artwork by artist</a>.
-A comedic graphic design YouTuber
-“Elliot” also published a <a href="https://www.youtube.com/watch?v=p0m5nuygU5w">new video about Pokémon’s
-graphic designs</a> which I found entertaining.</p>
-
-<p>I purchased “<a href="https://swag.htmx.org/en-usd/products/htmx-4-the-game">htmx 4: the game</a>”, the first JavaScript library published
-exclusively to the Nintendo Game Boy platform. The package (hah)
-arrives today and I plan to post about the experience with the
-game and discussing the form factor as a software distribution mechanism,
-look forward to that blog post soon.</p>
-
-<p>I found a <a href="https://gblink.io/">Game Boy Link Cable to internet adapter</a> hardware project
-which looks intriguing if you've got friends
-that are far away that you still want to play Generation 3 Pokémon
-with (<em>Pokémon Emerald forever</em>). This hardware enables trading, battling, record mixing, and
-more by pretending to be your peer in a GBA Link Cable connection.</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 31, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/jul/29/dsf-member-of-the-month-katherine-michel/" class="hover:underline"
-              >DSF member of the month - Katherine &quot;Kati&quot; Michel</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>For July 2026, we welcome Katherine "Kati" Michel as our DSF member of the month! ⭐</p>
-<p><img alt="Kati, with a short haircut and a little smile. She is in front of some buildings." src="https://media.djangoproject.com/blog/images/2026/07/kati-profile.png" /></p>
-<p>Kati is involved in the Django community for many years. She was a DEFNA Director for 8 years and DjangoCon US Website Chair and Co-Chair. She is a DSF member since December 2017!</p>
-<p>You can learn more about Kati by visiting <a href="https://katherinemichel.github.io/">Kati's website</a> and <a href="https://github.com/KatherineMichel">her GitHub Profile</a>.</p>
-<p>Let’s spend some time getting to know Kati better!</p>
-<h2 id="s-can-you-tell-us-a-little-about-yourself-hobbies-education-etc">Can you tell us a little about yourself? (hobbies, education, etc)</h2>
-<p>In 2002, I was living in Lawrence, Kansas and working for government contracts supporting US Citizenship and Immigration Services and the US Department of Education. While working for USCIS, I spoke to tens of thousands of people from around the world, but hadn't seen much of the world myself. In 2009, I decided to move to England and earn a master's degree from Lancaster University Management School. During the program, I was fortunate to have an internship in the IT Change Management Department of Co-operative Financial Services/Britannia Building Society.  </p>
-<p>It feels full circle that I am now a software engineer at JPMorganChase, working in Infrastructure Platforms, Databases Department.  </p>
-<h2 id="s-how-did-you-start-using-django">How did you start using Django?</h2>
-<p>While living in Lawrence, I visited the Lawrence Public Library often. I would sometimes drive past the nearby Lawrence Journal World and had no idea that Django was being invented there.  </p>
-<p>During my internship at CFS/Britannia Building Society in England, I was immersed in technology and loved it. Although it was a tumultuous time due to the subprime mortgage crisis, I was left with an insatiable curiosity about programming. That is how I learned about Django, and I have been using Django ever since.  </p>
-<h2 id="s-what-other-framework-do-you-know-and-if-there-is-anything-you-would-like-to-have-in-django-if-you-had-magical-powers">What other framework do you know and if there is anything you would like to have in Django if you had magical powers?</h2>
-<p>In addition to Python/Django, I work with React.  </p>
-<p>At DjangoCon US 2025, Will Vincent commented during his <a href="https://www.youtube.com/watch?v=zIQZXr6XIU0">talk "Django for AI"</a> that Django "never really 'owned'" the niche of classic Machine Learning models, but should have, because it's great for small and medium ML models. He recently asked Django Project Forum if Django should have an official skills.md like FastAPI now has. These are important conversations to have.  </p>
-<p>If I had magical powers, I would maintain the stability and maturity many Django users celebrate while making targeted enhancements to help it better serve developers who are reaching for FastAPI or JavaScript frameworks first. Providing Django's benefits while meeting the use case is win-win.  </p>
-<p>Django already supports many modern patterns. Clear starter guides and code examples showing how to build a classic ML application, LLM chat bot, async workflows, React/Angular/Vue integration, and APIs, while taking advantage of the benefits Django offers, could help developers discover it better.  </p>
-<p>Marlene Mhangami and Benjamin "Zags" Zagorsky also gave some ideas for how to approach this in their respective DjangoCon US 2025 keynotes.</p>
-<p><em>Author's note: You can watch <a href="https://www.youtube.com/watch?v=VwqFx9Tup0A">Marlene Mhangami's keynote</a> and <a href="https://www.youtube.com/watch?v=7SGqZcrUGSU">Benjamin "Zags" Zagorsky's keynote</a> here.</em> </p>
-<h2 id="s-what-projects-are-you-working-on-now">What projects are you working on now?</h2>
-<p>In my work, I am part of a team building a new on-premises caching service from the ground up. I design distributed system topology, write code for a React UI and Django control plane that orchestrate tasks to provision these distributed systems based on internal customer requirements, create Ansible playbooks to manage the servers, and do Red Hat Enterprise Linux admin. It's not a typical Django use case, but fun and fascinating in its own right.  </p>
-<h2 id="s-which-django-libraries-are-your-favorite-core-or-3rd-party">Which Django libraries are your favorite (core or 3rd party)?</h2>
-<p>I had a website query that was becoming progressively slower as the data in the database grew. I installed <a href="https://github.com/jazzband/django-silk">django-silk</a>, a live profiling and inspection library, diagnosed an N+1 problem, and had an aha moment as I watched the number of SQL queries in the django-silk dashboard greatly reduce with each new addition of a prefetch_related or select_related. It felt like magic. django-silk has been one of my favorite libraries ever since.  </p>
-<p><a href="https://htmx.org/">htmx</a> and <a href="https://github.com/carltongibson/django-template-partials">django-template-partials</a> have been a joy to use together to create AJAX-like web UI functionality directly in HTML, without the need for JavaScript. As of Django 6.0, the Django Template Language now supports template partials. The htmx website has a fun UI Examples page to demo what it can do.  </p>
-<p>I am a fan of <a href="https://github.com/vitalik/django-ninja">django-ninja</a>. I like its use of Pydantic schemas, type hinting, and OpenAPI integration.    </p>
-<h2 id="s-what-are-the-top-three-things-in-django-that-you-like">What are the top three things in Django that you like?</h2>
-<ol>
-<li>
-<p>Django was invented at a newspaper. The Django ORM and admin are arguably its killer feature. Not every popular framework has a built-in ORM and admin that enable users to quickly structure and manage data.  </p>
-</li>
-<li>
-<p>Django's "batteries included" philosophy and rich library ecosystem enable developers to focus on building applications without re-inventing the wheel.  </p>
-</li>
-<li>
-<p>Django has strong security protections out of the box and a mature security policy.  </p>
-</li>
-</ol>
-<h2 id="s-im-curious-how-did-you-started-to-contribute-to-djangocon-us-do-you-have-any-advice-for-someone-who-might-be-considering-joining-the-board-of-directors-if-the-opportunity-arose">I'm curious, how did you started to contribute to DjangoCon US? Do you have any advice for someone who might be considering joining the board of directors if the opportunity arose?</h2>
-<p>While looking through GitHub projects, I stumbled upon the <a href="https://djangocon.us/">DjangoCon US website</a> code. I had a feeling that becoming part of a community like this would be life-changing, and it was. In March of 2016, I began helping with the DjangoCon US 2016 website. It was an invaluable opportunity to learn my way around Git, GitHub, and the website code. 2017 was a very eventful year. I became the DjangoCon US 2017 Website Chair, joined the <a href="https://www.defna.org/">DEFNA</a> Board, and was hired by the web development agency contracted to create the DjangoCon US website.  </p>
-<p>I served as DjangoCon US Website Chair or Co-chair from 2017 to 2021 and DEFNA Board Member from 2017 to 2025, including several years as corporate secretary. Serving on the board gives you the opportunity to manage the higher level details of DjangoCon US, such as budgeting, location selection, contractor procurement, and volunteer oversight. You will also have the opportunity to grow Django outreach across North America, for instance, by awarding event grants. Being on the board was an honor and one of the most rewarding experiences of my life.  </p>
-<p>I've never seen a more practical write-up of how to excel in a board position than former DEFNA President <a href="https://jefftriplett.com/2024/psf-elections-how-i-am-voting/">Jeff Triplett's post "PSF Elections how I am voting."</a>.   </p>
-<h2 id="s-you-have-been-a-speaker-an-organizer-of-djangocon-us-and-a-member-of-defnas-board-of-directors-having-observed-the-conference-from-many-different-perspectives-over-a-period-of-time-how-do-you-think-djangocon-us-has-evolved">You have been a speaker, an organizer of DjangoCon US, and a member of DEFNA’s board of directors. Having observed the conference from many different perspectives over a period of time, how do you think DjangoCon US has evolved?</h2>
-<p>The conference structure has evolved to fit the times and talk subject trends have evolved (async, locality of behavior ecosystem, and AI come to mind), but my favorite evolution of all has been the major improvement in diversity and inclusion over time.  </p>
-<p>DjangoCon US increased the number of talks by women from around 6% in 2010 to nearly 50% in 2016. This was accomplished through intentional outreach. PyLadies and Django Girls have both played a major role.  </p>
-<p>In 2023, the conference was an important platform for the newly formed, self-organized Black Python Devs organization. By one organizer's count, we had around 10 Black speakers, and a Django Girls workshop had a majority of Black participants. In 2024, the conference hosted the Black Python Devs Leadership Summit.  </p>
-<p>From a Django Core perspective, at DjangoCon US 2018, former Django Fellow Carlton Gibson acknowledged that the community had become more diverse than ever, but the core contributors had continued to be white guys. The launch of Djangonaut Space in 2024 by a small group of community members has been a game changer. Djangonaut Space is a highly effective mentorship program that equips its cohort members to contribute to Django and its ecosystem, with a focus on inclusion.  </p>
-<h2 id="s-you-have-been-a-speaker-multiple-times-do-you-have-any-advice-for-someone-considering-starting-speaking-one-day">You have been a speaker multiple times, do you have any advice for someone considering starting speaking one day?</h2>
-<p>My advice to aspiring public speakers is to start with the opportunities you can get and work your way up: give a presentation to your department (do a practice run to colleagues for feedback), give a talk to a local meetup, give a lightning talk at a conference, enlist the help of a talk mentor and submit to a conference CfP (especially those that welcome newcomers - DjangoCon US is one of them), and don't be discouraged by rejections.  </p>
-<p>As a conference attendee, I've seen some incredible speakers. Russell Keith-Magee immediately comes to mind. I appreciate the candor of highly effective public speakers who acknowledge that it is a skill that can be developed. I often remember an anecdote Nina Zakharenko once told. She got her start in public speaking when someone challenged her to do a lightning talk at a conference. She got the microphone caught in her hair during the talk. Years later, she expertly keynoted PyCon US. Don't wait for, or expect perfection.  </p>
-<h2 id="s-after-so-many-times-in-the-django-community-what-makes-you-stay">After so many times in the Django community, what makes you stay?</h2>
-<p>I enjoy the Django tool ecosystem, and the people are wonderful. I have a lot of friends in this community who inspire me and are there for me.  </p>
-<h2 id="s-how-do-you-envision-the-future-of-django-from-your-perspective">How do you envision the future of Django from your perspective?</h2>
-<p>Last year was Django's 20th birthday. I’m optimistic that Django and its community will be thriving 20 years from now.  </p>
-<h2 id="s-do-you-remember-your-first-contribution-to-django-and-in-open-source">Do you remember your first contribution to Django and in open source?</h2>
-<p>At DjangoCon US 2019 sprints, I made my first contribution to Django Core with the help of Carlton Gibson. I added instructions for running tests using <a href="https://github.com/django/django-docker-box">django-docker-box</a>. I would love to contribute to Django again.  </p>
-<h2 id="s-what-are-your-hobbies-or-what-do-you-do-when-youre-not-working">What are your hobbies or what do you do when you’re not working?</h2>
-<p>In my personal time, I love exploring new and interesting places, discovering great food, watching documentaries, and taking photographs.</p>
-<h2 id="s-is-there-anything-else-youd-like-to-say">Is there anything else you’d like to say?</h2>
-<p>Thank you for having me! I really enjoyed this interview.</p>
-<hr />
-<p><strong>Thank you for doing the interview, Kati !</strong></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 29, 2026 09:48 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/jul/29/dsf-member-of-the-month-katherine-michel/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index4.html" class="btn">«</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</button><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index6.html" class="btn">»</a></div></div>
 </div>
@@ -2015,8 +1888,8 @@ more by pretending to be your peer in a GBA Link Cable connection.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8189</a></li>
-    <li><a>Unique Feeds: 369</a></li>
+    <li><a>Total Entries: 8195</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
