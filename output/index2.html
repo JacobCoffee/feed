@@ -502,7 +502,361 @@ bugfix release.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I really having trouble understanding the coordinate system used in <code>QPainter</code>. Can you explain how this works?
+            <blockquote>
+<p>I really having trouble understanding the coordinate system used in <code>QPainter</code>. Can you explain how this works?</p>
+</blockquote>
+<p>If you've started drawing with <code>QPainter</code> in PyQt6, you might have been surprised the first time you drew a line. You pass in coordinates like <code>(10, 10, 300, 200)</code> and the result doesn't look quite like what you'd expect from a math class. That's because <code>QPainter</code> uses a coordinate system where <strong>the origin (0, 0) is in the top-left corner</strong> of the canvas, not the bottom-left.</p>
+<p>This catches a lot of people off guard, so in this tutorial we'll walk through exactly how QPainter coordinates work, how to visualize them, and how to convert between screen coordinates and the mathematical coordinate system you might be more familiar with.</p>
+<h2 id="the-qpainter-coordinate-system">The QPainter coordinate system</h2>
+<p>In most math courses, you learn to plot points on a Cartesian plane where <code>(0, 0)</code> is at the bottom-left. The x-axis increases to the right, and the y-axis increases upward.</p>
+<p>QPainter (and most screen-based graphics systems) does things differently:</p>
+<ul>
+<li><code>(0, 0)</code> is at the <strong>top-left</strong> corner of the drawing surface.</li>
+<li>The <strong>x-axis</strong> increases to the <strong>right</strong> (same as math).</li>
+<li>The <strong>y-axis</strong> increases <strong>downward</strong> (opposite of math).</li>
+</ul>
+<p>This means that as your y value gets larger, you move <em>down</em> the screen, not up. Here's a simple diagram to illustrate:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">(0,0) &amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh► x increases
+  &amp;boxv
+  &amp;boxv
+  &amp;boxv
+  &amp;boxv
+  ▼
+  y increases
+</code></pre>
+</div>
+<p>So when you call <code>painter.drawLine(10, 10, 300, 200)</code>, you're drawing a line from a point near the top-left corner down to a point further right and further <em>down</em> the canvas.</p>
+<h2 id="seeing-it-in-action">Seeing it in action</h2>
+<p>Let's draw a line and annotate the start and end points so you can see exactly where the coordinates land. This complete example creates a small window with a <code>QLabel</code> displaying a <code>QPixmap</code> that we draw onto.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QPainter Coordinates")
+
+        canvas = QPixmap(400, 300)
+        canvas.fill(Qt.white)
+
+        painter = QPainter(canvas)
+
+        # Draw the line.
+        pen = QPen(Qt.blue, 2)
+        painter.setPen(pen)
+        painter.drawLine(10, 10, 300, 200)
+
+        # Annotate the start point.
+        pen = QPen(Qt.red, 6)
+        painter.setPen(pen)
+        painter.drawPoint(10, 10)
+
+        painter.setPen(QPen(Qt.black))
+        painter.setFont(QFont("Arial", 10))
+        painter.drawText(20, 15, "(10, 10)")
+
+        # Annotate the end point.
+        pen = QPen(Qt.red, 6)
+        painter.setPen(pen)
+        painter.drawPoint(300, 200)
+
+        painter.setPen(QPen(Qt.black))
+        painter.drawText(220, 220, "(300, 200)")
+
+        painter.end()
+
+        label = QLabel()
+        label.setPixmap(canvas)
+        self.setCentralWidget(label)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>Run this and you'll see a blue line drawn from near the top-left corner of the canvas down to a point lower and to the right. The red dots and labels mark each endpoint, making it clear that <code>(10, 10)</code> is near the top-left and <code>(300, 200)</code> is toward the bottom-right.</p>
+<p><img alt="QPainter coordinates with annotated points" src="coordinates-annotated.png" /></p>
+<p>This is the expected behavior &mdash; the y-axis points downward.</p>
+<h2 id="why-does-it-work-this-way">Why does it work this way?</h2>
+<p>Screen coordinate systems with the origin at the top-left are a convention inherited from early computer displays, where the electron beam in a CRT monitor scanned from the top-left of the screen, line by line, downward. This convention carried forward into virtually all modern windowing and graphics systems, including Qt.</p>
+<h2 id="converting-from-mathematical-coordinates">Converting from mathematical coordinates</h2>
+<p>If you're working with data that uses standard mathematical coordinates (origin at the bottom-left, y increasing upward), you'll need to convert the y values before drawing. The formula is straightforward:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">y_screen = height - 1 - y_math
+</code></pre>
+</div>
+<p>Where:</p>
+<ul>
+<li><code>y_screen</code> is the y coordinate QPainter expects (origin at top-left).</li>
+<li><code>y_math</code> is the y coordinate in standard math notation (origin at bottom-left).</li>
+<li><code>height</code> is the height of your drawing surface in pixels.</li>
+</ul>
+<p>The <code>- 1</code> is there because pixel coordinates are zero-indexed. A <code>QPixmap</code> with a height of 300 has valid y coordinates from 0 to 299.</p>
+<p>Let's say you have a canvas that's 300 pixels tall, and you want to draw a line from the mathematical point <code>(10, 10)</code> to <code>(300, 200)</code> as if the origin were at the bottom-left. You'd convert each y coordinate:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">height = 300
+
+# Mathematical coordinates.
+x1, y1_math = 10, 10
+x2, y2_math = 300, 200
+
+# Convert y values for screen drawing.
+y1_screen = height - 1 - y1_math  # 300 - 1 - 10 = 289
+y2_screen = height - 1 - y2_math  # 300 - 1 - 200 = 99
+
+painter.drawLine(x1, y1_screen, x2, y2_screen)
+# Equivalent to: painter.drawLine(10, 289, 300, 99)
+</code></pre>
+</div>
+<p>Now the line will go from near the <em>bottom</em>-left upward to the right &mdash; just like you'd expect on a math plot.</p>
+<h2 id="a-helper-function-for-coordinate-conversion">A helper function for coordinate conversion</h2>
+<p>If you're doing a lot of drawing with mathematical coordinates, a small helper function keeps things tidy:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def math_to_screen(x, y, height):
+    """Convert mathematical (bottom-left origin) coordinates
+    to screen (top-left origin) coordinates."""
+    return x, height - 1 - y
+</code></pre>
+</div>
+<p>You can then use it like this:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">x1, y1 = math_to_screen(10, 10, canvas_height)
+x2, y2 = math_to_screen(300, 200, canvas_height)
+painter.drawLine(x1, y1, x2, y2)
+</code></pre>
+</div>
+<h2 id="comparing-both-coordinate-systems-side-by-side">Comparing both coordinate systems side by side</h2>
+<p>This complete example draws the same line using both coordinate systems, so you can see the difference clearly. The left canvas uses QPainter's native coordinates (origin top-left), and the right canvas converts from mathematical coordinates (origin bottom-left).</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import (
+    QApplication, QLabel, QMainWindow, QHBoxLayout, QVBoxLayout, QWidget,
+)
+
+
+def math_to_screen(x, y, height):
+    """Convert mathematical (bottom-left origin) coordinates
+    to screen (top-left origin) coordinates."""
+    return x, height - 1 - y
+
+
+def draw_annotated_line(canvas, x1, y1, x2, y2, label_start, label_end):
+    """Draw a line on a QPixmap with annotated endpoints."""
+    painter = QPainter(canvas)
+
+    # Draw the line.
+    pen = QPen(Qt.blue, 2)
+    painter.setPen(pen)
+    painter.drawLine(x1, y1, x2, y2)
+
+    # Draw and label the start point.
+    painter.setPen(QPen(Qt.red, 6))
+    painter.drawPoint(x1, y1)
+    painter.setPen(QPen(Qt.black))
+    painter.setFont(QFont("Arial", 9))
+    painter.drawText(x1 + 8, y1 + 5, label_start)
+
+    # Draw and label the end point.
+    painter.setPen(QPen(Qt.red, 6))
+    painter.drawPoint(x2, y2)
+    painter.setPen(QPen(Qt.black))
+    painter.drawText(x2 - 80, y2 + 20, label_end)
+
+    painter.end()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Coordinate System Comparison")
+
+        canvas_width = 350
+        canvas_height = 300
+
+        # --- Left canvas: native QPainter coordinates ---
+        canvas_native = QPixmap(canvas_width, canvas_height)
+        canvas_native.fill(Qt.white)
+        draw_annotated_line(
+            canvas_native,
+            10, 10, 300, 200,
+            "(10, 10)", "(300, 200)",
+        )
+
+        label_native = QLabel()
+        label_native.setPixmap(canvas_native)
+
+        title_native = QLabel("Screen coordinates\n(origin top-left)")
+        title_native.setAlignment(Qt.AlignCenter)
+        title_native.setStyleSheet("font-weight: bold;")
+
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(title_native)
+        left_layout.addWidget(label_native)
+
+        # --- Right canvas: mathematical coordinates converted ---
+        canvas_math = QPixmap(canvas_width, canvas_height)
+        canvas_math.fill(Qt.white)
+
+        sx1, sy1 = math_to_screen(10, 10, canvas_height)
+        sx2, sy2 = math_to_screen(300, 200, canvas_height)
+        draw_annotated_line(
+            canvas_math,
+            sx1, sy1, sx2, sy2,
+            f"math(10,10) &rarr; screen({sx1},{sy1})",
+            f"math(300,200) &rarr; screen({sx2},{sy2})",
+        )
+
+        label_math = QLabel()
+        label_math.setPixmap(canvas_math)
+
+        title_math = QLabel("Math coordinates converted\n(origin bottom-left)")
+        title_math.setAlignment(Qt.AlignCenter)
+        title_math.setStyleSheet("font-weight: bold;")
+
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(title_math)
+        right_layout.addWidget(label_math)
+
+        # --- Combine both sides ---
+        main_layout = QHBoxLayout()
+        main_layout.addLayout(left_layout)
+        main_layout.addLayout(right_layout)
+
+        container = QWidget()
+        container.setLayout(main_layout)
+        self.setCentralWidget(container)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>When you run this, you'll see two canvases side by side. On the left, the line slopes downward from the top-left, which is what QPainter naturally produces. On the right, the same mathematical coordinates have been converted, so the line slopes upward from the bottom-left &mdash; matching what you'd see on a standard math plot.</p>
+<h2 id="drawing-axes-to-orient-yourself">Drawing axes to orient yourself</h2>
+<p>When you're experimenting with coordinates, it can help to draw a simple set of axes on your canvas. Here's a quick helper that draws x and y axes with the origin marked:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow
+
+
+def draw_axes(painter, width, height):
+    """Draw simple x and y axes with labels."""
+    painter.setPen(QPen(Qt.gray, 1, Qt.DashLine))
+
+    # X-axis along the top (y=0).
+    painter.drawLine(0, 0, width - 1, 0)
+
+    # Y-axis along the left (x=0).
+    painter.drawLine(0, 0, 0, height - 1)
+
+    # Label the origin.
+    painter.setPen(QPen(Qt.darkGray))
+    painter.setFont(QFont("Arial", 8))
+    painter.drawText(5, 15, "(0, 0)")
+
+    # Label the x direction.
+    painter.drawText(width - 60, 15, f"x &rarr; ({width - 1})")
+
+    # Label the y direction.
+    painter.save()
+    painter.translate(15, height - 10)
+    painter.drawText(0, 0, f"y &darr; ({height - 1})")
+    painter.restore()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QPainter Axes")
+
+        canvas_width = 400
+        canvas_height = 300
+
+        canvas = QPixmap(canvas_width, canvas_height)
+        canvas.fill(Qt.white)
+
+        painter = QPainter(canvas)
+        draw_axes(painter, canvas_width, canvas_height)
+
+        # Draw some points to see where they land.
+        points = [
+            (50, 50),
+            (200, 150),
+            (350, 250),
+            (350, 50),
+            (50, 250),
+        ]
+
+        painter.setPen(QPen(Qt.red, 6))
+        for x, y in points:
+            painter.drawPoint(x, y)
+
+        painter.setPen(QPen(Qt.black))
+        painter.setFont(QFont("Arial", 9))
+        for x, y in points:
+            painter.drawText(x + 6, y - 6, f"({x}, {y})")
+
+        painter.end()
+
+        label = QLabel()
+        label.setPixmap(canvas)
+        self.setCentralWidget(label)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>This draws the axes along the top and left edges of the canvas and plots several points with their coordinates labeled. It's a great way to build intuition about where things will appear.</p>
+<h2 id="valid-coordinate-ranges">Valid coordinate ranges</h2>
+<p>One more thing to keep in mind: pixel coordinates on a <code>QPixmap</code> are zero-indexed. If you create a pixmap with:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">canvas = QPixmap(400, 300)
+</code></pre>
+</div>
+<p>Then the valid coordinate ranges are:</p>
+<ul>
+<li><strong>x</strong>: 0 to 399 (that's <code>width - 1</code>)</li>
+<li><strong>y</strong>: 0 to 299 (that's <code>height - 1</code>)</li>
+</ul>
+<p>Drawing outside these ranges won't cause an error, but anything beyond the edges simply won't be visible.</p>
+<h2 id="summary">Summary</h2>
+<p>The QPainter coordinate system places <code>(0, 0)</code> at the top-left of the drawing surface, with x increasing to the right and y increasing downward. This is standard across virtually all screen-based graphics systems.</p>
+<p>If you need to work with mathematical coordinates where <code>(0, 0)</code> is at the bottom-left and y increases upward, you can convert using the formula:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">y_screen = height - 1 - y_math
+</code></pre>
+</div>
+<p>Once you've internalized this, drawing with QPainter becomes predictable. When in doubt, drop some annotated points on your canvas &mdash; seeing the coordinates labeled right next to the dots is the fastest way to confirm everything is landing where you expect.</p>
+<p>For more details on Qt's coordinate system, take a look at the <a href="https://doc.qt.io/qt-5/coordsys.html">official Qt coordinate system documentation</a>.</p>
           </p>
         </div>
 
@@ -1250,8 +1604,8 @@ look around for solutions to this issue before buying.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.paulox.net/2026/08/31/my-djangocon-us-2026/" class="hover:underline"
-              >My DjangoCon US 2026</a
+            <a href="https://www.djangoproject.com/weblog/2026/aug/28/django-developers-survey-2026-results/" class="hover:underline"
+              >Django Developers Survey 2026 results</a
             >
           </h2>
           
@@ -1260,20 +1614,23 @@ look around for solutions to this issue before buying.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <p>My DjangoCon <span class="caps">US</span> 2026 experience in Chicago, captured through Mastodon posts about talks, my <span class="caps">UUID</span> talk, Django community activities, people, and moments along the&nbsp;way.</p>
+            <p>The results from the <a href="https://lp.jetbrains.com/django-developer-survey-2026/">2026 Django Developers Survey</a> are now available. This is the fifth annual report conducted from May to July 2026 by the <a href="https://www.djangoproject.com/foundation/">Django Software Foundation</a> in collaboration with <a href="https://www.jetbrains.com/pycharm/">JetBrains PyCharm</a>.</p>
+<p>The full report includes infographics, quotes, and dedicated sections so you can easily navigate the results. There is also a <a href="https://blog.jetbrains.com/pycharm/2026/08/the-state-of-django-2026-boring-is-so-back/">The State of Django 2026: Boring is so back</a> blog post highlighting key Django trends in 2026 and actionable ideas for your own Django development.</p>
+<p><img alt="PyCharm Django - Get PyCharm at 30% off, and support Django!" src="https://media.djangoproject.com/blog/images/2026/08/jetbrains-fall-2026-resized.png" /></p>
+<p>The <a href="https://djangochat.com/episodes/django-developers-survey-2026">Django Chat podcast</a> also covers the survey in a special summer episode, from Django 6.1 and HTMX to async, AI, deployment, testing, and Python tooling.</p>
           </p>
         </div>
 
         <!-- Footer Section -->
         <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
           <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 30, 2026 10:00 PM UTC by
-            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
-              >Paolo Melchiorre</a
+            Posted on August 28, 2026 02:55 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
             >
           </div>
           <a
-            href="https://www.paulox.net/2026/08/31/my-djangocon-us-2026/"
+            href="https://www.djangoproject.com/weblog/2026/aug/28/django-developers-survey-2026-results/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1293,8 +1650,8 @@ look around for solutions to this issue before buying.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8387</a></li>
-    <li><a>Unique Feeds: 375</a></li>
+    <li><a>Total Entries: 8288</a></li>
+    <li><a>Unique Feeds: 374</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
