@@ -53,6 +53,264 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.b-list.org/weblog/2026/aug/10/newlines/" class="hover:underline"
+              >Breaking up (lines) is hard to do</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Here’s a seemingly simple question: given a chunk of multi-line text, how do you split it and return an array whose members are the constituent lines of the&nbsp;text?</p>
+<p>Hopefully, your first instinct is to reach for some sort of standard-library function, maybe something like&nbsp;the <code>splitlines()</code> method of&nbsp;Python’s <code>str</code> type. Because it turns out this “simple” question is actually pretty complex to answer! For example, quite some time ago I read <a href="https://yossarian.net/til/post/python-s-splitlines-does-a-lot-more-than-just-newlines/">a post by William Woodruff</a> pointing out the surprising discovery that Python treats up to eleven different Unicode code points or code point sequences as indicating a line&nbsp;break.</p>
+<p>At the time I meant to write about that, but a lot of other things started fighting for my time, and it’s only now that I’m finally digging it out of my drafts. Still, better late than never, so today let’s dig into some of the many ways there are to break a line of text and how they&#8217;ve been standardized and specified and ultimately wound up in the set Python&nbsp;uses.</p>
+<h2>In the&nbsp;beginning&#8230;</h2>
+<p>Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. Of course there were other things before <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, and alongside <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>, but for today’s discussion we really only need to go back to <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>; if you want the full history of physical teletypes, how they evolved from typewriters and influenced character sets for computing and so on, I suggest Wikipedia. Here, I’m just going to gloss over and simplify a lot of that to focus on the topic at&nbsp;hand.</p>
+<p>So. Once upon a time, there was <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>. And it wound up being incredibly influential and important in computing, to an extent other early character sets couldn’t match. And because it was used on computers which used teletypes (basically electronic typewriters connected as input/output devices) as a user interface, it contained control characters for sending commands to the teletype. Such as&nbsp;a <code>LINE FEED</code> (byte&nbsp;value <code>0x0A</code>) to advance the paper vertically to the next line, and&nbsp;a <code>CARRIAGE RETURN</code> (byte&nbsp;value <code>0x0D</code>) to re-align the print head/carriage with the horizontal start point of the&nbsp;line.</p>
+<p>These are often&nbsp;abbreviated <code>LF</code> and <code>CR</code> (or by their C-family escape&nbsp;sequences <code>\n</code> and <code>\r</code>, respectively), and you might think that since physically advancing a typewriter-style device to be ready to print the next line requires both operations, that would have just become the universal way everybody did new lines. Or at least the universal way everybody did them in English, or in the <span class="caps">US</span>, where <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> dominated.&nbsp;Right?</p>
+<p>Well, nothing is ever that simple. Physical teletypes apparently benefited from the two-character approach (as opposed to a single “new line” character) because it gave them time to physically move everything into the right position. But as <em>virtual</em> teletypes&#8212;“printing” to a television-like display instead of to paper&#8212;became more common, that was less of an issue. So there were multiple possible options for representing line breaks, and several of them showed up in historical systems. For&nbsp;example:</p>
+<ul>
+<li><span class="caps">CP</span>/M&nbsp;used <code>CR LF</code>. And so <span class="caps">MS</span>-<span class="caps">DOS</span>, which aimed for compatibility with it,&nbsp;used <code>CR LF</code> too. And so Microsoft Windows, which wanted to be compatible with <span class="caps">MS</span>-<span class="caps">DOS</span>, <em>also</em> used&nbsp;it.</li>
+<li>Meanwhile, Multics chose to use&nbsp;just <code>LF</code> with&nbsp;no <code>CR</code>, and Unix went along with that&nbsp;choice.</li>
+<li>But Commodore and Apple and many others went yet another way and used&nbsp;plain <code>CR</code> , with&nbsp;no <code>LF</code>.</li>
+</ul>
+<p>This meant “plain text” was not easily portable between these various systems, since none of them could agree on how to represent a line break. Which led to one of my all-time favorite programming jokes, in the infamous <a href="https://xml.coverpages.org/sgmlFAQ-NOT-19990401.html">“<span class="caps">NOT</span>&nbsp;the <code>comp.text.sgml</code> <span class="caps">FAQ</span>”</a>&nbsp;document:</p>
+<blockquote>
+<p>Q.  What&#8217;s an <span class="caps">RE</span>?</p>
+<p>A.  <span class="caps">RE</span> is an acronym for Record End, which is sort of like a newline, only different. Goldfarb&#8217;s First Law of Text Processing states&nbsp;that:</p>
+<blockquote>
+<p><span class="dquo">&#8220;</span>&#8230; if a text processing system has bugs, at least one of them will have to do with the handling of input line&nbsp;endings.&#8221;</p>
+<p>[The Handbook, footnote p.&nbsp;321]</p>
+</blockquote>
+<p>The Record End concept was introduced to make sure that <abbr title="Standard Generalized Markup Language"><span class="caps">SGML</span></abbr> parsers don&#8217;t violate Goldfarb&#8217;s First&nbsp;Law.</p>
+</blockquote>
+<p>(for the uninitiated, <a href="https://en.wikipedia.org/wiki/Charles_Goldfarb">Charles Goldfarb</a> created <abbr title="Standard Generalized Markup Language"><span class="caps">SGML</span></abbr>)</p>
+<p>Anyway, over twenty years ago Python tried (in Python 2.3) to smooth this over by introducing <a href="https://peps.python.org/pep-0278/">“universal newline” mode</a> for opening files, which accepts all three options: a&nbsp;plain <code>\n</code> (Unix), or a&nbsp;plain <code>\r</code> (classic Mac), or&nbsp;an <code>\r\n</code> sequence (<span class="caps">DOS</span> and Windows) will all be interpreted as line&nbsp;breaks.</p>
+<p>But even in <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> there there are other ways of breaking a line. For example, at byte&nbsp;value <code>0x0C</code> <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> includes&nbsp;the <code>FORM FEED</code> control character&nbsp;(<code>FF</code>,&nbsp;or <code>\f</code>). Which is not one of the traditional characters used by major operating systems as a “newline”, but nonetheless does cause a new line to occur: it moves to the next page (if necessary, by ejecting the current sheet of paper from the printer and feeding in a new one). And there’s&nbsp;also <code>0x0B</code>, <code>VERTICAL TAB</code> (<code>VT</code> or <code>\v</code>): just as a “regular” tab&nbsp;(<code>\t</code>) causes a horizontal adjustment, a vertical tab causes a vertical one. So it, too, causes output to advance to another line (probably skipping several in the&nbsp;process).</p>
+<p>And <a href="https://en.wikipedia.org/wiki/C0_and_C1_control_codes#C1_controls">the C1 control characters</a>&nbsp;added <code>0x85</code>,&nbsp;the <code>NEXT LINE</code> character (typically&nbsp;abbreviated <code>NEL</code>), useful for translating back and forth between <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> and <span class="caps">IBM</span>’s <span class="caps">EBCDIC</span> character set (which had “New Line” as a single&nbsp;character).</p>
+<h2>Then Unicode&nbsp;happened</h2>
+<p>Today we live in a Unicode world, and Unicode tries its hardest to catalog and standardize and describe how to work with all the world’s writing systems. <a href="https://www.unicode.org/versions/Unicode17.0.0/core-spec/chapter-5/#G10213">Chapter 5, Section 8 of the Unicode Standard, “Newline Guidelines”</a>, lists seven code points to recognize as causing new lines. Five of them we’ve seen&nbsp;already:</p>
+<ul>
+<li><code>U+000A LINE FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000B LINE TABULATION</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>’s vertical&nbsp;tab</li>
+<li><code>U+000C FORM FEED</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+000D CARRIAGE RETURN</code>, from <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr></li>
+<li><code>U+0085 NEXT LINE</code>, from the C1 control&nbsp;codes</li>
+</ul>
+<p>The <code>CR LF</code> sequence is also recognized, on systems which use&nbsp;it.</p>
+<p>But the other two code points are new and were created specifically for&nbsp;Unicode:</p>
+<ul>
+<li><code>U+2028 LINE SEPARATOR</code> (which Unicode likes to abbreviate&nbsp;as <code>LS</code>)</li>
+<li><code>U+2029 PARAGRAPH SEPARATOR</code> (similarly abbreviated&nbsp;as <code>PS</code>)</li>
+</ul>
+<p>The Unicode Standard explains that the traditional newline characters had started to become ambiguous, because of the rise of tools such as word-processing programs which implicitly broke lines to wrap them for display and so began using explicit “newline” characters to mean a <em>paragraph</em> break rather than a line break. So Unicode <a href="https://xkcd.com/927/">added two new code points</a> whose purposes are explicit. And the standard says that “[I]n Unicode text, the <span class="caps">PS</span> and <span class="caps">LS</span> characters should be used wherever the desired function is&nbsp;unambiguous.”</p>
+<p>This set of line-breaking code points originated in version 5.0 of Unicode, with <a href="https://www.unicode.org/standard/reports/tr13/tr13-5.html">Unicode Technical Report #13</a>, which lists the seven “newline” code points and&nbsp;the <code>CR LF</code> sequence. This is also the set of code points and sequences defined for <a href="https://www.unicode.org/reports/tr18/#Line_Boundaries">line boundaries in Unicode regular expressions, Unicode Technical Standard #18</a>.</p>
+<p>And expanding on Chapter 5 of the Standard, there&#8217;s <a href="https://www.unicode.org/reports/tr14/">Unicode Standard Annex #14, “Unicode Line Breaking Algorithm”</a>. As the name implies, this document formally specifies the line-breaking algorithm for Unicode, including defining things like which characters offer an opportunity to break a line, whether the break is mandatory, and whether the break would come before or after the character in question. It does this in a typical Unicode way: by <a href="https://www.unicode.org/reports/tr14/#DescriptionOfProperties">defining a set of named properties</a> and specifying which characters have which&nbsp;properties.</p>
+<h2>Two ways about&nbsp;it</h2>
+<p>But there are still three “newline” characters supported by Python that we haven’t seen yet, and they come from a place that might be surprising: <a href="https://www.unicode.org/reports/tr9/">Unicode Standard Annex #9, the bidirectional algorithm</a>. And it’s <span class="caps">OK</span> if you’re wondering what that has to do with newlines, because it’s not immediately obvious if you don’t already know about&nbsp;it.</p>
+<p>Some written scripts, like the Latin script this blog post is written in, are written and read left-to-right: the start of a line of text is on the left-hand side, and the end is on the right-hand side. Other scripts, such as Arabic or Hebrew, do the opposite, and are right-to-left. And so Unicode, which again wants to cover <em>all</em> the world’s writing systems and let you use any or all of them, has to support both left-to-right and right-to-left horizontal text&nbsp;direction.</p>
+<p>But more than that, it has to support switching direction within a single piece of text. You might have something that’s in, say, Arabic but quotes something in Spanish in the middle of a line; that would require a short section of left-to-right inside an otherwise right-to-left text. Or you might be writing something that uses <a href="https://en.wikipedia.org/wiki/Boustrophedon">boustrophedon</a>, switching directions on each line. So Unicode includes direction-control characters&nbsp;like <code>U+200E LEFT-TO-RIGHT MARK</code> and <code>U+200F RIGHT-TO-LEFT MARK</code> to handle this. But it also needs to know the scope of a direction change, and that’s where the last “newline” characters come in: the Unicode bidirectional algorithm says that “[t]he effects of all of these formatting characters are limited to the current paragraph; thus, they are terminated by a <em>paragraph separator</em>”.</p>
+<p>So Unicode characters have, among their properties, a “bidirectional class” which influences how they affect the bidirectional algorithm. And the characters which act as paragraph separators for purposes of ending the effects of an explicit directional marker all share a common value for this: bidirectional&nbsp;class <code>B</code>. The characters with that class include quite a few that we’ve already seen, along with three more&nbsp;characters:</p>
+<ul>
+<li><code>U+001C INFORMATION SEPARATOR FOUR</code></li>
+<li><code>U+001D INFORMATION SEPARATOR THREE</code></li>
+<li><code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>But these are better known by their original <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr>&nbsp;names: <code>FILE SEPARATOR</code>, <code>GROUP SEPARATOR</code>,&nbsp;and <code>RECORD SEPARATOR</code>. <abbr title="American Standard Code for Information Interchange"><span class="caps">ASCII</span></abbr> provided these to help represent data structures in memory and on storage media. Today it’s not as common to try to use control characters for this purpose, though they do have the virtue of being rare in actual text, unlike other common delimiters such as <a href="https://en.wikipedia.org/wiki/Tab-separated_values">tab</a> or <a href="https://en.wikipedia.org/wiki/Comma-separated_values">comma</a>.</p>
+<h2>End of the&nbsp;line</h2>
+<p>And now, after looking at multiple character sets and five Unicode technical documents, we can finally state clearly what’s going on in&nbsp;Python.</p>
+<p>Python’s <code>splitlines()</code> treats ten different code points, and one multi-code-point sequence, as causing a line break. These&nbsp;are:</p>
+<ul>
+<li>The&nbsp;sequence <code>U+000D U+000A</code> (<code>CR LF</code>).</li>
+<li>The four code points which have line-breaking&nbsp;property <code>BK</code> (Mandatory Break&nbsp;(Non-tailorable)): <code>U+000B LINE TABULATION</code> , <code>U+000C    FORM FEED</code>, <code>U+2028 LINE SEPARATOR</code>,&nbsp;and <code>U+2029 PARAGRAPH SEPARATOR</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>CR</code> (Carriage Return&nbsp;(Non-tailorable)): <code>U+000D CARRIAGE RETURN</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>LF</code> (Line Feed&nbsp;(Non-tailorable)): <code>U+000A LINE FEED</code>.</li>
+<li>The one code point which has line-breaking&nbsp;property <code>NL</code> (Next Line&nbsp;(Non-tailorable)): <code>U+0085 NEXT LINE</code>.</li>
+<li>The three code points which don’t have any of the above line-breaking properties, but do have bidirectional&nbsp;property <code>B</code>:  <code>U+001C INFORMATION SEPARATOR FOUR</code>, <code>U+001D INFORMATION SEPARATOR THREE</code>,&nbsp;and <code>U+001E INFORMATION SEPARATOR TWO</code></li>
+</ul>
+<p>Which is also exactly what’s stated by <a href="https://github.com/python/cpython/blob/87b120fdb58afd8f7cb79daa87122334e295b70c/Objects/unicodetype_db.h#L6583">a comment in the CPython source code</a> accompanying the list of individual code points that are considered to break lines, but hopefully now you have a better understanding of what that comment means and how this particular set was arrived&nbsp;at.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 06:06 PM UTC by
+            <a href="https://www.b-list.org/feeds/entries/" class="link link-hover text-primary"
+              >James Bennett</a
+            >
+          </div>
+          <a
+            href="https://www.b-list.org/weblog/2026/aug/10/newlines/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://talkpython.fm/episodes/show/558/hyper-personal-software-with-python" class="hover:underline"
+              >#558: Hyper-Personal Software with Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Every company has one. The little internal tool that Jane built back in 2021, and then Jane left. Nobody understands it, nobody will touch it. There are two unwritten rules around it: don't change it, it's working. And if you break it, you bought it. That's dark-matter enterprise software. For every app you can actually see, there are ten of these sitting in the shadows, frozen. Michael Booth thinks that just changed. He read my article on hyper-personal software and ran with it, writing about hyper-team software: small teams inside big companies finally building the tools that were never going to get built. We cover where this works, where it quietly goes wrong, and the guardrails that keep it from turning into a mess. Let's get into it.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 01:21 PM UTC by
+            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
+              >Talk Python to Me</a
+            >
+          </div>
+          <a
+            href="https://talkpython.fm/episodes/show/558/hyper-personal-software-with-python"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/aug/10/annual-release-cycle/" class="hover:underline"
+              >Django is moving to an annual release cycle</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Django's Steering Council has accepted the Django Enhancement Proposal <a href="https://github.com/django/deps/blob/main/accepted/0020-annual-release-cycle.rst">DEP
+20</a> to move Django to an annual release cycle. From January 2028, Django
+will make one feature release a year, giving every feature release the
+LTS-level three years of support, and version numbers will carry the feature
+release year: Django 2028, then Django 2029, and so on.</p>
+<h2 id="s-better-python-support">Better Python support</h2>
+<p>Python releases annually, each October. Django's eight-month cycle hasn't fit
+that well: LTS releases carried a wide Python matrix, including versions long
+past their upstream end-of-life.</p>
+<p>Under the new cycle, each Django version supports the three latest Python
+versions at release, and picks up the new Python version during its first year.
+Django's support window ends in step with its oldest supported Python.</p>
+<h2 id="s-every-release-is-an-lts">Every release is an LTS</h2>
+<p>Every feature release gets three years of support: one year of mainstream
+bugfixes, then two years of security and data-loss fixes. The "LTS" label is
+retired — every feature release now carries that same, unique commitment.</p>
+<p>No more LTS gap: no racing a deadline to jump two years of changes at once.
+Upgrade one year at a time, whenever suits you within the support window. Three
+versions are supported at any time, giving third-party packages a clear,
+rolling target.</p>
+<p>API stability and deprecation policies are unchanged — deprecation periods
+actually get longer in calendar terms.</p>
+<h2 id="s-transition-timeline">Transition timeline</h2>
+<p>Django 2028 will be the first release under the new cycle.</p>
+<table>
+<thead>
+<tr>
+<th>Release</th>
+<th>Date</th>
+<th>End of mainstream support</th>
+<th>End of extended support</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Django 6.1</td>
+<td>August 2026</td>
+<td>April 2027</td>
+<td>December 2027</td>
+</tr>
+<tr>
+<td>Django 6.2 LTS</td>
+<td>April 2027</td>
+<td>December 2027</td>
+<td>April 2030</td>
+</tr>
+<tr>
+<td>Django 2028</td>
+<td>January 2028</td>
+<td>January 2029</td>
+<td>January 2031</td>
+</tr>
+<tr>
+<td>Django 2029</td>
+<td>January 2029</td>
+<td>January 2030</td>
+<td>January 2032</td>
+</tr>
+<tr>
+<td>Django 2030</td>
+<td>January 2030</td>
+<td>January 2031</td>
+<td>January 2033</td>
+</tr>
+</tbody>
+</table>
+<p>Nothing changes before 2028. Support commitments for Django 5.2 LTS and 6.2
+LTS stand as made.</p>
+<h2 id="s-read-the-dep">Read the DEP</h2>
+<p><a href="https://github.com/django/deps/blob/main/accepted/0020-annual-release-cycle.rst">DEP 20</a> has the full specification and the reasoning behind each
+decision. Thanks to everyone who took part in the discussion, and to the
+Steering Council for its consideration.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 10, 2026 09:00 AM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/aug/10/annual-release-cycle/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://nedbatchelder.com/blog/202608/callerspecific_coverage" class="hover:underline"
               >Caller-specific coverage</a
             >
@@ -899,6 +1157,48 @@ convo = ConversationalTestCase(
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/" class="hover:underline"
+              >OMI Audio extension for glTF</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Another OMI-based extension, this time for positional audio mixing. Again, Claude-coded, using the OMI/KHR audio extensions for glTF as the base model and then implementing the actual mixing using Numpy. Supports mp3, wav, opus and flac inputs and stereo (headset) outputs. Up on github as <a href="https://github.com/mcfletch/omi_audio">omi_audio</a> and on PyPI as <a href="https://pypi.org/project/omi-audio/">omi_audio</a> as well.</p>
+
+<p>This is loosely the same model as Web Audio's Panner Node. The only significant difference from the KHR extension is that we also support VRML97 style double-ellipse emitter. The package delegates file retrieval to the application, and doesn't include any special effects or the like.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on August 02, 2026 04:06 PM UTC by
+            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
+              >Mike C. Fletcher</a
+            >
+          </div>
+          <a
+            href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/557/security-of-everything-at-pycon-2026" class="hover:underline"
               >#557: Security of everything at PyCon 2026</a
             >
@@ -1688,212 +1988,6 @@ But first, let's talk about why we can't always use a set or a dictionary instea
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2026/07/announcing-2026-psf-grants-program.html" class="hover:underline"
-              >Announcing a 2026 PSF Grants Program Funding Round</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>The Python Software Foundation (PSF) is excited to announce a 2026 <a href="https://www.python.org/psf/grants/" target="_blank">PSF Grants Program</a>&nbsp;funding round. This is not a full reopening of the Grants Program as it existed before. Rather, it's what the PSF is able to sustainably offer right now, given where we stand financially and operationally. The PSF Board, PSF Staff, and PSF Grants Work Group (GWG) are deeply passionate about the program and understand how important it is to the Python community. It’s our honor to have the opportunity to disburse grant funding in 2026.&nbsp;<br /><br />In keeping with our focus on sustainability, this round of grant funding has a set budget capped at $90,000 USD, a limited scope, and a different structure and timeline for applying and reviewing. <b>We will be accepting applications from August 4 - 25 AoE, for Conferences and Workshops that are scheduled between December 1, 2026, and April 30, 2027.</b> Our top priority is getting available funds to the regional communities who need it most: those who have had to pause their events and initiatives because of lack of funding from PSF Grants or loss of sponsors.<br /></p><h2 style="text-align: left;">Context</h2><p>As folks following along with the PSF may remember, <a href="https://pyfound.blogspot.com/2025/10/connecting-the-dots.html" target="_blank">the last couple of years have been financially challenging</a>, with the PSF’s assets and yearly revenue declining and costs increasing across the board. At the same time, the demand for our work has continued to multiply. Making the decision to <a href="https://pyfound.blogspot.com/2025/08/the-psf-has-paused-our-grants-program.html" target="_blank">pause the Grants Program last year was difficult</a>, but a necessary step to protect both the future of the program and the short- and long-term sustainability of the PSF.&nbsp;<br /><br />The PSF acknowledges the pause created challenging situations for the many community groups that had planned to apply for the grants program. We also recognize and appreciate the community's support—both in response to the announcement of the pause and through the outstanding results of the 2025 end-of-year fundraiser.&nbsp;<br /><br />The Python community showed up with understanding and solidarity when the pause happened and helped us come up with ideas on how the PSF could serve the community in non-financial ways. Those ideas were the seeds that grew into the <a href="https://www.python.org/psf/community-partners/" target="_blank">PSF Community Partner Program</a>, a non-monetary partnership offered to qualifying applicants. This program assists Community Partners by attaching the PSF name to the event or initiative, which lends credibility, helps attract sponsors, and provides promotional support through reposts on PSF social media accounts.<br /></p><h2 style="text-align: left;">Funding Round Eligibility, Caps, and Criteria</h2><h3 style="text-align: left;">Eligibility Timeframe</h3><p><b>The 2026 Grants Program Funding Round will be narrowly scoped to Conferences and Workshops of all types that are scheduled between December 1, 2026, and April 30, 2027.</b> If all goes well, the PSF intends to run future rounds of funding, so please do not be discouraged if your event doesn’t fit within this time frame. This time frame reflects the PSF's current finances, our staff capacity, and our goal of getting funds to recipients while they're useful.<br /><br />Categories of grants that will be considered (includes virtual):<br /></p><ul style="text-align: left;"><li><b>Conferences. </b>One or more days of conference programming, with at least 60% Python content.</li><li><b>Workshops (Python-related, PyLadies, and DjangoGirls).</b> One or more days of workshop programming, with at least 6 hours per day of instruction.</li></ul><p>The PSF also wants to acknowledge that this timeframe may exclude some events and initiatives that also missed out on funding in 2025. Please know exclusion is not our intent. If we are able to offer later rounds, we plan to prioritize events and initiatives that missed out on funding in 2025 and 2026 due to the timing windows. Getting the program back up and running is a lot of work for our small team, and we have experienced significant staffing changes in the last year. These changes have made it harder to keep pace with our regular activities, let alone get the Grants Program up and running again. What felt the most important was getting at least some funds out, even if we couldn’t kick the program off right at the same time of year it was paused last year.&nbsp;<br /></p><h3 style="text-align: left;">Adjustments to Grant Category Caps</h3><p><b>The 2026 Grants Program Funding Round will adjust the cap for Conference type grants down to $2,000 USD and maintain the Workshop type grant cap at $1,500 USD.</b> This change reflects a focus on supporting hyper-local communities that had to halt their activities due to the PSF Grants Program pause.&nbsp;<br /><br />The PSF has observed, through social media, Grants Program Office Hours, and informal conversations, that many large and long-standing international PyCons are still taking place without PSF Grants, while workshops and smaller regional initiatives have completely paused or slowed down significantly. Based on these observations, the PSF estimates that $1,500 will make an impact for those workshops and $2000 could help fill in some gaps in PyCon budgets. Our hope is to empower as many groups as possible with this round of funding.&nbsp;<br /><br />Please note that the caps are the <b>maximum amount</b> applicants can request. If you don’t need that amount, please ask for less. The guidelines the Grants Work Group observes are generally as follows:<br /></p><ul style="text-align: left;"><li>Conferences: Up to $15 USD per attendee per day.</li><li>Workshops: Up to $25 USD per student per day.</li></ul><h3 style="text-align: left;">Notes on Scope, Criteria, and Communication</h3><p><b>The PSF wants to highlight that consolidated grant types will not be considered during the 2026 Grants Funding Round.</b> While this was a great addition for when the Grants Program was running on a rolling basis, for this limited funding round, the PSF Grants Work Group needs to look at applications on a singular level. We ask that communities that previously submitted consolidated grants submit individual applications for up to 5 conferences or workshops that are scheduled to take place during the eligibility timeframe.<br /><br /><b>All previous criteria and guidelines for the PSF Grants Program will be applied to this funding round. </b>This post won’t go over every single piece of information required on the application, but we want to highlight a couple of things:<br /></p><ul style="text-align: left;"><li><b>If the applicant has received a grant in the past for a different event, or the event itself has received a grant, a report must be submitted via our <a href="https://forms.gle/wjYnCFBoRK16SpUu8" target="_blank">grant reporting form</a>. </b>This is a hard requirement due to our status as a charity based in the US, as our grant awards must be auditable to the best of our ability. We do our best to make this as small a burden on grant recipients as possible.&nbsp;</li><li><b>The applying event or initiative must have a Code of Conduct and reporting mechanism prominently displayed on your event’s website.</b> Part of the PSF’s mission is to support and facilitate a diverse and international community of Python programmers, which means that it is essential for our grant recipients to have an enforceable Code of Conduct. If your event or workshop does not have a Code of Conduct or reporting mechanism, check out o<a href="https://policies.python.org/python.org/code-of-conduct/Best-Practices/" target="_blank">ur event Code of Conduct best practices documentation</a>.</li><li>We are unable to provide grant funding for:</li><ul><li>Personal travel requests</li><li>Hackathons</li><li>T-shirts, swag, giveaways, and prizes</li><li>Events and initiatives unrelated to Python or the PSF’s charitable mission</li></ul></ul><h2 style="text-align: left;">Grants Funding Round Schedule</h2><p>Listed in the table below is the anticipated schedule for the 2026 PSF Grants Program Funding Round. The timeline is tight (applications open next week!), but our team hopes that three weeks to get applications in is reasonable and accommodates events and initiatives that fall in the eligibility timeframe.&nbsp;<br />
-</p><div class="table">
-  <table>
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>Phase</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>August 4 - 25 AoE</td>
-        <td>Application</td>
-        <td>Applications open; PSF Staff performs initial reviews as applications are received; any missing information is collected</td>
-      </tr>
-      <tr>
-        <td>August 25 - September 11</td>
-        <td>Review</td>
-        <td>Grants Work Group review; clarifying information collected as needed; Grants Work Group votes</td>
-      </tr>
-      <tr>
-        <td>September 14</td>
-        <td>Decision</td>
-        <td>Decisions communicated to all applicants</td>
-      </tr>
-      <tr>
-        <td>September 14 and onwards</td>
-        <td>Disbursement</td>
-        <td>Funds disbursed</td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-
-  
-<p></p><p>After things kick off, the PSF may need to adjust dates by a couple days here and there. This program is dependent on just a couple of staff (Hi, Marie and Laura!) and our wonderful Grants Work Group (Thank you, team!) that is composed of volunteers. If dates need to be adjusted, we will be sure to communicate that in multiple places (Emails direct to applicants, Discuss, <a href="https://discord.gg/7rthGF3BBe" target="_blank">PSF Discord</a>, and PSF social media accounts: <a href="https://www.linkedin.com/company/thepsf/" target="_blank">LinkedIn</a>, <a href="https://fosstodon.org/@ThePSF" target="_blank">Mastodon</a>, <a href="https://bsky.app/profile/python.org" target="_blank">Bluesky</a>, <a href="https://x.com/ThePSF" target="_blank">X</a>).<br /><br /><b>The PSF asks that applicants closely monitor their emails from the point they submit their application to the end of the review phase.</b> We would be disappointed to see events and initiatives miss out on grant funding due to gaps in their application. The more responsive applicants can be, the better!<br /></p><p></p><h2 style="text-align: left;">How to Apply</h2><p><b>Submit your applications via the <a href="https://psfmember.org/grant-proposals/" target="_blank">PSF Grants Program application form</a>.</b> Before August 4 and after August 25, the form is still available but only taking applications for the PSF’s Meetup Pro Network.&nbsp;<br /></p><h2 style="text-align: left;">Questions or feedback?</h2><p>Phew—that was a lot of information! The PSF expects questions about the 2026 Grants Program Funding Round. In fact, there may be things we’ve overlooked, and we would appreciate you sharing anything you think we’re missing. Your feedback will help us improve during the process and for future rounds. There are multiple ways for you to reach out to us with your questions, feedback, and comments:<br /></p><ul style="text-align: left;"><li><a href="https://discuss.python.org/t/announcing-a-psf-grants-program-funding-round/108306" target="_blank">Discuss forum thread</a></li><li>Email grants@python.org</li><li>PSF Grants Office Hour sessions (more info below)</li></ul><p><br />Due to the accelerated nature of this grants funding round, we are holding supplemental <a href="https://pyfound.blogspot.com/2024/02/introducing-psf-grants-office-hours.html" target="_blank">PSF Grants Program Office Hours</a> on the <a href="https://discord.gg/7rthGF3BBe" target="_blank">PSF Discord</a>:<br /></p><ul style="text-align: left;"><li><a href="https://discord.com/events/1203083233982550094/1531635433597960353" target="_blank">August 4 at 1 PM UTC</a></li><li><a href="https://discord.gg/5xwYfJxf?event=1531635679774376106" target="_blank">August 13 at 8 PM UTC</a></li><li><a href="https://discord.com/events/1203083233982550094/1368129586356944946" target="_blank">August 18 at 1 PM UTC</a> (this is our regular day/time!)</li></ul><p>Check out what times these are for you using this <a href="https://time.is/" target="_blank">timezone converter</a>. We welcome you to join us to ask your questions, discuss the process, suggest ideas for future rounds, or anything else related to the PSF Grants Program.&nbsp;<br /></p><h2 style="text-align: left;">Final Thoughts and Thanks</h2><p>This is a big change for the PSF Grants Program. It’s moved from a rolling basis, to a pause, and now to a limited window to receive, review, and make decisions about applications. Will the process be perfectly smooth? Probably not. But we are committed to doing it as efficiently as possible, keeping the community and applicants informed of any changes, and when possible, integrating feedback we receive throughout the process.&nbsp;<br /><br />The PSF also wants to thank you, the Python community, for your understanding and generous backing, in actions, words, and donations. We could not fulfill our mission without the community’s support and without each individual out there championing the PSF’s work. The PSF is so very grateful to be in community with each and every one of you.&nbsp;<br /></p><h2 style="text-align: left;">About the Python Software Foundation</h2><p>The Python Software Foundation is a US non-profit whose mission is to promote, protect, and advance the Python programming language, and to support and facilitate the growth of a diverse and international community of Python programmers. The PSF supports the Python community using corporate sponsorships, grants, and donations. Are you interested in sponsoring or donating to the PSF so we can continue supporting Python and its community? Check out <a href="https://www.python.org/sponsors/application/" target="_blank">our sponsorship program</a>, <a href="http://donate.python.org/" target="_blank">donate directly</a>, or contact our team at sponsors@python.org</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 28, 2026 12:14 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2026/07/announcing-2026-psf-grants-program.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pythonbytes.fm/episodes/show/490/it-s-a-vibe-coding-party" class="hover:underline"
-              >#490 It’s a vibe coding party</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Topics include Some more things about Django I've been enjoying, Who cleans up after the vibe-coding party, AgentsView, and.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 28, 2026 07:00 AM UTC by
-            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
-              >Python Bytes</a
-            >
-          </div>
-          <a
-            href="https://pythonbytes.fm/episodes/show/490/it-s-a-vibe-coding-party"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="/posts/not-python-2026/" class="hover:underline"
-              >Projects I Wouldn't Use Python For in 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <img src="/presentations/not-python-2026/Pasted image 20260727221344.png" width="600" />
-<p>I owe much of my career to Python and I used to choose Python for everything
-... but now I don't. I gave a talk about this topic at the July 2026
-<a href="https://www.meetup.com/NZPUG-Christchurch/" rel="external">Christchurch Python NZ meetup</a>, a
-risky move for a Python meetup.</p>
-<p>This talk starts with my early adoption of Python and the subsequent decades of
-using it for almost everything. It then moves into why Python isn't always the
-best choice and what I now often use instead. I still love Python though and
-the presentation finishes with where I think Python still shines.</p>
-<p>If you're interested, the <a href="/presentations/not-python-2026/index.html">slides</a> are here.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 28, 2026 12:00 AM UTC by
-            <a href="http://freshfoo.com/blog/index.atom" class="link link-hover text-primary"
-              >"Menno's Musings"</a
-            >
-          </div>
-          <a
-            href="/posts/not-python-2026/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2026/07/announcing-python-software-foundation.html" class="hover:underline"
-              >Announcing Python Software Foundation Fellow Members for Q2 2026! 🎉</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The PSF is pleased to announce its second </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">batch</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> of PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">2026</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. Let us welcome the new PSF Fellows for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Q2</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">! The following people continue to do amazing things for the Python community:</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><b>Andy Terrel</b></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="http://andy.terrel.us/" target="_blank">Blog</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><b>Julius Nana Acheampong Boakye</b></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://linkedin.com/in/juliusboakye" target="_blank">LinkedIn</a>, <a href="https://x.com/Kaytechi" target="_blank">X</a>, <a href="https://github.com/Darkbeast-glitch" target="_blank">GitHub</a>, <a href="https://speak-wise.live/" target="_blank">Website</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><b>Petr Viktorin</b></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://github.com/encukou" target="_blank">GitHub</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><b>Sayantika Banik</b></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://github.com/sayantikabanik" target="_blank">GitHub</a>, <a href="https://www.linkedin.com/in/sayantika-banik/" target="_blank">LinkedIn</a>, <a href="https://bsky.app/profile/sayab.bsky.social" target="_blank">Bluesky</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><b>Takanori Suzuki</b><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: center;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"><a href="https://github.com/takanory/" target="_blank">GitHub</a>, <a href="https://slides.takanory.net/" target="_blank">Website</a>, <a href="https://www.linkedin.com/in/takanory/" target="_blank">LinkedIn</a>, <a href="https://x.com/takanory" target="_blank">X</a>, <a href="https://untappd.com/user/takanory/" target="_blank">Untappd</a></span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Thank you for your continued contributions. We have added you to our <a href="https://www.python.org/psf/fellows-roster/" target="_blank">Fellows Roster</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt; text-align: justify;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">The above members help support the Python ecosystem by being phenomenal leaders, sustaining the growth of the Python scientific community, maintaining virtual Python communities, maintaining Python libraries, creating educational material, organizing Python events and conferences, starting Python communities in local regions, and overall being great mentors in our community. Each of them continues to help make Python more accessible around the world. To learn more about the new Fellow members, check out their links above.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Let's continue recognizing Pythonistas all over the world for their impact on our community. The criteria for Fellow members is available on our <a href="https://www.python.org/psf/fellows" target="_blank">PSF Fellow Membership page</a></span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">. If you would like to nominate someone to be a PSF Fellow, please send a description of their Python accomplishments and their email address to psf-fellow at python.org.</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;"> We are accepting nominations for </span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Quarter 3 of 2026 through August 20th, 2026</span><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">.</span></p><p dir="ltr" style="line-height: 1.38; margin-bottom: 11pt; margin-top: 11pt;"><span face="Arial, sans-serif" style="background-color: white; color: black; font-size: 10pt; font-style: normal; font-variant: normal; font-weight: 400; text-decoration: none; vertical-align: baseline; white-space: pre-wrap;">Are you a PSF Fellow and want to help the Work Group review nominations? Contact us at psf-fellow at python.org.</span></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 27, 2026 01:28 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2026/07/announcing-python-software-foundation.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -1905,8 +1999,8 @@ the presentation finishes with where I think Python still shines.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8288</a></li>
-    <li><a>Unique Feeds: 374</a></li>
+    <li><a>Total Entries: 8366</a></li>
+    <li><a>Unique Feeds: 377</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
