@@ -1034,7 +1034,390 @@ convo = ConversationalTestCase(
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            When dragging and dropping images from a web browser into a PyQt6 rich text editor, <code>toLocalFile()</code> sometimes returns a blank string. It works for some images (like Google image search results) but fails for others (like images embedded directly on a webpage). Why does this happen, and how can I handle it?
+            <blockquote>
+<p>When dragging and dropping images from a web browser into a PyQt6 rich text editor, <code>toLocalFile()</code> sometimes returns a blank string. It works for some images (like Google image search results) but fails for others (like images embedded directly on a webpage). Why does this happen, and how can I handle it?</p>
+</blockquote>
+<p>If you've added drag and drop support to your application, you may have noticed something frustrating: dragging an image from a browser sometimes works perfectly, and other times gives you nothing at all. The <code>toLocalFile()</code> method returns an empty string, and your image never appears.</p>
+<p>This comes down to how browsers package image data when you start a drag operation, and what your application expects to receive. Let's walk through what's happening and how to fix it.</p>
+<h2 id="how-drag-and-drop-mime-data-works">How drag and drop MIME data works</h2>
+<p>When you drag something &mdash; a file, an image, some text &mdash; the source application bundles that data into a <code>QMimeData</code> object. This object can contain several different formats at once. For example, dragging an image might include:</p>
+<ul>
+<li>A file URL (<code>text/uri-list</code>)</li>
+<li>Raw image data (<code>image/png</code> or <code>image/jpeg</code>)</li>
+<li>An HTML <code>&lt;img&gt;</code> tag (<code>text/html</code>)</li>
+<li>A plain text URL (<code>text/plain</code>)</li>
+</ul>
+<p>Which of these formats are included depends entirely on the source application. Different browsers, and even different types of images within the same browser, behave differently.</p>
+<h2 id="why-tolocalfile-returns-an-empty-string">Why toLocalFile() returns an empty string</h2>
+<p>The method <code>QUrl.toLocalFile()</code> converts a URL into a local filesystem path. It only works when the URL uses the <code>file://</code> scheme &mdash; meaning the file actually exists on your computer.</p>
+<p>When you drag an image from a Google image search, the browser often creates a temporary local file and provides a <code>file://</code> URL. That's why <code>toLocalFile()</code> works in that case.</p>
+<p>But when you drag an image that's embedded directly in a webpage (like a screenshot in a blog post), the browser typically provides a remote <code>http://</code> or <code>https://</code> URL instead. There's no local file, so <code>toLocalFile()</code> returns an empty string. Some browsers may also provide the image as inline data or an HTML fragment with no URL at all.</p>
+<h2 id="inspecting-what-the-browser-actually-sends">Inspecting what the browser actually sends</h2>
+<p>A good first step is to look at exactly what MIME data arrives when you drop something. This small example creates a drop target that prints out all available MIME formats and their contents:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
+
+
+class DropInspector(QLabel):
+    def __init__(self):
+        super().__init__("Drop something here")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(400, 300)
+        self.setStyleSheet(
+            "background-color: #f0f0f0; border: 2px dashed #aaa; font-size: 16px;"
+        )
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        mime_data = event.mimeData()
+        print("=== Drop received ===")
+        for fmt in mime_data.formats():
+            data = mime_data.data(fmt)
+            print(f"\nFormat: {fmt}")
+            # Show first 200 bytes as text for readability.
+            try:
+                print(f"  Data: {bytes(data[:200]).decode('utf-8', errors='replace')}")
+            except Exception:
+                print(f"  Data: ({len(data)} bytes, binary)")
+
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                print(f"\nURL: {url.toString()}")
+                print(f"  toLocalFile: '{url.toLocalFile()}'")
+                print(f"  scheme: '{url.scheme()}'")
+
+        event.acceptProposedAction()
+        self.setText("Check console output!")
+
+
+app = QApplication(sys.argv)
+window = DropInspector()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<p>Try dragging different images from your browser into this window. You'll see that some drops include <code>file://</code> URLs while others include <code>https://</code> URLs or even raw image data with no URL at all.</p>
+<h2 id="handling-all-cases-in-your-drop-event">Handling all cases in your drop event</h2>
+<p>To make your application work reliably with images dragged from any source, you need to handle multiple scenarios:</p>
+<ol>
+<li><strong>Local file URL</strong> &mdash; use the file path directly</li>
+<li><strong>Remote URL</strong> &mdash; download the image</li>
+<li><strong>Raw image data</strong> &mdash; use it directly from the MIME data</li>
+<li><strong>HTML with an <code>&lt;img&gt;</code> tag</strong> &mdash; extract the image URL from the HTML</li>
+</ol>
+<p>Here's how to implement this step by step.</p>
+<h3>Checking for local files first</h3>
+<p>This is the simplest case and the one you likely already have working:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def dropEvent(self, event):
+    mime_data = event.mimeData()
+
+    if mime_data.hasUrls():
+        for url in mime_data.urls():
+            local_path = url.toLocalFile()
+            if local_path:
+                # It's a local file &mdash; use it directly.
+                self.insert_image_from_path(local_path)
+                event.acceptProposedAction()
+                return
+</code></pre>
+</div>
+<h3>Handling remote URLs</h3>
+<p>When <code>toLocalFile()</code> returns an empty string but you still have a URL, it's likely a remote image. You can download it using Python's <code>urllib</code> (or <code>requests</code> if you prefer):</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import os
+import tempfile
+import urllib.request
+
+
+def download_image(url_string):
+    """Download an image from a URL and return the local file path."""
+    try:
+        # Create a temporary file to store the downloaded image.
+        suffix = os.path.splitext(url_string)[-1].split("?")[0]
+        if suffix not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+            suffix = ".png"
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        urllib.request.urlretrieve(url_string, tmp_file.name)
+        return tmp_file.name
+    except Exception as e:
+        print(f"Failed to download image: {e}")
+        return None
+</code></pre>
+</div>
+<p>Then extend your drop handler:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">if mime_data.hasUrls():
+    for url in mime_data.urls():
+        local_path = url.toLocalFile()
+        if local_path:
+            self.insert_image_from_path(local_path)
+            event.acceptProposedAction()
+            return
+
+        # No local file &mdash; try downloading the remote URL.
+        url_string = url.toString()
+        if url_string:
+            local_path = download_image(url_string)
+            if local_path:
+                self.insert_image_from_path(local_path)
+                event.acceptProposedAction()
+                return
+</code></pre>
+</div>
+<h3>Handling raw image data</h3>
+<p>Sometimes the browser sends the image data directly, without any URL. You can check for this using <code>hasImage()</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">if mime_data.hasImage():
+    image = mime_data.imageData()
+    if image and not image.isNull():
+        # Save the image to a temp file and insert it.
+        tmp_path = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".png"
+        ).name
+        image.save(tmp_path)
+        self.insert_image_from_path(tmp_path)
+        event.acceptProposedAction()
+        return
+</code></pre>
+</div>
+<h3>Extracting URLs from HTML</h3>
+<p>As a fallback, some drops include an HTML fragment with an <code>&lt;img&gt;</code> tag. You can parse out the <code>src</code> attribute:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import re
+
+
+def extract_image_url_from_html(html):
+    """Extract the first image URL from an HTML string."""
+    match = re.search(r'&lt;img[^&gt;]+src=["\']([^"\']+)["\']', html)
+    if match:
+        return match.group(1)
+    return None
+</code></pre>
+</div>
+<p>Then add this as a final fallback:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">if mime_data.hasHtml():
+    html = mime_data.html()
+    image_url = extract_image_url_from_html(html)
+    if image_url:
+        local_path = download_image(image_url)
+        if local_path:
+            self.insert_image_from_path(local_path)
+            event.acceptProposedAction()
+            return
+</code></pre>
+</div>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's a full, working rich text editor with robust image drag and drop support. You can copy this and run it directly:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import os
+import re
+import sys
+import tempfile
+import urllib.request
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QImage, QTextCursor
+from PyQt6.QtWidgets import QApplication, QMainWindow, QTextEdit, QVBoxLayout, QWidget
+
+
+def download_image(url_string):
+    """Download an image from a URL and return the local file path."""
+    try:
+        suffix = os.path.splitext(url_string.split("?")[0])[-1]
+        if suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+            suffix = ".png"
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        urllib.request.urlretrieve(url_string, tmp_file.name)
+        return tmp_file.name
+    except Exception as e:
+        print(f"Failed to download image: {e}")
+        return None
+
+
+def extract_image_url_from_html(html):
+    """Extract the first image URL from an HTML string."""
+    match = re.search(r'&lt;img[^&gt;]+src=["\']([^"\']+)["\']', html)
+    if match:
+        return match.group(1)
+    return None
+
+
+class ImageDropTextEdit(QTextEdit):
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+
+    def canInsertFromMimeData(self, source):
+        if source.hasImage() or source.hasUrls() or source.hasHtml():
+            return True
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        """Handle paste and drop events with image support."""
+        # Try each method in order of reliability.
+
+        # 1. Check for direct image data.
+        if source.hasImage():
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self.insert_image(image)
+                return
+
+        # 2. Check for URLs (local or remote).
+        if source.hasUrls():
+            for url in source.urls():
+                local_path = url.toLocalFile()
+                if local_path and self.is_image_file(local_path):
+                    self.insert_image_from_path(local_path)
+                    return
+
+                # Try downloading remote URL.
+                url_string = url.toString()
+                if url_string and self.looks_like_image_url(url_string):
+                    local_path = download_image(url_string)
+                    if local_path:
+                        self.insert_image_from_path(local_path)
+                        return
+
+        # 3. Check for HTML with embedded image tags.
+        if source.hasHtml():
+            image_url = extract_image_url_from_html(source.html())
+            if image_url:
+                if image_url.startswith("data:"):
+                    # Data URI &mdash; decode and insert.
+                    image = self.image_from_data_uri(image_url)
+                    if image and not image.isNull():
+                        self.insert_image(image)
+                        return
+                else:
+                    local_path = download_image(image_url)
+                    if local_path:
+                        self.insert_image_from_path(local_path)
+                        return
+
+        # Fall back to default behavior for plain text, etc.
+        super().insertFromMimeData(source)
+
+    def insert_image_from_path(self, file_path):
+        """Insert an image from a local file path into the editor."""
+        image = QImage(file_path)
+        if image.isNull():
+            print(f"Could not load image: {file_path}")
+            return
+        self.insert_image(image)
+
+    def insert_image(self, image):
+        """Insert a QImage into the editor at the current cursor position."""
+        cursor = self.textCursor()
+        document = self.document()
+
+        # Add the image as a resource in the document.
+        image_name = f"dropped_image_{id(image)}"
+        document.addResource(
+            document.ResourceType.ImageResource.value,
+            self.create_url(image_name),
+            image,
+        )
+
+        # Insert the image at the cursor.
+        image_format = cursor.charFormat()
+        from PyQt6.QtGui import QTextImageFormat
+
+        img_fmt = QTextImageFormat()
+        img_fmt.setName(image_name)
+        img_fmt.setWidth(min(image.width(), 600))
+        img_fmt.setHeight(
+            int(image.height() * min(image.width(), 600) / max(image.width(), 1))
+        )
+        cursor.insertImage(img_fmt)
+
+    @staticmethod
+    def create_url(name):
+        from PyQt6.QtCore import QUrl
+
+        return QUrl(name)
+
+    @staticmethod
+    def is_image_file(path):
+        extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+        return os.path.splitext(path.lower())[-1] in extensions
+
+    @staticmethod
+    def looks_like_image_url(url_string):
+        """Check if a URL looks like it points to an image."""
+        clean_url = url_string.split("?")[0].lower()
+        extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
+        return any(clean_url.endswith(ext) for ext in extensions)
+
+    @staticmethod
+    def image_from_data_uri(data_uri):
+        """Decode a data: URI and return a QImage."""
+        import base64
+
+        try:
+            # data:image/png;base64,iVBOR...
+            header, data = data_uri.split(",", 1)
+            image_data = base64.b64decode(data)
+            image = QImage()
+            image.loadFromData(image_data)
+            return image
+        except Exception as e:
+            print(f"Failed to decode data URI: {e}")
+            return None
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Rich Text Editor &mdash; Image Drop Demo")
+        self.setMinimumSize(700, 500)
+
+        self.editor = ImageDropTextEdit()
+        self.editor.setPlaceholderText(
+            "Try dragging an image from your web browser into this editor..."
+        )
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.editor)
+
+        container = QWidget()
+        container.setLayout(layout)
+        self.setCentralWidget(container)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<h2 id="whats-happening-in-the-complete-example">What's happening in the complete example</h2>
+<p>The <code>ImageDropTextEdit</code> class overrides <code>insertFromMimeData</code>, which Qt calls for both paste (Ctrl+V) and drag-and-drop operations. This gives you a single place to handle all image insertion.</p>
+<p>The method tries each data source in order:</p>
+<ol>
+<li><strong>Direct image data</strong> &mdash; the fastest and most reliable, when available.</li>
+<li><strong>URLs</strong> &mdash; first checking for local files, then attempting to download remote URLs.</li>
+<li><strong>HTML fragments</strong> &mdash; parsing out <code>&lt;img&gt;</code> tags and fetching the referenced image, including support for <code>data:</code> URIs.</li>
+<li><strong>Fallback</strong> &mdash; if none of the above match, it passes control to the default <code>QTextEdit</code> behavior, so normal text paste and drop still work.</li>
+</ol>
+<p>By overriding <code>canInsertFromMimeData</code> as well, we tell Qt's drag and drop system that our editor accepts these additional formats, which ensures the correct cursor icon appears when hovering over the editor.</p>
+<p>This approach handles the differences between browsers &mdash; Chrome, Firefox, Edge &mdash; and between different types of images on the web, making your rich text editor's drag and drop support much more resilient.</p>
           </p>
         </div>
 
@@ -1650,8 +2033,8 @@ But that's the fun of a project like this.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8345</a></li>
-    <li><a>Unique Feeds: 374</a></li>
+    <li><a>Total Entries: 8293</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
