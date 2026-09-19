@@ -1079,7 +1079,151 @@ into problems or have any questions.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            Sometimes when I dynamically add widgets to tabs in my PyQt6 application, they pop out as windows instead. What's going on?
+            <blockquote>
+<p>Sometimes when I dynamically add widgets to tabs in my PyQt6 application, they pop out as windows instead. What's going on?</p>
+</blockquote>
+<p>If you're dynamically adding widgets to your PyQt6 application and finding that they pop out as separate floating windows instead of appearing neatly inside your application, you're running into one of Qt's gotchas: <em>widget parenting</em>.</p>
+<p>This problem usually shows up when widgets are added from a callback, event listener or signal handler. But there are a million different ways to screw this up. Let's look at why this happens and how to fix it.</p>
+<h2 id="how-qt-decides-whats-a-window">How Qt decides what's a window</h2>
+<p>In Qt, every widget can optionally have a <strong>parent</strong> widget. The parent determines where a widget lives visually &mdash; a widget with a parent is drawn <em>inside</em> that parent. A widget <em>without</em> a parent becomes a top-level window, floating independently on your desktop.</p>
+<p>This is the root cause of widgets appearing outside your main window. When you create a widget and it doesn't have a parent &mdash; either because you didn't set one, or because the parent was lost somehow &mdash; Qt treats it as a standalone window.</p>
+<h2 id="three-ways-to-get-a-parent-less-widget">Three ways to Get a Parent-less Widget</h2>
+<p>Here are the most common reasons widgets end up floating:</p>
+<h3>Creating widgets without a parent</h3>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python"># This widget has no parent &mdash; it will be a floating window
+tabs = QTabWidget()
+
+# This widget has a parent &mdash; it will appear inside parent_widget
+tabs = QTabWidget(parent_widget)
+</code></pre>
+</div>
+<p>When you add a widget to a <a href="https://www.pythonguis.com/tutorials/pyqt6-layouts/">layout</a>, the layout assigns the parent automatically. But if something goes wrong between creation and layout insertion (like an exception, or the widget being shown prematurely), the widget stays parentless.</p>
+<p>The <em>safest</em> approach is to pass a parent when creating widgets:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def create_new_tab(self):
+    wdg = QWidget()
+    layout = QGridLayout(wdg)
+
+    tabs = QTabWidget(wdg)  # Explicitly set parent
+    tab1 = QWidget(tabs)     # Explicitly set parent
+    tab2 = QWidget(tabs)     # Explicitly set parent
+    tabs.addTab(tab1, "Start")
+    tabs.addTab(tab2, "Profile")
+    layout.addWidget(tabs)
+
+    return wdg
+</code></pre>
+</div>
+<p>...although, honestly, I don't usually bother. If I know I'll be adding a widget to a layout immediately, I'll omit the parent assignment.</p>
+<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  In an window <code>__init__</code> the <em>safety</em> question is less relevant because, if there is an unhandled exception that blocks the adding your sub-widget to a layout, it will also block the creation of the parent window.</p>
+<h3>Accidentally recreating a widget</h3>
+<p>If you have a tab widget stored as <code>self.w</code> and somewhere in your code you do:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">self.w = QTabWidget()
+</code></pre>
+</div>
+<p>...the original tab widget is replaced. If the old widget gets garbage collected, all the tabs that had it as their parent suddenly become orphans &mdash; parentless widgets that float as independent windows.</p>
+<p>Be careful not to reassign widget attributes unintentionally, especially in callbacks that might run multiple times.</p>
+<h3>Losing the parent reference</h3>
+<p>If you explicitly set a widget's parent to <code>None</code>, it becomes a top-level window:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">widget.setParent(None)  # This widget is now a floating window
+</code></pre>
+</div>
+<p>This sometimes happens indirectly. For example, removing a widget from a layout in certain ways can clear its parent.</p>
+<h2 id="a-clean-approach-to-dynamic-tabs">A clean approach to dynamic tabs</h2>
+<p>Here's a complete, working example that dynamically adds tabs without any floating-window issues. It demonstrates the correct way to set up a <code>QTabWidget</code> with a "+" button that adds new tabs:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QTabWidget,
+    QWidget, QVBoxLayout, QLabel
+)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Dynamic Tabs")
+        self.setFixedSize(600, 400)
+
+        self.tabs = QTabWidget(self)
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+
+        # Add an initial tab
+        self.add_content_tab("Tab 1")
+
+        # Add the "+" tab for creating new tabs
+        self.tabs.addTab(QWidget(self.tabs), "+")
+
+        self.setCentralWidget(self.tabs)
+
+    def on_tab_changed(self, index):
+        # Check if the "+" tab was clicked
+        if self.tabs.tabText(index) == "+":
+            self.add_new_tab()
+
+    def add_new_tab(self):
+        # Count existing content tabs (exclude the "+" tab)
+        tab_count = self.tabs.count()  # includes "+"
+        new_title = f"Tab {tab_count}"
+
+        # Insert the new tab before the "+" tab
+        new_tab = self.create_tab_content(new_title)
+        insert_index = self.tabs.count() - 1
+        self.tabs.insertTab(insert_index, new_tab, new_title)
+
+        # Switch to the newly created tab (avoid retriggering)
+        self.tabs.blockSignals(True)
+        self.tabs.setCurrentIndex(insert_index)
+        self.tabs.blockSignals(False)
+
+    def add_content_tab(self, title):
+        """Add a content tab before the + tab."""
+        tab = self.create_tab_content(title)
+        # Insert before the last tab if "+" exists, otherwise just add
+        plus_index = None
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == "+":
+                plus_index = i
+                break
+
+        if plus_index is not None:
+            self.tabs.insertTab(plus_index, tab, title)
+        else:
+            self.tabs.addTab(tab, title)
+
+    def create_tab_content(self, title):
+        """Create the widget content for a tab."""
+        widget = QWidget(self.tabs)  # Parent is the tab widget
+        layout = QVBoxLayout(widget)
+        label = QLabel(f"Content for {title}", widget)
+        layout.addWidget(label)
+        return widget
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<p>A few things to notice in this example:</p>
+<ul>
+<li>The main window inherits from <code>QMainWindow</code>, and <code>QApplication</code> is created separately.</li>
+<li>Every widget is created with an explicit parent: <code>QWidget(self.tabs)</code>, <code>QLabel(text, widget)</code>, etc.</li>
+<li><code>blockSignals(True)</code> is used when programmatically changing the current tab to prevent the <code>currentChanged</code> <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signal</a> from firing recursively.</li>
+<li>New tabs are inserted <em>before</em> the "+" tab using <code>insertTab</code>, so the "+" always stays at the end.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>Widget parenting is one of those things in Qt that works invisibly when everything is correct &mdash; and causes confusing visual glitches the moment something is slightly off. The good news is that once you understand the pattern, the fix is almost always the same: make sure every widget has a  parent.</p>
+<p>If you're new to PyQt6, our guide to <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-your-first-window/">creating your first window</a> covers the basics of setting up a <code>QMainWindow</code>, while the <a href="https://www.pythonguis.com/tutorials/pyqt6-widgets/">widgets tutorial</a> walks through the most common widgets and how to use them correctly.</p>
           </p>
         </div>
 
@@ -2651,8 +2795,8 @@ The journey started long ago with a new mum reading &quot;Intellectual Property 
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8426</a></li>
-    <li><a>Unique Feeds: 378</a></li>
+    <li><a>Total Entries: 8364</a></li>
+    <li><a>Unique Feeds: 376</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
