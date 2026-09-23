@@ -1423,7 +1423,204 @@ closed models as well, to keep up with others who do.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I'm using a threaded runner to stream a live video feed by converting a NumPy array to a <code>QImage</code>, then to a <code>QPixmap</code>, and displaying it on a <code>QLabel</code>. But I'm frequently encountering crashes when the label is resized too quickly or the scroll area is scrolled. Could this be a problem with the <code>QImage</code> memory buffer getting cleared before the <code>QPixmap</code> can update? Is this fixable, or is it a fundamental issue with threads in Python/Qt?
+            <blockquote>
+<p>I'm using a threaded runner to stream a live video feed by converting a NumPy array to a <code>QImage</code>, then to a <code>QPixmap</code>, and displaying it on a <code>QLabel</code>. But I'm frequently encountering crashes when the label is resized too quickly or the scroll area is scrolled. Could this be a problem with the <code>QImage</code> memory buffer getting cleared before the <code>QPixmap</code> can update? Is this fixable, or is it a fundamental issue with threads in Python/Qt?</p>
+</blockquote>
+<p>This is a common problem when working with NumPy arrays and <code>QImage</code> across threads. The good news is that it's fixable. The crashes come from how <code>QImage</code> handles the underlying memory of a NumPy array.</p>
+<h2 id="why-the-crash-happens">Why the crash happens</h2>
+<p>When you create a <code>QImage</code> from a NumPy array, <code>QImage</code> doesn't copy the data. Instead it holds a reference to the original memory buffer provided by the NumPy array.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import numpy as np
+from PyQt6.QtGui import QImage
+
+# Create a NumPy array (e.g. a video frame)
+array = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+
+# QImage points to the same memory &mdash; no copy is made
+image = QImage(
+    array.data,
+    array.shape[1],
+    array.shape[0],
+    array.strides[0],
+    QImage.Format.Format_RGB8888,
+)
+</code></pre>
+</div>
+<p>This is efficient, but it creates a dangerous situation in a multithreaded application. If the NumPy array is modified or goes out of scope in the worker thread while the GUI thread is still using the <code>QImage</code> to paint, the memory that <code>QImage</code> is pointing to may no longer be valid. The result is a segfault or (worse) a silent crash without any information about what has happened.</p>
+<p>This is especially likely when frames are arriving quickly (as with a live video feed) and the GUI is being redrawn frequently &mdash; for example, during a resize or a scroll.</p>
+<h2 id="the-fix-copy-the-image-data">The fix: copy the image data</h2>
+<p>The simplest and most reliable fix is to make sure the <code>QImage</code> owns its own copy of the pixel data before you pass it to the GUI thread. You can do this by calling <code>.copy()</code> on the <code>QImage</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">image = QImage(
+    array.data,
+    array.shape[1],
+    array.shape[0],
+    array.strides[0],
+    QImage.Format.Format_RGB888,
+).copy()
+</code></pre>
+</div>
+<p>The <code>.copy()</code> call creates a new <code>QImage</code> with its own independent memory buffer. Now it doesn't matter if the original NumPy array changes or disappears &mdash; the <code>QImage</code> is safe to use from the GUI thread.</p>
+<p>If you've already tried using <code>.copy()</code> and it hasn't worked, bear in mind that <em>where</em> you use the copy matters just as much as using it at all.</p>
+<h2 id="where-to-copy-matters">Where to copy matters</h2>
+<p>If you create the <code>QImage</code> in the worker thread and emit it via a <a href="https://www.pythonguisi.com/tutorials/pyqt6-signals-slots-events/">signal</a>, the copy needs to happen <strong>before</strong> the signal is emitted. If the signal carries a reference to the original (non-copied) <code>QImage</code>, the data might still be invalidated before the GUI thread processes it.</p>
+<p>Here's the pattern that works:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python"># In the worker thread
+image = QImage(
+    frame.data,
+    frame.shape[1],
+    frame.shape[0],
+    frame.strides[0],
+    QImage.Format.Format_RGB888,
+).copy()  # Copy immediately, before emitting
+
+self.signals.result.emit(image)  # Now safe to send to GUI thread
+</code></pre>
+</div>
+<p>And in the main thread, connect that signal to a slot that updates the display:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def update_display(self, image):
+    pixmap = QPixmap.fromImage(image)
+    self.label.setPixmap(pixmap)
+</code></pre>
+</div>
+<p>Because the <code>QImage</code> was copied before it crossed the thread boundary, the GUI thread has full ownership of the data and can paint it safely.</p>
+<h2 id="use-signals-to-control-the-update-flow">Use signals to control the update flow</h2>
+<p>Another source of crashes is calling GUI methods directly from a worker thread. In Qt, <strong>all GUI updates must happen on the main thread</strong>. If you're calling <code>label.setPixmap(...)</code> from inside a worker or a callback running on a background thread, that's undefined behavior and will eventually crash.</p>
+<p>The solution is to always use <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals and slots</a> to communicate between threads. Emit a signal from the worker carrying the processed image, and connect it to a slot on the main thread that performs the GUI update.</p>
+<p>This also gives you a natural way to throttle updates. If frames are arriving faster than the GUI can paint them, you can use a flag to skip frames that arrive while the previous one is still being displayed.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's a full example that simulates a video feed using a <code>QRunnable</code> and a <code>QThreadPool</code>. It generates random NumPy frames in a background thread and safely displays them on a <code>QLabel</code>. If you're new to running background tasks with <code>QThreadPool</code>, see our <a href="https://www.pythonguis.com/tutorials/multithreading-pyqt6-applications-qthreadpool/">detailed guide to multithreading PyQt6 applications</a>.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+import numpy as np
+from PyQt6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    pyqtSignal,
+    pyqtSlot,
+)
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+class WorkerSignals(QObject):
+    frame_ready = pyqtSignal(QImage)
+    finished = pyqtSignal()
+
+
+class VideoWorker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.running = True
+
+    @pyqtSlot()
+    def run(self):
+        while self.running:
+            # Simulate a video frame (e.g. from a camera or stream)
+            frame = np.random.randint(
+                0, 255, (480, 640, 3), dtype=np.uint8
+            )
+
+            # Create QImage and copy it immediately so it owns its data
+            image = QImage(
+                frame.data,
+                frame.shape[1],
+                frame.shape[0],
+                frame.strides[0],
+                QImage.Format.Format_RGB888,
+            ).copy()
+
+            # Emit the safe, copied image to the main thread
+            self.signals.frame_ready.emit(image)
+
+            # Simulate ~30 fps
+            time.sleep(1 / 30)
+
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.running = False
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Threaded Video Display")
+
+        self.label = QLabel("Waiting for frames...")
+        self.label.setScaledContents(True)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.label)
+        scroll_area.setWidgetResiizable(True)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addWidget(scroll_area)
+        self.setCentralWidget(container)
+
+        self.resize(700, 520)
+
+        # Set up threading
+        self.threadpool = QThreadPool()
+        self.worker = VideoWorker()
+        self.worker.signals.frame_ready.connect(self.update_display)
+        self.worker.signals.finished.connect(self.on_finished)
+        self.threadpool.start(self.worker)
+
+    def update_display(self, image):
+        """Runs on the main thread &mdash; safe to update the GUI here."""
+        pixmap = QPixmap.fromImage(image)
+        self.label.setPixmap(pixmap)
+
+    def on_finished(self):
+        print("Worker finished.")
+
+    def closeEvent(self, event):
+        self.worker.stop()
+        self.threadpool.waitForDone(2000)
+        event.accept()
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>When you run this, you'll see a window displaying rapidly changing random noise &mdash; a stand-in for a real video stream. You can resize the window and scroll around without crashes, because the image data is safely copied before it crosses the thread boundary, and all GUI updates happen on the main thread via signals.</p>
+<h2 id="recap">Recap</h2>
+<p>When working with NumPy arrays and <code>QImage</code> across threads, keep these three things in mind:</p>
+<ol>
+<li>
+<p><strong><code>QImage</code> does not copy NumPy data.</strong> It points to the original array's memory buffer. If that buffer changes or is freed, the <code>QImage</code> becomes invalid.</p>
+</li>
+<li>
+<p><strong>Call <code>.copy()</code> on the <code>QImage</code> before emitting it across threads.</strong> This gives the <code>QImage</code> its own memory, independent of the NumPy array.</p>
+</li>
+<li>
+<p><strong>Always update the GUI from the main thread.</strong> Use <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals</a> to send data from background workers to slots connected on the main thread, where it's safe to call <code>setPixmap()</code> and other GUI methods.</p>
+</li>
+</ol>
+<p>With these practices in place, you can stream video or display rapidly changing image data without encountering the mysterious crashes that come from shared memory across threads.</p>
           </p>
         </div>
 
@@ -1595,8 +1792,8 @@ closed models as well, to keep up with others who do.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8385</a></li>
-    <li><a>Unique Feeds: 374</a></li>
+    <li><a>Total Entries: 8362</a></li>
+    <li><a>Unique Feeds: 373</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
