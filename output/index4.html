@@ -53,6 +53,496 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pythonguis.com/faq/coordinates-on-qpainter/" class="hover:underline"
+              >Understanding QPainter Coordinates in PyQt6 — How the coordinate system works for drawing on canvases in PyQt6</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <blockquote>
+<p>I really having trouble understanding the coordinate system used in <code>QPainter</code>. Can you explain how this works?</p>
+</blockquote>
+<p>If you've started drawing with <code>QPainter</code> in PyQt6, you might have been surprised the first time you drew a line. You pass in coordinates like <code>(10, 10, 300, 200)</code> and the result doesn't look quite like what you'd expect from a math class. That's because <code>QPainter</code> uses a coordinate system where <strong>the origin (0, 0) is in the top-left corner</strong> of the canvas, not the bottom-left.</p>
+<p>This catches a lot of people off guard, so in this tutorial we'll walk through exactly how QPainter coordinates work, how to visualize them, and how to convert between screen coordinates and the mathematical coordinate system you might be more familiar with.</p>
+<h2 id="the-qpainter-coordinate-system">The QPainter coordinate system</h2>
+<p>In most math courses, you learn to plot points on a Cartesian plane where <code>(0, 0)</code> is at the bottom-left. The x-axis increases to the right, and the y-axis increases upward.</p>
+<p>QPainter (and most screen-based graphics systems) does things differently:</p>
+<ul>
+<li><code>(0, 0)</code> is at the <strong>top-left</strong> corner of the drawing surface.</li>
+<li>The <strong>x-axis</strong> increases to the <strong>right</strong> (same as math).</li>
+<li>The <strong>y-axis</strong> increases <strong>downward</strong> (opposite of math).</li>
+</ul>
+<p>This means that as your y value gets larger, you move <em>down</em> the screen, not up. Here's a simple diagram to illustrate:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">(0,0) &amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh&amp;boxh► x increases
+  &amp;boxv
+  &amp;boxv
+  &amp;boxv
+  &amp;boxv
+  ▼
+  y increases
+</code></pre>
+</div>
+<p>So when you call <code>painter.drawLine(10, 10, 300, 200)</code>, you're drawing a line from a point near the top-left corner down to a point further right and further <em>down</em> the canvas.</p>
+<h2 id="seeing-it-in-action">Seeing it in action</h2>
+<p>Let's draw a line and annotate the start and end points so you can see exactly where the coordinates land. This complete example creates a small window with a <code>QLabel</code> displaying a <code>QPixmap</code> that we draw onto.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QPainter Coordinates")
+
+        canvas = QPixmap(400, 300)
+        canvas.fill(Qt.white)
+
+        painter = QPainter(canvas)
+
+        # Draw the line.
+        pen = QPen(Qt.blue, 2)
+        painter.setPen(pen)
+        painter.drawLine(10, 10, 300, 200)
+
+        # Annotate the start point.
+        pen = QPen(Qt.red, 6)
+        painter.setPen(pen)
+        painter.drawPoint(10, 10)
+
+        painter.setPen(QPen(Qt.black))
+        painter.setFont(QFont("Arial", 10))
+        painter.drawText(20, 15, "(10, 10)")
+
+        # Annotate the end point.
+        pen = QPen(Qt.red, 6)
+        painter.setPen(pen)
+        painter.drawPoint(300, 200)
+
+        painter.setPen(QPen(Qt.black))
+        painter.drawText(220, 220, "(300, 200)")
+
+        painter.end()
+
+        label = QLabel()
+        label.setPixmap(canvas)
+        self.setCentralWidget(label)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>Run this and you'll see a blue line drawn from near the top-left corner of the canvas down to a point lower and to the right. The red dots and labels mark each endpoint, making it clear that <code>(10, 10)</code> is near the top-left and <code>(300, 200)</code> is toward the bottom-right.</p>
+<p><img alt="QPainter coordinates with annotated points" src="coordinates-annotated.png" /></p>
+<p>This is the expected behavior &mdash; the y-axis points downward.</p>
+<h2 id="why-does-it-work-this-way">Why does it work this way?</h2>
+<p>Screen coordinate systems with the origin at the top-left are a convention inherited from early computer displays, where the electron beam in a CRT monitor scanned from the top-left of the screen, line by line, downward. This convention carried forward into virtually all modern windowing and graphics systems, including Qt.</p>
+<h2 id="converting-from-mathematical-coordinates">Converting from mathematical coordinates</h2>
+<p>If you're working with data that uses standard mathematical coordinates (origin at the bottom-left, y increasing upward), you'll need to convert the y values before drawing. The formula is straightforward:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">y_screen = height - 1 - y_math
+</code></pre>
+</div>
+<p>Where:</p>
+<ul>
+<li><code>y_screen</code> is the y coordinate QPainter expects (origin at top-left).</li>
+<li><code>y_math</code> is the y coordinate in standard math notation (origin at bottom-left).</li>
+<li><code>height</code> is the height of your drawing surface in pixels.</li>
+</ul>
+<p>The <code>- 1</code> is there because pixel coordinates are zero-indexed. A <code>QPixmap</code> with a height of 300 has valid y coordinates from 0 to 299.</p>
+<p>Let's say you have a canvas that's 300 pixels tall, and you want to draw a line from the mathematical point <code>(10, 10)</code> to <code>(300, 200)</code> as if the origin were at the bottom-left. You'd convert each y coordinate:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">height = 300
+
+# Mathematical coordinates.
+x1, y1_math = 10, 10
+x2, y2_math = 300, 200
+
+# Convert y values for screen drawing.
+y1_screen = height - 1 - y1_math  # 300 - 1 - 10 = 289
+y2_screen = height - 1 - y2_math  # 300 - 1 - 200 = 99
+
+painter.drawLine(x1, y1_screen, x2, y2_screen)
+# Equivalent to: painter.drawLine(10, 289, 300, 99)
+</code></pre>
+</div>
+<p>Now the line will go from near the <em>bottom</em>-left upward to the right &mdash; just like you'd expect on a math plot.</p>
+<h2 id="a-helper-function-for-coordinate-conversion">A helper function for coordinate conversion</h2>
+<p>If you're doing a lot of drawing with mathematical coordinates, a small helper function keeps things tidy:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def math_to_screen(x, y, height):
+    """Convert mathematical (bottom-left origin) coordinates
+    to screen (top-left origin) coordinates."""
+    return x, height - 1 - y
+</code></pre>
+</div>
+<p>You can then use it like this:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">x1, y1 = math_to_screen(10, 10, canvas_height)
+x2, y2 = math_to_screen(300, 200, canvas_height)
+painter.drawLine(x1, y1, x2, y2)
+</code></pre>
+</div>
+<h2 id="comparing-both-coordinate-systems-side-by-side">Comparing both coordinate systems side by side</h2>
+<p>This complete example draws the same line using both coordinate systems, so you can see the difference clearly. The left canvas uses QPainter's native coordinates (origin top-left), and the right canvas converts from mathematical coordinates (origin bottom-left).</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import (
+    QApplication, QLabel, QMainWindow, QHBoxLayout, QVBoxLayout, QWidget,
+)
+
+
+def math_to_screen(x, y, height):
+    """Convert mathematical (bottom-left origin) coordinates
+    to screen (top-left origin) coordinates."""
+    return x, height - 1 - y
+
+
+def draw_annotated_line(canvas, x1, y1, x2, y2, label_start, label_end):
+    """Draw a line on a QPixmap with annotated endpoints."""
+    painter = QPainter(canvas)
+
+    # Draw the line.
+    pen = QPen(Qt.blue, 2)
+    painter.setPen(pen)
+    painter.drawLine(x1, y1, x2, y2)
+
+    # Draw and label the start point.
+    painter.setPen(QPen(Qt.red, 6))
+    painter.drawPoint(x1, y1)
+    painter.setPen(QPen(Qt.black))
+    painter.setFont(QFont("Arial", 9))
+    painter.drawText(x1 + 8, y1 + 5, label_start)
+
+    # Draw and label the end point.
+    painter.setPen(QPen(Qt.red, 6))
+    painter.drawPoint(x2, y2)
+    painter.setPen(QPen(Qt.black))
+    painter.drawText(x2 - 80, y2 + 20, label_end)
+
+    painter.end()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Coordinate System Comparison")
+
+        canvas_width = 350
+        canvas_height = 300
+
+        # --- Left canvas: native QPainter coordinates ---
+        canvas_native = QPixmap(canvas_width, canvas_height)
+        canvas_native.fill(Qt.white)
+        draw_annotated_line(
+            canvas_native,
+            10, 10, 300, 200,
+            "(10, 10)", "(300, 200)",
+        )
+
+        label_native = QLabel()
+        label_native.setPixmap(canvas_native)
+
+        title_native = QLabel("Screen coordinates\n(origin top-left)")
+        title_native.setAlignment(Qt.AlignCenter)
+        title_native.setStyleSheet("font-weight: bold;")
+
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(title_native)
+        left_layout.addWidget(label_native)
+
+        # --- Right canvas: mathematical coordinates converted ---
+        canvas_math = QPixmap(canvas_width, canvas_height)
+        canvas_math.fill(Qt.white)
+
+        sx1, sy1 = math_to_screen(10, 10, canvas_height)
+        sx2, sy2 = math_to_screen(300, 200, canvas_height)
+        draw_annotated_line(
+            canvas_math,
+            sx1, sy1, sx2, sy2,
+            f"math(10,10) &rarr; screen({sx1},{sy1})",
+            f"math(300,200) &rarr; screen({sx2},{sy2})",
+        )
+
+        label_math = QLabel()
+        label_math.setPixmap(canvas_math)
+
+        title_math = QLabel("Math coordinates converted\n(origin bottom-left)")
+        title_math.setAlignment(Qt.AlignCenter)
+        title_math.setStyleSheet("font-weight: bold;")
+
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(title_math)
+        right_layout.addWidget(label_math)
+
+        # --- Combine both sides ---
+        main_layout = QHBoxLayout()
+        main_layout.addLayout(left_layout)
+        main_layout.addLayout(right_layout)
+
+        container = QWidget()
+        container.setLayout(main_layout)
+        self.setCentralWidget(container)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>When you run this, you'll see two canvases side by side. On the left, the line slopes downward from the top-left, which is what QPainter naturally produces. On the right, the same mathematical coordinates have been converted, so the line slopes upward from the bottom-left &mdash; matching what you'd see on a standard math plot.</p>
+<h2 id="drawing-axes-to-orient-yourself">Drawing axes to orient yourself</h2>
+<p>When you're experimenting with coordinates, it can help to draw a simple set of axes on your canvas. Here's a quick helper that draws x and y axes with the origin marked:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QFont
+from PyQt6.QtWidgets import QApplication, QLabel, QMainWindow
+
+
+def draw_axes(painter, width, height):
+    """Draw simple x and y axes with labels."""
+    painter.setPen(QPen(Qt.gray, 1, Qt.DashLine))
+
+    # X-axis along the top (y=0).
+    painter.drawLine(0, 0, width - 1, 0)
+
+    # Y-axis along the left (x=0).
+    painter.drawLine(0, 0, 0, height - 1)
+
+    # Label the origin.
+    painter.setPen(QPen(Qt.darkGray))
+    painter.setFont(QFont("Arial", 8))
+    painter.drawText(5, 15, "(0, 0)")
+
+    # Label the x direction.
+    painter.drawText(width - 60, 15, f"x &rarr; ({width - 1})")
+
+    # Label the y direction.
+    painter.save()
+    painter.translate(15, height - 10)
+    painter.drawText(0, 0, f"y &darr; ({height - 1})")
+    painter.restore()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QPainter Axes")
+
+        canvas_width = 400
+        canvas_height = 300
+
+        canvas = QPixmap(canvas_width, canvas_height)
+        canvas.fill(Qt.white)
+
+        painter = QPainter(canvas)
+        draw_axes(painter, canvas_width, canvas_height)
+
+        # Draw some points to see where they land.
+        points = [
+            (50, 50),
+            (200, 150),
+            (350, 250),
+            (350, 50),
+            (50, 250),
+        ]
+
+        painter.setPen(QPen(Qt.red, 6))
+        for x, y in points:
+            painter.drawPoint(x, y)
+
+        painter.setPen(QPen(Qt.black))
+        painter.setFont(QFont("Arial", 9))
+        for x, y in points:
+            painter.drawText(x + 6, y - 6, f"({x}, {y})")
+
+        painter.end()
+
+        label = QLabel()
+        label.setPixmap(canvas)
+        self.setCentralWidget(label)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>This draws the axes along the top and left edges of the canvas and plots several points with their coordinates labeled. It's a great way to build intuition about where things will appear.</p>
+<h2 id="valid-coordinate-ranges">Valid coordinate ranges</h2>
+<p>One more thing to keep in mind: pixel coordinates on a <code>QPixmap</code> are zero-indexed. If you create a pixmap with:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">canvas = QPixmap(400, 300)
+</code></pre>
+</div>
+<p>Then the valid coordinate ranges are:</p>
+<ul>
+<li><strong>x</strong>: 0 to 399 (that's <code>width - 1</code>)</li>
+<li><strong>y</strong>: 0 to 299 (that's <code>height - 1</code>)</li>
+</ul>
+<p>Drawing outside these ranges won't cause an error, but anything beyond the edges simply won't be visible.</p>
+<h2 id="summary">Summary</h2>
+<p>The QPainter coordinate system places <code>(0, 0)</code> at the top-left of the drawing surface, with x increasing to the right and y increasing downward. This is standard across virtually all screen-based graphics systems.</p>
+<p>If you need to work with mathematical coordinates where <code>(0, 0)</code> is at the bottom-left and y increases upward, you can convert using the formula:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">y_screen = height - 1 - y_math
+</code></pre>
+</div>
+<p>Once you've internalized this, drawing with QPainter becomes predictable. When in doubt, drop some annotated points on your canvas &mdash; seeing the coordinates labeled right next to the dots is the fastest way to confirm everything is landing where you expect.</p>
+<p>For more details on Qt's coordinate system, take a look at the <a href="https://doc.qt.io/qt-5/coordsys.html">official Qt coordinate system documentation</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 02, 2026 06:00 AM UTC by
+            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
+              >Python GUIs</a
+            >
+          </div>
+          <a
+            href="https://www.pythonguis.com/faq/coordinates-on-qpainter/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.djangoproject.com/weblog/2026/sep/01/djangonaut-space-session-7-accepting-applications/" class="hover:underline"
+              >Djangonaut Space - Session 7 Accepting Applications</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>We are thrilled to announce that Djangonaut Space, a mentorship program for contributing to Django, is <a href="https://djangonaut.space/sessions/2026-session-7/">open for applicants for our next cohort!</a> 🚀</p>
+<p>Session 7 launches October 12th, 2026. We are currently accepting applications until <strong>September 6th, 2026 Anywhere on Earth</strong>. More details can be found in the <a href="https://djangonaut.space/comms/2026/08/14/2026-opening-session-7/">website</a>.</p>
+<p>Djangonaut Space is a free, 8-week group mentoring program where individuals will work self-paced in a semi-structured learning environment. It seeks to help members of the community who wish to level up their current Django code contributions and potentially take on leadership roles in Django in the future.</p>
+<h3 id="s-rodrigo-vieira-djangonaut-session-6">Rodrigo Vieira, Djangonaut Session 6</h3>
+<blockquote>
+<p>“Participating as a mentee in the Djangonaut Space was a highly valuable experience. The program provided clear, step-by-step guidance on how to navigate the core framework, find the right issues to tackle, and confidently send my PRs.</p>
+<p>Beyond the code, the community on Discord was very active, sharing experiences, wins and support. We had access to regular talks, Django Fellows and long-time maintainers who generously shared their time and expertise.</p>
+<p>It was a welcoming environment to connect with other newcomers from all over the world, allowing us to share our journeys and learn together. The highlight of the program for me was seeing my first pull request finally merged and mentioned in Django News. I'm looking forward to keep involved as an alumni and help others now.“</p>
+</blockquote>
+<h3 id="s-eliana-djangonaut-session-1">Eliana, Djangonaut Session 1</h3>
+<blockquote>
+<p>“I'm so grateful to have been a part of the Djangonaut Space program. It's a wonderfully warm, diverse, and welcoming space, and the perfect place to get started with Django contributions. The community is full of bright, talented individuals who are making time to help and guide others, which is truly a joy to experience. Before Djangonaut Space, I felt as though I wasn't the kind of person who could become a Django contributor; now I feel like I found a place where I belong.”</p>
+</blockquote>
+<p>Enthusiastic about contributing to Django but wondering what we have in store for you? No worries, we have got you covered! 🤝</p>
+<p>✏️ <a href="https://djangonaut.space/comms/2026/08/14/2026-opening-session-7/">Mission Briefing</a></p>
+<p>📷 <a href="https://youtu.be/6bjCIOCpdM4">AMA Recap</a></p>
+<p>📡 Have questions? <a href="mailto:sessions@djangonaut.space">Email sessions@djangonaut.space</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 01, 2026 05:13 PM UTC by
+            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
+              >Django Weblog</a
+            >
+          </div>
+          <a
+            href="https://www.djangoproject.com/weblog/2026/sep/01/djangonaut-space-session-7-accepting-applications/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/494/python-wrapture" class="hover:underline"
+              >#494 Python Wrapture</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Topics include OpenAI's Python SDK has migrated to HTTPX2, TMOG - Native Task Manager for macOS, Windows, and Linux, wrapture - one wrapper for mocking, tracing, and observability, and linkedin2md.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 01, 2026 03:39 PM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/494/python-wrapture"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pyfound.blogspot.com/2026/09/the-2026-psf-board-election-is-open.html" class="hover:underline"
               >The 2026 PSF Board Election is Open!</a
             >
@@ -497,46 +987,6 @@ look around for solutions to this issue before buying.</p>
           </div>
           <a
             href="https://www.djangoproject.com/weblog/2026/aug/31/dsf-member-of-the-month-benjamin-balder-bach/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.paulox.net/2026/08/31/my-djangocon-us-2026/" class="hover:underline"
-              >My DjangoCon US 2026</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>My DjangoCon <span class="caps">US</span> 2026 experience in Chicago, captured through Mastodon posts about talks, my <span class="caps">UUID</span> talk, Django community activities, people, and moments along the&nbsp;way.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 30, 2026 10:00 PM UTC by
-            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
-              >Paolo Melchiorre</a
-            >
-          </div>
-          <a
-            href="https://www.paulox.net/2026/08/31/my-djangocon-us-2026/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1643,86 +2093,6 @@ forgive those 3000 words.<a href="https://anarc.at/tag/python-planet/#fnref:1" r
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2026/08/keith-murray-2026-psf-board-election.html" class="hover:underline"
-              >Keith Murray: 2026 PSF Board Election Candidate Interview</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgHNH2FD_Y4H9LpT2IpuFRi7pGsKuAexjQwp3YV05wFlxgF2BTGhMhAqoRPLV33DaGp_LZYPlsOLWI7gG07gB19S-fD0LkWYSFENHEkcad0dSiRk4zcThiy7wWhunJn9SUj-NKb1oJ7IgeW10svF0NRVfzC0cQO6tvvTeZfRrImz451YtsOpg/s586/KeithMurray_2026PSFBoardElection.jpg" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="227" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgHNH2FD_Y4H9LpT2IpuFRi7pGsKuAexjQwp3YV05wFlxgF2BTGhMhAqoRPLV33DaGp_LZYPlsOLWI7gG07gB19S-fD0LkWYSFENHEkcad0dSiRk4zcThiy7wWhunJn9SUj-NKb1oJ7IgeW10svF0NRVfzC0cQO6tvvTeZfRrImz451YtsOpg/s320/KeithMurray_2026PSFBoardElection.jpg" width="320" /></a></div><p></p><h3 style="text-align: left;">Who are you?</h3><p>I’m Keith Murray.</p><p>I engage with a lot of Python Communities, often with the handle KeithTheEE, and I find that my favorite parts of the many communities are seeing the hobbies people have, and if/how Python intersects them. Hobbies and passion projects (including silly, fun passions) are one of the ways to make code matter, and are one of the things I’ve been falling back to of late to help balance against burnout: particularly when I feel overwhelmed by code ‘engagement’ that feels overly extractive. Discovering hobbies of other Python community members has made engaging feel like a collaborative and supportive experience, even if the code isn’t tied to the hobby at all.<br /><br />I love (trying) to grow orchids, birding, and making pasta, and while I don’t involve Python in every aspect of it, hearing about how it resonates with others (constructive or destructively), like how some prefer begonias over orchids, never got birding but love their dogs, or the many foods from their home I now need to try--helps me look forward to reading comments on the item at hand. So I’m Keith, I like many things and I love how so many people make the code around me joyful.</p><h3 style="text-align: left;">What would you bring to the PSF Board of Directors?</h3><p>My experience would help drive outreach to communities and direct small changes to help navigate the Python ecosystem and communities with an increased awareness of engagement opportunities. A particular interest is tied to PSF membership, and using it as a pathway for communication and building outreach to help inform people about the many ways to get involved and support the Python community. Because I’m interested in the Education and Education Resources side of things, I’m more aimed at the new user experience, and trying to maintain the “exciting new world/what can I do next” feeling new programmers have.</p><p>I add perspective on the impact of things like navigating the python.org website, and how it feels to those who are new and not from a programming background. This experience with outreach and newer community member navigation helps shape how I consider relaying information to those I think either want to know about it, or want to share it to those they know want to know. In a Board of Directors role, this perspective helps understand how choices are felt in the wider community, and shapes the way I’d encourage asking for feedback, input, and help with larger goals.</p><h3 style="text-align: left;">What motivated you to run for the PSF Board of Directors?</h3><p>I am running for the PSF Board of Directors because I think my experience reaching out to lots of communities, and relaying their events in other spaces has helped me learn a lot about helpful outreach methodologies as well as perceived limitations in many communities. I particularly hope to shape the workflow of becoming a member, to make “being a part of the PSF” feel more meaningful, and to help direct the excitement of wanting to help into things which are impactful, but may not immediately be alluring.</p><p>Things like sharing events, commenting on an old issue if it is still present on your machine, operating system, python version, telling community members, “thank you” and that you like the things they did are all ways to help which can alleviate some burden or stress from staff and core team members, and guiding that branch of empowerment is something I think is valuable.</p><h3 style="text-align: left;">What problem or challenge do you want to address if you are on the board?</h3><p>Funding the PSF, and ensuring that funding is reliable so long term, structural improvement can be made is the among largest challenges I see PSF currently facing. While improving the PSF Membership workflow might not be the most direct way to addressing overall PSF funding, a wider audience who’s aware of the financial needs of Open Source gives strength to the conversation in every company.<br /><br />One of my biggest hopes for the next year is a formalized means to nominate individuals for PSF “Contributing Membership”, that way it’s easier to communicate how many people actually qualify for this class of membership. The wording of the membership is a non exhaustive list of ways people qualify, but many people don’t know it exists, or pre-emptively determine their efforts aren’t enough. There are so many who qualify and if they’re invited they’ll highlight all the other amazing community members they know. Building a network of celebration helps communicate a core reason funding the PSF is very important, and makes it easier for more community members to start that conversation within their companies.</p><h3 style="text-align: left;">Where do you see the PSF 5 years from now?</h3><p>Because funding is among the biggest challenges, and is one that is unlikely to be resolved quickly, I think “Community Empowerment” will be one of the strongest aspects of the PSF in the years to come. There are many bodies for regional, domain specific, or identity specific Python groups, and I think maintaining and encouraging strong relationships with the larger community will help relay messaging, and help build up diverse leadership skills by having more events like CPython development sprints at various regional events. That wider net helps foster skills, enables local companies to invest in their local community while seeing its direct impact on the growth of Python as a whole, and hopefully provides chances for community engagement in a fashion that alleviates burdens.</p><p>Looking at the strength of the PSF Board of Director Nominees as well as Python Packaging Council nominees, it’s clear that there’s a massive amount of talent and each person has amazing experiences which inform the direction they want to help the PSF grow. Each of those is an area that strengthens the whole Python Community, and strong and well defined paths of empowerment and organization resources help ensure these initiatives continue to help Python thrive.</p><h3 style="text-align: left;">What areas of the Python Community are you involved with?</h3><p>I’m a part of the PSF Education and Outreach Workgroup, a Director and Community Outreach Lead for the community run Python Discord, and help with PyOhio (As a volunteer this year, prior two years as a Communication Chair). Additionally I moderated the Python Subreddit from mid 2020 through mid 2023.</p><p>I do a lot of work focused on the outreach side of things, trying to listen to where communities have needs and connect individuals who have strengths in exactly that domain. There’s a fair amount of times where people just didn’t know something existed, or don’t know where to find a resource, and helping relay that information has been one of the areas I’ve found to be fulfilling. It has the added benefit of getting to meet a ton of cool people and seeing the amazing things they’re doing in Python, and how their hobbies outside of Python shape their code and community.</p><p>------</p><h3 style="text-align: left;">Note from the election administrators:&nbsp;</h3><p>Want to learn more about this candidate or ask them a question?&nbsp;<br /><br />Check out <a href="https://www.python.org/nominations/elections/2026-python-software-foundation-board/nominees/keith-murray/" target="_blank">their nomination statement</a>.</p><p>Check out <a href="https://discuss.python.org/t/psf-board-nomination-ama-for-keith-murray/108570/" target="_blank">their AMA thread on discuss.python.org</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 25, 2026 12:51 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2026/08/keith-murray-2026-psf-board-election.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2026/08/karo-ladino-puerto-2026-psf-board.html" class="hover:underline"
-              >Karo Ladino-Puerto: 2026 PSF Board Election Candidate Interview</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <div style="text-align: left;"><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjFUxjESZAcGGxEgsr2BlBo75pZ4yTvWEsF1GxwRdGiGAhtwbdmv_WGZwzEf4LaAKP0PvOjFPEm7KvtkDTxh97AaLqbtwx_JCQPszloYH7xloxj2jXH1whXYKARm-Ow6ZBo9hiIoPgxgFSiJwxt9qkLI7c29uQTs_MXwmOAkmI4g8UjPSR5Dg/s2155/KaroLadino-Puerto_2026PSFBoardElection.png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="320" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjFUxjESZAcGGxEgsr2BlBo75pZ4yTvWEsF1GxwRdGiGAhtwbdmv_WGZwzEf4LaAKP0PvOjFPEm7KvtkDTxh97AaLqbtwx_JCQPszloYH7xloxj2jXH1whXYKARm-Ow6ZBo9hiIoPgxgFSiJwxt9qkLI7c29uQTs_MXwmOAkmI4g8UjPSR5Dg/s320/KaroLadino-Puerto_2026PSFBoardElection.png" width="289" /></a></div><h3 style="text-align: left;">Who are you?</h3></div><p>¡Hola mundo! I'm Karo Ladino-Puerto, though most of the community knows me as Karobot. I'm Colombian, a PSF Fellow since 2020, and I've spent the last eight years building Python community infrastructure in my country alongside a lot of amazing people. I've co-led PyLadies Colombia since 2018, supporting chapters in Bogotá, Medellín, Cali, Bucaramanga, Boyacá and Santa Marta. I co-organized PyCon Colombia from 2020 to 2025, and today I'm one of three women leading Python Colombia, with the objective of reconnecting the Python communities across the whole country. In 2025 I co-founded Fundación Átoma with Carolina Gómez and Nicole Franco, a Colombian non-profit that trains women in programming and helps local organizers keep their tech conferences free.<br /><br />By trade I'm a project manager, which mostly means I'm the person who notices the task nobody was assigned, asks the awkward question early, and keeps the timeline honest. It's the same skill I use in community work. I over-communicate on purpose, I'm detail-oriented to a degree that occasionally annoys people, and I still believe most good things don't need a big budget, just organization and consistency.</p><h3 style="text-align: left;">What would you bring to the PSF Board of Directors?</h3><p>I ran for the Board in 2024. I'm running again because the question in front of the PSF has changed, and I think I can be more useful this time.<br /><br />In 2024 we were mostly talking about growth. Today the Grants Program is running on a capped budget after last year's pause, PyCon US has run at a loss for three years, and the Foundation is operating with less than twelve months of runway. That isn't a communications problem, and it isn't only a diversity problem. It's a sustainability problem: how do you keep serving a community that keeps growing, with less money than you had previously?<br /><br />What I'd bring is experience with exactly that. Latin American organizers have never had a big budget. We learned to build events, chapters and workshops with sponsorship money that wouldn't cover a single line item at a larger conference. I'd like the Board to hear that experience from inside the room, from someone whose entire trajectory happened outside the funding centers of the world.</p><h3 style="text-align: left;">What problem or challenge do you want to address if you are on the board?</h3><p>It comes down to sustainability, and it has two sides.<br />&nbsp;<br />One is the community side. Most organizers I know work with very little money, or none. How do we help them keep their impact, and grow it, like that?<br />&nbsp;<br />The other is the industry side. Open source holds up the whole industry, the AI boom included, and more of the tooling is becoming closed. The people who keep it running are rarely recognized and almost never paid. The companies profiting from Python need to give something back.<br />&nbsp;<br />Money touches everything. A lot of this gets done for love, but communities still need money for the basics to keep existing.<br />&nbsp;<br />Still, part of what organizers need was never money. The PSF started here with the Community Partner Program, and I'd like to see it grow: introductions, shared infrastructure, organizers helping other organizers.<br />&nbsp;<br />The other part is communication. The PSF has been very open about its finances this year, and the Spanish-speaking community can help spread that. People can't defend what they don't understand. I want PSF updates and calls to action to arrive in Spanish, on time. That helps fundraising too: people give when they understand what is going on.</p><h3 style="text-align: left;">What areas of the Python community are you involved with?</h3><p>PyLadies is where I started and where I've stayed. I've co-led PyLadies Colombia since 2018, supporting the chapters in Bogotá, Medellín, Cali, Bucaramanga, Boyacá and Santa Marta with events, workshops, sponsorships and job pipelines.<br /><br />On the conference side, I co-organized PyCon Colombia from 2020 to 2025 and handed it over in September of that year. I've co-organized Django Girls and Humble Data Workshops in Colombia and Mexico, and PyDays in Cali and Pereira. I've keynoted PyLatam and PyCon Bolivia, and spoken at meetups across the region.<br /><br />Since December 2025 I've been part of the three-person team leading Python Colombia, whose one job is to reconnect local communities that had drifted apart from each other. It's slow, unfunded work, and a labor of love.<br /><br />Inside the PSF, I'm part of the Grants and the Diversity &amp; Inclusion Work Groups. And through Fundación Átoma, the non-profit I co-founded in 2025, we've reached more than 5,000 women, supported 10+ communities and built a network of 30+ national partners funding that work.</p><p>------</p><h3 style="text-align: left;">Note from the election administrators:&nbsp;</h3><p>Want to learn more about this candidate?&nbsp;Check out <a href="https://www.python.org/nominations/elections/2026-python-software-foundation-board/nominees/karo-ladino/" target="_blank">their nomination statement</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 25, 2026 12:51 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2026/08/karo-ladino-puerto-2026-psf-board.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1734,8 +2104,8 @@ forgive those 3000 words.<a href="https://anarc.at/tag/python-planet/#fnref:1" r
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8370</a></li>
-    <li><a>Unique Feeds: 375</a></li>
+    <li><a>Total Entries: 8208</a></li>
+    <li><a>Unique Feeds: 371</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
