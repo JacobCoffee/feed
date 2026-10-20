@@ -53,429 +53,6 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/faq/dragging-and-dropping-in-rich-text-example-app/" class="hover:underline"
-              >Handling Image Drag and Drop from Web Browsers in PyQt6 — Why toLocalFile() returns an empty string and how to handle remote image drops correctly</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <blockquote>
-<p>When dragging and dropping images from a web browser into a PyQt6 rich text editor, <code>toLocalFile()</code> sometimes returns a blank string. It works for some images (like Google image search results) but fails for others (like images embedded directly on a webpage). Why does this happen, and how can I handle it?</p>
-</blockquote>
-<p>If you've added drag and drop support to your application, you may have noticed something frustrating: dragging an image from a browser sometimes works perfectly, and other times gives you nothing at all. The <code>toLocalFile()</code> method returns an empty string, and your image never appears.</p>
-<p>This comes down to how browsers package image data when you start a drag operation, and what your application expects to receive. Let's walk through what's happening and how to fix it.</p>
-<h2 id="how-drag-and-drop-mime-data-works">How drag and drop MIME data works</h2>
-<p>When you drag something &mdash; a file, an image, some text &mdash; the source application bundles that data into a <code>QMimeData</code> object. This object can contain several different formats at once. For example, dragging an image might include:</p>
-<ul>
-<li>A file URL (<code>text/uri-list</code>)</li>
-<li>Raw image data (<code>image/png</code> or <code>image/jpeg</code>)</li>
-<li>An HTML <code>&lt;img&gt;</code> tag (<code>text/html</code>)</li>
-<li>A plain text URL (<code>text/plain</code>)</li>
-</ul>
-<p>Which of these formats are included depends entirely on the source application. Different browsers, and even different types of images within the same browser, behave differently.</p>
-<h2 id="why-tolocalfile-returns-an-empty-string">Why toLocalFile() returns an empty string</h2>
-<p>The method <code>QUrl.toLocalFile()</code> converts a URL into a local filesystem path. It only works when the URL uses the <code>file://</code> scheme &mdash; meaning the file actually exists on your computer.</p>
-<p>When you drag an image from a Google image search, the browser often creates a temporary local file and provides a <code>file://</code> URL. That's why <code>toLocalFile()</code> works in that case.</p>
-<p>But when you drag an image that's embedded directly in a webpage (like a screenshot in a blog post), the browser typically provides a remote <code>http://</code> or <code>https://</code> URL instead. There's no local file, so <code>toLocalFile()</code> returns an empty string. Some browsers may also provide the image as inline data or an HTML fragment with no URL at all.</p>
-<h2 id="inspecting-what-the-browser-actually-sends">Inspecting what the browser actually sends</h2>
-<p>A good first step is to look at exactly what MIME data arrives when you drop something. This small example creates a drop target that prints out all available MIME formats and their contents:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import sys
-
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
-
-
-class DropInspector(QLabel):
-    def __init__(self):
-        super().__init__("Drop something here")
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumSize(400, 300)
-        self.setStyleSheet(
-            "background-color: #f0f0f0; border: 2px dashed #aaa; font-size: 16px;"
-        )
-        self.setAcceptDrops(True)
-
-    def dragEnterEvent(self, event):
-        event.acceptProposedAction()
-
-    def dropEvent(self, event):
-        mime_data = event.mimeData()
-        print("=== Drop received ===")
-        for fmt in mime_data.formats():
-            data = mime_data.data(fmt)
-            print(f"\nFormat: {fmt}")
-            # Show first 200 bytes as text for readability.
-            try:
-                print(f"  Data: {bytes(data[:200]).decode('utf-8', errors='replace')}")
-            except Exception:
-                print(f"  Data: ({len(data)} bytes, binary)")
-
-        if mime_data.hasUrls():
-            for url in mime_data.urls():
-                print(f"\nURL: {url.toString()}")
-                print(f"  toLocalFile: '{url.toLocalFile()}'")
-                print(f"  scheme: '{url.scheme()}'")
-
-        event.acceptProposedAction()
-        self.setText("Check console output!")
-
-
-app = QApplication(sys.argv)
-window = DropInspector()
-window.show()
-sys.exit(app.exec())
-</code></pre>
-</div>
-<p>Try dragging different images from your browser into this window. You'll see that some drops include <code>file://</code> URLs while others include <code>https://</code> URLs or even raw image data with no URL at all.</p>
-<h2 id="handling-all-cases-in-your-drop-event">Handling all cases in your drop event</h2>
-<p>To make your application work reliably with images dragged from any source, you need to handle multiple scenarios:</p>
-<ol>
-<li><strong>Local file URL</strong> &mdash; use the file path directly</li>
-<li><strong>Remote URL</strong> &mdash; download the image</li>
-<li><strong>Raw image data</strong> &mdash; use it directly from the MIME data</li>
-<li><strong>HTML with an <code>&lt;img&gt;</code> tag</strong> &mdash; extract the image URL from the HTML</li>
-</ol>
-<p>Here's how to implement this step by step.</p>
-<h3>Checking for local files first</h3>
-<p>This is the simplest case and the one you likely already have working:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">def dropEvent(self, event):
-    mime_data = event.mimeData()
-
-    if mime_data.hasUrls():
-        for url in mime_data.urls():
-            local_path = url.toLocalFile()
-            if local_path:
-                # It's a local file &mdash; use it directly.
-                self.insert_image_from_path(local_path)
-                event.acceptProposedAction()
-                return
-</code></pre>
-</div>
-<h3>Handling remote URLs</h3>
-<p>When <code>toLocalFile()</code> returns an empty string but you still have a URL, it's likely a remote image. You can download it using Python's <code>urllib</code> (or <code>requests</code> if you prefer):</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import os
-import tempfile
-import urllib.request
-
-
-def download_image(url_string):
-    """Download an image from a URL and return the local file path."""
-    try:
-        # Create a temporary file to store the downloaded image.
-        suffix = os.path.splitext(url_string)[-1].split("?")[0]
-        if suffix not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
-            suffix = ".png"
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        urllib.request.urlretrieve(url_string, tmp_file.name)
-        return tmp_file.name
-    except Exception as e:
-        print(f"Failed to download image: {e}")
-        return None
-</code></pre>
-</div>
-<p>Then extend your drop handler:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">if mime_data.hasUrls():
-    for url in mime_data.urls():
-        local_path = url.toLocalFile()
-        if local_path:
-            self.insert_image_from_path(local_path)
-            event.acceptProposedAction()
-            return
-
-        # No local file &mdash; try downloading the remote URL.
-        url_string = url.toString()
-        if url_string:
-            local_path = download_image(url_string)
-            if local_path:
-                self.insert_image_from_path(local_path)
-                event.acceptProposedAction()
-                return
-</code></pre>
-</div>
-<h3>Handling raw image data</h3>
-<p>Sometimes the browser sends the image data directly, without any URL. You can check for this using <code>hasImage()</code>:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">if mime_data.hasImage():
-    image = mime_data.imageData()
-    if image and not image.isNull():
-        # Save the image to a temp file and insert it.
-        tmp_path = tempfile.NamedTemporaryFile(
-            delete=False, suffix=".png"
-        ).name
-        image.save(tmp_path)
-        self.insert_image_from_path(tmp_path)
-        event.acceptProposedAction()
-        return
-</code></pre>
-</div>
-<h3>Extracting URLs from HTML</h3>
-<p>As a fallback, some drops include an HTML fragment with an <code>&lt;img&gt;</code> tag. You can parse out the <code>src</code> attribute:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import re
-
-
-def extract_image_url_from_html(html):
-    """Extract the first image URL from an HTML string."""
-    match = re.search(r'&lt;img[^&gt;]+src=["\']([^"\']+)["\']', html)
-    if match:
-        return match.group(1)
-    return None
-</code></pre>
-</div>
-<p>Then add this as a final fallback:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">if mime_data.hasHtml():
-    html = mime_data.html()
-    image_url = extract_image_url_from_html(html)
-    if image_url:
-        local_path = download_image(image_url)
-        if local_path:
-            self.insert_image_from_path(local_path)
-            event.acceptProposedAction()
-            return
-</code></pre>
-</div>
-<h2 id="complete-working-example">Complete working example</h2>
-<p>Here's a full, working rich text editor with robust image drag and drop support. You can copy this and run it directly:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import os
-import re
-import sys
-import tempfile
-import urllib.request
-
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QTextCursor
-from PyQt6.QtWidgets import QApplication, QMainWindow, QTextEdit, QVBoxLayout, QWidget
-
-
-def download_image(url_string):
-    """Download an image from a URL and return the local file path."""
-    try:
-        suffix = os.path.splitext(url_string.split("?")[0])[-1]
-        if suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
-            suffix = ".png"
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        urllib.request.urlretrieve(url_string, tmp_file.name)
-        return tmp_file.name
-    except Exception as e:
-        print(f"Failed to download image: {e}")
-        return None
-
-
-def extract_image_url_from_html(html):
-    """Extract the first image URL from an HTML string."""
-    match = re.search(r'&lt;img[^&gt;]+src=["\']([^"\']+)["\']', html)
-    if match:
-        return match.group(1)
-    return None
-
-
-class ImageDropTextEdit(QTextEdit):
-    def __init__(self):
-        super().__init__()
-        self.setAcceptDrops(True)
-
-    def canInsertFromMimeData(self, source):
-        if source.hasImage() or source.hasUrls() or source.hasHtml():
-            return True
-        return super().canInsertFromMimeData(source)
-
-    def insertFromMimeData(self, source):
-        """Handle paste and drop events with image support."""
-        # Try each method in order of reliability.
-
-        # 1. Check for direct image data.
-        if source.hasImage():
-            image = source.imageData()
-            if isinstance(image, QImage) and not image.isNull():
-                self.insert_image(image)
-                return
-
-        # 2. Check for URLs (local or remote).
-        if source.hasUrls():
-            for url in source.urls():
-                local_path = url.toLocalFile()
-                if local_path and self.is_image_file(local_path):
-                    self.insert_image_from_path(local_path)
-                    return
-
-                # Try downloading remote URL.
-                url_string = url.toString()
-                if url_string and self.looks_like_image_url(url_string):
-                    local_path = download_image(url_string)
-                    if local_path:
-                        self.insert_image_from_path(local_path)
-                        return
-
-        # 3. Check for HTML with embedded image tags.
-        if source.hasHtml():
-            image_url = extract_image_url_from_html(source.html())
-            if image_url:
-                if image_url.startswith("data:"):
-                    # Data URI &mdash; decode and insert.
-                    image = self.image_from_data_uri(image_url)
-                    if image and not image.isNull():
-                        self.insert_image(image)
-                        return
-                else:
-                    local_path = download_image(image_url)
-                    if local_path:
-                        self.insert_image_from_path(local_path)
-                        return
-
-        # Fall back to default behavior for plain text, etc.
-        super().insertFromMimeData(source)
-
-    def insert_image_from_path(self, file_path):
-        """Insert an image from a local file path into the editor."""
-        image = QImage(file_path)
-        if image.isNull():
-            print(f"Could not load image: {file_path}")
-            return
-        self.insert_image(image)
-
-    def insert_image(self, image):
-        """Insert a QImage into the editor at the current cursor position."""
-        cursor = self.textCursor()
-        document = self.document()
-
-        # Add the image as a resource in the document.
-        image_name = f"dropped_image_{id(image)}"
-        document.addResource(
-            document.ResourceType.ImageResource.value,
-            self.create_url(image_name),
-            image,
-        )
-
-        # Insert the image at the cursor.
-        image_format = cursor.charFormat()
-        from PyQt6.QtGui import QTextImageFormat
-
-        img_fmt = QTextImageFormat()
-        img_fmt.setName(image_name)
-        img_fmt.setWidth(min(image.width(), 600))
-        img_fmt.setHeight(
-            int(image.height() * min(image.width(), 600) / max(image.width(), 1))
-        )
-        cursor.insertImage(img_fmt)
-
-    @staticmethod
-    def create_url(name):
-        from PyQt6.QtCore import QUrl
-
-        return QUrl(name)
-
-    @staticmethod
-    def is_image_file(path):
-        extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
-        return os.path.splitext(path.lower())[-1] in extensions
-
-    @staticmethod
-    def looks_like_image_url(url_string):
-        """Check if a URL looks like it points to an image."""
-        clean_url = url_string.split("?")[0].lower()
-        extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"}
-        return any(clean_url.endswith(ext) for ext in extensions)
-
-    @staticmethod
-    def image_from_data_uri(data_uri):
-        """Decode a data: URI and return a QImage."""
-        import base64
-
-        try:
-            # data:image/png;base64,iVBOR...
-            header, data = data_uri.split(",", 1)
-            image_data = base64.b64decode(data)
-            image = QImage()
-            image.loadFromData(image_data)
-            return image
-        except Exception as e:
-            print(f"Failed to decode data URI: {e}")
-            return None
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Rich Text Editor &mdash; Image Drop Demo")
-        self.setMinimumSize(700, 500)
-
-        self.editor = ImageDropTextEdit()
-        self.editor.setPlaceholderText(
-            "Try dragging an image from your web browser into this editor..."
-        )
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.editor)
-
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
-
-
-app = QApplication(sys.argv)
-window = MainWindow()
-window.show()
-sys.exit(app.exec())
-</code></pre>
-</div>
-<h2 id="whats-happening-in-the-complete-example">What's happening in the complete example</h2>
-<p>The <code>ImageDropTextEdit</code> class overrides <code>insertFromMimeData</code>, which Qt calls for both paste (Ctrl+V) and drag-and-drop operations. This gives you a single place to handle all image insertion.</p>
-<p>The method tries each data source in order:</p>
-<ol>
-<li><strong>Direct image data</strong> &mdash; the fastest and most reliable, when available.</li>
-<li><strong>URLs</strong> &mdash; first checking for local files, then attempting to download remote URLs.</li>
-<li><strong>HTML fragments</strong> &mdash; parsing out <code>&lt;img&gt;</code> tags and fetching the referenced image, including support for <code>data:</code> URIs.</li>
-<li><strong>Fallback</strong> &mdash; if none of the above match, it passes control to the default <code>QTextEdit</code> behavior, so normal text paste and drop still work.</li>
-</ol>
-<p>By overriding <code>canInsertFromMimeData</code> as well, we tell Qt's drag and drop system that our editor accepts these additional formats, which ensures the correct cursor icon appears when hovering over the editor.</p>
-<p>This approach handles the differences between browsers &mdash; Chrome, Firefox, Edge &mdash; and between different types of images on the web, making your rich text editor's drag and drop support much more resilient.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 05, 2026 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/faq/dragging-and-dropping-in-rich-text-example-app/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://malemburg.com/pymmich-an-ai-first-oss-project/" class="hover:underline"
               >Pymmich – an AI-first OSS project 🐍✨</a
             >
@@ -658,48 +235,6 @@ sys.exit(app.exec())
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/" class="hover:underline"
-              >OMI Audio extension for glTF</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Another OMI-based extension, this time for positional audio mixing. Again, Claude-coded, using the OMI/KHR audio extensions for glTF as the base model and then implementing the actual mixing using Numpy. Supports mp3, wav, opus and flac inputs and stereo (headset) outputs. Up on github as <a href="https://github.com/mcfletch/omi_audio">omi_audio</a> and on PyPI as <a href="https://pypi.org/project/omi-audio/">omi_audio</a> as well.</p>
-
-<p>This is loosely the same model as Web Audio's Panner Node. The only significant difference from the KHR extension is that we also support VRML97 style double-ellipse emitter. The package delegates file retrieval to the application, and doesn't include any special effects or the like.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 02, 2026 04:06 PM UTC by
-            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
-              >Mike C. Fletcher</a
-            >
-          </div>
-          <a
-            href="http://blog.vrplumber.com/b/2026/08/02/omi-audio-extension-for-gltf/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/557/security-of-everything-at-pycon-2026" class="hover:underline"
               >#557: Security of everything at PyCon 2026</a
             >
@@ -783,101 +318,6 @@ control where it is used.</li>
           </div>
           <a
             href="https://pythonspeed.com/articles/faster-float-math-rust/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/htmx-4-the-game?utm_campaign=rss" class="hover:underline"
-              >Let’s Play “htmx 4: the game”</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Moments ago I just finished playing “<a href="https://four.htmx.org/">htmx 4: the game</a>”, the first
-JavaScript library <a href="https://swag.htmx.org/products/htmx-4-the-game">published exclusively for Game Boy and Game Boy Color</a>.
-I've recorded my play session and published the video to YouTube:</p>
-
-<!-- more -->
-
-<p>
-<center>
-
-</center>
-</p>
-
-<p>When I first saw this announcement it was pure blog bait for me. Game Boy,
-open source software, reverse-engineering, oh my. I purchased the cartridge
-within moments of seeing the announcement.</p>
-
-<p>The Game Boy cartridge arrived earlier today inside a custom cardboard box
-and plastic case which I appreciate! The box was tight to open without ripping
-the cardboard, I managed with the help of some tweezers. The game is on a
-Game Boy cartridge with a label. The cartridge itself reads “Game” instead of “Game Boy”
-to avoid running afoul of Nintendo trademarks and licensing.</p>
-
-<p>
-<center>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/htmx-4/IMG_5939_small.jpeg" style="border: 2px black solid;" />
-</center>
-</p>
-
-<p>I was able to dump the ROM using my <a href="https://sethmlarson.dev/backup-game-boy-roms-and-saves-on-ubuntu">Epilogue GB Operator</a>
-where I initially had some difficulty, but figured out I had to
-upgrade my device firmware.
-I switched over to my <a href="https://en.wikipedia.org/wiki/Game_Boy_Player">Game Boy Player</a> to capture footage
-of game play with my HDMI-modded GameCube.</p>
-
-<p>The game is <strong>tough</strong> (especially The Slop Factory, yeesh)
-and took me over an hour to complete,
-and I didn't even find all 4 HTMX letters in each stage...
-hinting that there is <em>more to be discovered!</em> There
-was pervasive lag while playing which the game’s story
-blames on... React. <em>A likely story!</em> ;)</p>
-
-<p>Going in I wasn't sure how they were going to distribute the
-final source code... Would there be a QR code to the source code
-(which would have been a disappointment) or would
-the htmx team actually <a href="https://en.wikipedia.org/wiki/Type-in_program">make you type it in yourself
-like a BASIC program from a magazine</a>? 
-I was so happy to see that the htmx team <a href="https://youtu.be/I688pAIVSK4?si=kxSuQHs8hVwq3XFU&amp;t=3297">went all the
-way</a>, it means I'm even more excited to dig into this ROM!</p>
-
-<p>As a software distribution mechanism... including
-ordering the game, waiting for delivery, beating
-the game, and then typing in the source code by
-hand from the Game Boy screen... Let's say it's
-slightly less user-friendly than <code>npm install</code> :)
-But that's the fun of a project like this.</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on August 01, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/htmx-4-the-game?utm_campaign=rss"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1781,50 +1221,6 @@ today.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://blog.vrplumber.com/b/2026/07/22/omi-physics-extension-for-gltf/" class="hover:underline"
-              >OMI Physics Extension for glTF</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>I had Claude code up an <a href="https://github.com/mcfletch/omi_physics">OMI Physics</a> package using Numpy. It's up on pypi as <a href="https://pypi.org/project/omi-physics/">omi_physics</a>. This follows the <a href="https://github.com/omigroup/gltf-extensions/tree/main/extensions/2.0/OMI_physics_shape">OMI extensions to glTF</a> pretty closely to create an engine with the common features you need. It's not trying to be real-world physics, it's just a game engine style simulation.</p>
-
-<p>The core is GL-free, with a few GPGPU kernels to optimise certain bits over 10,000 objects, but in testing any more than about 300 objects brings the rendering below 60fps in OpenGLContext. To get around that we'd need to move the whole physics process into the GPU with a very different solver, and I don't currently need that.</p>
-
-<p>License is MIT, though most of the code is written by Claude, so arguably it's non-copyright.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on July 22, 2026 05:13 AM UTC by
-            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
-              >Mike C. Fletcher</a
-            >
-          </div>
-          <a
-            href="http://blog.vrplumber.com/b/2026/07/22/omi-physics-extension-for-gltf/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://pythonbytes.fm/episodes/show/489/or-json" class="hover:underline"
               >#489 Or JSON?</a
             >
@@ -1857,6 +1253,265 @@ today.</p>
       </div>
     </div>
     
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://wingware.com/news/2026-07-20" class="hover:underline"
+              >Wing Python IDE Version 12 - July 20, 2026</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Wing Python IDE version 12 has been released. Wing 12 integrates the Claude
+Code AI coding agent directly into the IDE, with a new <tt class="literal"><span class="pre">Claude</span> <span class="pre">Code</span></tt> tool,
+a <tt class="literal"><span class="pre">Tasks</span></tt> tool for planning and reviewing AI agent work, and a set of MCP
+servers that give the agent access to Wing's source code analysis, unit
+testing, debugger, and code review features. Wing 12 makes it faster and
+cheaper to direct AI agents; see our <a class="reference" href="/psupport/wing12/benchmarks/bench-intro.html">benchmarks</a> for details.</p>
+<p>Wing 12 also adds configurable AI-driven <tt class="literal"><span class="pre">Code</span> <span class="pre">Actions</span></tt>, code <tt class="literal"><span class="pre">FIX</span></tt>
+actions, automated <tt class="literal"><span class="pre">Write</span> <span class="pre">Tests</span></tt>, pseudo-terminal support for OS Commands
+and Debug I/O, support for tools and OS Commands in editor splits, a
+reorganized Tools menu, automatic test discovery, Preferences search, and
+more.</p>
+<img alt="Wing 12 Screen Shot" class="eye-candy-image unfloat-at-900" src="https://wingware.com/images/screenshots/wing12-screenshot.png" width="650px" /><h3>Downloads</h3><div class="note">
+Be sure to <tt class="literal"><span class="pre">Check</span> <span class="pre">for</span> <span class="pre">Updates</span></tt> in Wing's <tt class="literal"><span class="pre">Help</span></tt> menu after installing, to make
+sure that you have the latest hot fixes.</div>
+<p><a class="reference" href="/downloads">Wing 12</a> -- the full Python IDE, available as Wing Pro (for
+agentic development) or Wing Classic (for manual development) depending on
+your license, with a free 30-day trial of Wing Pro.</p>
+<p><a class="reference" href="/downloads/wing-101">Wing 101 v. 12</a> -- a simplified free Python IDE for
+teaching beginning programmers.</p>
+<p>Wing 11 and earlier versions are not affected by installation of Wing 12 and may be
+installed and used independently.  However, project files for Wing 11 and earlier are
+converted when opened by Wing 12 and should be saved under a new name, since Wing 12
+projects cannot be opened by older versions of Wing.</p>
+<h2>New in Wing 12</h2><h3>AI Coding Agent Integration with Claude Code</h3><p>Wing 12 adds a <tt class="literal"><span class="pre">Claude</span> <span class="pre">Code</span></tt> tool that integrates the Claude Code AI coding agent
+with the IDE.  <tt class="literal"><span class="pre">Set</span> <span class="pre">Up</span> <span class="pre">for</span> <span class="pre">Claude</span> <span class="pre">Code</span></tt> in the <tt class="literal"><span class="pre">Project</span></tt> menu configures
+the active project for AI agent development.</p>
+<p>A set of MCP (Model Context Protocol) servers gives Claude Code access to Wing's source
+code analysis, testing, and debugger functionality, so the agent can more efficiently
+navigate and understand your code, write, run, and fix unit tests, and use the
+debugger to diagnose difficult runtime errors.  In our <a class="reference" href="/psupport/wing12/benchmarks/bench-intro.html">benchmarks</a>, giving Claude Code access to Wing's
+MCP servers made agent-driven coding tasks both faster and cheaper.</p>
+<h3>Tasks Tool</h3><p>The new <tt class="literal"><span class="pre">Tasks</span></tt> tool lets you plan, queue, execute, review, and audit the
+history of AI agent development tasks, making it easier to supervise and inspect
+the agent's work before committing it to revision control.</p>
+<h3>FIX Features and Write Tests</h3><p>Wing 12 adds AI agent driven <tt class="literal"><span class="pre">FIX</span></tt> features that hand the current debugger
+bug, failing unit tests, or code warnings to Claude Code for resolution. New
+<tt class="literal"><span class="pre">Write</span> <span class="pre">Tests</span></tt> items in the <tt class="literal"><span class="pre">Testing</span></tt> and editor context menus prompt the
+agent to write unit tests for selected code.</p>
+<h3>Code Actions</h3><p>Wing 12 also adds AI <tt class="literal"><span class="pre">Code</span> <span class="pre">Actions</span></tt>, accessed from the <tt class="literal"><span class="pre">FIX</span></tt> icon in the
+editor toolbar, that operate on selected code or the enclosing scope.
+Built-in actions include explaining code, reviewing it for quality or
+security risks, fixing code warnings, optimizing for performance, and
+updating comments and docstrings. The action list is user-extensible, so you
+can add your own prompts for tasks you run often.</p>
+<h3>Pseudo-Terminal for OS Commands and Debug I/O</h3><p>The <tt class="literal"><span class="pre">OS</span> <span class="pre">Commands</span></tt> and <tt class="literal"><span class="pre">Debug</span> <span class="pre">I/O</span></tt> tools now default to using a pseudo-terminal
+that implements full ANSI terminal emulation, so you can run and debug programs that
+use color output, cursor positioning, or full-screen TUIs.</p>
+<h3>Redesigned OS Commands Capability</h3><p>The <tt class="literal"><span class="pre">OS</span> <span class="pre">Commands</span></tt> tool has been replaced with configurable OS Commands in
+the <tt class="literal"><span class="pre">Tools</span></tt> menu. Each OS Command acts like its own tool, for use in any
+tool or editor split.</p>
+<h3>Tools in Editor Splits and Reorganized Tools Menu</h3><p>Tools can now also be added or dragged to editor splits, allowing for much
+more flexible workspace layout. The <tt class="literal"><span class="pre">Tools</span></tt> menu has been reorganized into
+related groups, with less-user and legacy tools in an <tt class="literal"><span class="pre">Other</span></tt> sub-menu, so
+more commonly used tools area easier to find.</p>
+<h3>Test Discovery and Preferences Search</h3><p>Wing 12 adds automatic test file discovery and discovery of individual unit tests
+within files, so you usually don't need to specify test file patterns or add test
+files individually.  The <tt class="literal"><span class="pre">Preferences</span></tt> dialog now supports text search and
+back/forward navigation.</p>
+<h3>Other Minor Features and Improvements</h3><p>Wing 12 also significantly speeds up source code analysis, prompts for SSH
+passphrases and HTTPS credentials when needed during VCS operations, detects
+externally modified files much more quickly and with reduced CPU load, saves and
+restores tool console scrollback across project close/reopen, supports clickable
+OSC 8 hyperlinks in OS Commands and Debug I/O tools, adds a preference to select
+the <tt class="literal"><span class="pre">ssh</span></tt> or <tt class="literal"><span class="pre">plink.exe</span></tt> SSH implementation, shows a notice on the next startup
+when Wing's previous session ended in an unexpected crash, and makes a number of
+other bug fixes and usability improvements.</p>
+<h3>Product Line Changes</h3><p>Wing 12 simplifies the product line.  The Commercial / Non-Commercial use distinction
+has been replaced by two feature-based product tiers:</p>
+<div class="bullet-list"><ul><li><span class="bullet"><tt class="literal"><span class="pre">Wing</span> <span class="pre">Pro</span></tt> -- the full-featured Python IDE including AI agent development tools</span></li>
+<li><span class="bullet"><tt class="literal"><span class="pre">Wing</span> <span class="pre">Classic</span></tt> -- the complete traditional Python IDE for hands-on development,
+with no AI agent features</span></li>
+</ul></div><p>Anyone may purchase either tier for any purpose. Existing Commercial and
+Non-Commercial Use licenses both become <tt class="literal"><span class="pre">Wing</span> <span class="pre">Pro</span></tt>. Customers who don't
+need the AI agent features may move to <tt class="literal"><span class="pre">Wing</span> <span class="pre">Classic</span></tt> at renewal time, or
+any time sooner by contacting <a class="reference" href="mailto:support&#64;wingware.com">support&#64;wingware.com</a>.</p>
+<p><tt class="literal"><span class="pre">Wing</span> <span class="pre">Personal</span></tt> has been discontinued.  Existing Wing Personal users may continue
+to use Personal 11.x indefinitely, switch to free Wing 101, or purchase a Wing Classic
+license.  See <a class="reference" href="/store">Pricing</a> for details.</p>
+<h3>Changes and Incompatibilities</h3><p>The single-LLM-query AI features originally introduced in Wing 11 (the <tt class="literal"><span class="pre">AI</span>
+<span class="pre">Coder</span></tt> and <tt class="literal"><span class="pre">AI</span> <span class="pre">Chat</span></tt> tools) are considered legacy in Wing 12 and hidden
+from the user interface by default. They remain available in projects that
+already use them and can be re-enabled with <tt class="literal"><span class="pre">Project</span> <span class="pre">Properties</span> <span class="pre">&gt;</span> <span class="pre">AI</span></tt> in
+Project Properties or in the .``Projects &gt; AI`` preferences.</p>
+<p>See <a class="reference" href="/wingide/agent">Wing's Claude Code Agent Integration</a> for Wing 12's
+AI agent approach.</p>
+<p>If you have questions, please don't hesitate to contact us at
+<a class="reference" href="mailto:support&#64;wingware.com">support&#64;wingware.com</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 20, 2026 01:00 AM UTC by
+            <a href="http://wingware.com/news/rss&noheader=1" class="link link-hover text-primary"
+              >Wingware</a
+            >
+          </div>
+          <a
+            href="https://wingware.com/news/2026-07-20"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.paulox.net/2026/07/20/my-europython-2026/" class="hover:underline"
+              >My EuroPython 2026</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>My EuroPython 2026 experience in Krakow, captured through Mastodon posts about talks, community, people, and moments along the&nbsp;way.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 19, 2026 10:00 PM UTC by
+            <a href="https://www.paulox.net/feed/python.xml" class="link link-hover text-primary"
+              >Paolo Melchiorre</a
+            >
+          </div>
+          <a
+            href="https://www.paulox.net/2026/07/20/my-europython-2026/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://www.peterbe.com/plog/best-django-redis-configuration-for-speed-and-size" class="hover:underline"
+              >Best Django Redis configuration for speed and size</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            `lzma` compresses the most and `zlib` is about as fast as `zstd` in `django_redis` as compressor.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 19, 2026 08:01 PM UTC by
+            <a href="http://www.peterbe.com/oc-Python/rss.xml" class="link link-hover text-primary"
+              >Peter Bengtsson</a
+            >
+          </div>
+          <a
+            href="http://www.peterbe.com/plog/best-django-redis-configuration-for-speed-and-size"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2026/07/moving-linux-builds-to-glibc228.html" class="hover:underline"
+              >Moving linux builds to GLIBC==2.28</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>A short note for visibility.</p>
+<p>PyPy builds tarballs of the python interpreter <a href="https://downloads.python.org/pypy/">ready for
+download</a>. These include the latest
+releases and also nightly builds, fresh from our fleet of buildbots. Over the
+next couple of days, the nightly builds on linux will transition from
+<code>manylinux2014</code> based docker images <a href="https://github.com/pypy/pypy-ci">to <code>manylinux2_28</code>
+images</a>. The practical implication is that
+nightly images, and the next releases, will require a minimum of <code>GLIBC&gt;=2.28</code>,
+i.e. AlmaLinux8, amanzonlinux 2023, debian 10, ubuntu 20.04. For a good
+overview of how this glibc/distro/manylinux all works, see <a href="https://github.com/mayeut/pep600_compliance">the PEP 600 compliance
+page</a>.</p>
+<p>The next release will indicate this change by a new PyPy major version, 8.0.0.
+It should include a Python3.12 interpreter, in which case it will be the last
+release of the Python 3.11 interpreter.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on July 18, 2026 06:09 PM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2026/07/moving-linux-builds-to-glibc228.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index8.html" class="btn">«</a><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">9</button><a href="index10.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">10</a><a href="index10.html" class="btn">»</a></div></div>
 </div>
@@ -1868,12 +1523,12 @@ today.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8367</a></li>
-    <li><a>Unique Feeds: 377</a></li>
+    <li><a>Total Entries: 8401</a></li>
+    <li><a>Unique Feeds: 376</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (565)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (500)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (217)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (203)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (565)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (501)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://nuitka.net/categories/Python.xml">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
