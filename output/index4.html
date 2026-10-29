@@ -63,7 +63,158 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            How can I change the text color from black to white of the percentage indicator inside the <code>QProgressBar</code> when it exceeds the value of 50?
+            <blockquote>
+<p>How can I change the text color from black to white of the percentage indicator inside the <code>QProgressBar</code> when it exceeds the value of 50?</p>
+</blockquote>
+<p>When a <code>QProgressBar</code> fills past the halfway mark, the dark-colored chunk behind the text can make the default black percentage label hard to read. A common solution is to switch the text color to white once the value crosses 50%. Let's walk through how to do this in PyQt5 using stylesheets and a signal connection.</p>
+<h2 id="why-the-text-becomes-hard-to-read">Why the text becomes hard to read</h2>
+<p>By default, <code>QProgressBar</code> draws its percentage text on top of the bar. When the colored "chunk" is small, the text sits against a light background and black text is fine. As the chunk grows and fills most of the bar, the text ends up on top of a dark background &mdash; and black-on-dark is difficult to see.</p>
+<p>The fix is straightforward: watch for value changes and update the stylesheet to swap the text color at the right moment.</p>
+<h2 id="styling-the-qprogressbar-text">Styling the <code>QProgressBar</code> text</h2>
+<p>The text color on a <code>QProgressBar</code> is controlled by the <code>color</code> property on the <code>QProgressBar</code> selector itself &mdash; not on <code>QProgressBar::chunk</code>. The <code>::chunk</code> sub-control only styles the filled portion of the bar (its background color, border, etc.), while <code>color</code> on <code>QProgressBar</code> sets the text color.</p>
+<p>Here's a quick example of setting the text to white:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">self.progress_bar.setStyleSheet("QProgressBar { color: white; }")
+</code></pre>
+</div>
+<p>And setting it back to black:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">self.progress_bar.setStyleSheet("QProgressBar { color: black; }")
+</code></pre>
+</div>
+<h2 id="responding-to-value-changes">Responding to value changes</h2>
+<p><code>QProgressBar</code> emits a <code>valueChanged</code> signal every time its value updates. You can connect a slot to this signal that checks the current value and applies the appropriate stylesheet.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">self.progress_bar.valueChanged.connect(self.update_progress_text_color)
+</code></pre>
+</div>
+<p>Then define the slot:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def update_progress_text_color(self, value):
+    if value &gt; 50:
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                color: white;
+            }
+        """)
+    else:
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                color: black;
+            }
+        """)
+</code></pre>
+</div>
+<p>Each time the value changes, this method checks whether it's above 50 and sets the text color accordingly.</p>
+<h2 id="preserving-other-styles">Preserving other styles</h2>
+<p>If you already have a stylesheet on your progress bar (for example, customizing the chunk color or the bar's border), you'll want to include those properties in both branches so they aren't lost when the stylesheet is replaced. Every call to <code>setStyleSheet()</code> replaces the previous stylesheet entirely.</p>
+<p>For example:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">BASE_STYLE = """
+    QProgressBar {
+        border: 1px solid grey;
+        border-radius: 5px;
+        text-align: center;
+    }
+    QProgressBar::chunk {
+        background-color: #4CAF50;
+        border-radius: 5px;
+    }
+"""
+
+def update_progress_text_color(self, value):
+    if value &gt; 50:
+        color_style = "QProgressBar { color: white; }"
+    else:
+        color_style = "QProgressBar { color: black; }"
+
+    self.progress_bar.setStyleSheet(BASE_STYLE + color_style)
+</code></pre>
+</div>
+<p>Because the <code>color_style</code> rule comes after <code>BASE_STYLE</code>, it overrides the text color while keeping everything else intact.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's a full PyQt5 application you can copy and run. It uses a <code>QTimer</code> to increment the progress bar automatically so you can see the text color flip from black to white as the bar crosses 50%.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QProgressBar, QPushButton,
+)
+from PyQt5.QtCore import QTimer
+
+
+BASE_STYLE = """
+    QProgressBar {
+        border: 1px solid grey;
+        border-radius: 5px;
+        text-align: center;
+        font-size: 14px;
+    }
+    QProgressBar::chunk {
+        background-color: #3874f2;
+        border-radius: 5px;
+    }
+"""
+
+
+class MainWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("QProgressBar Text Color Demo")
+        self.resize(400, 120)
+
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet(BASE_STYLE + "QProgressBar { color: black; }")
+        layout.addWidget(self.progress_bar)
+
+        self.start_button = QPushButton("Start")
+        self.start_button.clicked.connect(self.start_progress)
+        layout.addWidget(self.start_button)
+
+        self.progress_bar.valueChanged.connect(self.update_progress_text_color)
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.advance_progress)
+
+    def start_progress(self):
+        self.progress_bar.setValue(0)
+        self.timer.start(50)
+
+    def advance_progress(self):
+        current = self.progress_bar.value()
+        if current &gt;= 100:
+            self.timer.stop()
+            return
+        self.progress_bar.setValue(current + 1)
+
+    def update_progress_text_color(self, value):
+        if value &gt; 50:
+            color_style = "QProgressBar { color: white; }"
+        else:
+            color_style = "QProgressBar { color: black; }"
+
+        self.progress_bar.setStyleSheet(BASE_STYLE + color_style)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec_())
+</code></pre>
+</div>
+<p>When you run this, click <strong>Start</strong> and watch the percentage label. While the bar is at 50% or below, the text is black. The moment it passes 50%, the text switches to white, keeping it readable against the blue chunk.</p>
+<p>You can adjust the threshold, the colors, or even add a gradual transition by checking at multiple thresholds &mdash; the same pattern applies. Connect to <code>valueChanged</code>, check the value, and set the stylesheet accordingly.</p>
           </p>
         </div>
 
@@ -2412,7 +2563,7 @@ existed?</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8352</a></li>
+    <li><a>Total Entries: 8339</a></li>
     <li><a>Unique Feeds: 373</a></li>
     
 
