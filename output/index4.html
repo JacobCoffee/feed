@@ -53,6 +53,145 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202610/making_git_hooks_visible" class="hover:underline"
+              >Making git hooks visible</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://frankwiles.com/posts/i-got-targeted/" rel="external noopener">Frank Wiles wrote about an attack he nearly fell victim
+to</a>: a downloaded git repo had active git hooks that would have compromised
+his system. Seeing the risks, I wanted to make git hooks more visible on my own
+machine.</p><p>A git hook is a script in the .git directory of a git repo on your machine.
+They run during various git operations. The important detail to understand about
+hooks is that they do not get installed locally when you clone a repo. A newly
+cloned repo never has active hooks.  Hooks have to be enabled after cloning,
+usually by you.</p><p>The attack Frank saw was dangerous because it wasn&#8217;t a cloned repo: it was a
+local checkout that had hooks installed then shared as a Dropbox folder. So
+when it landed on Frank&#8217;s machine, the hooks were active without him realizing
+it.</p><p>Git hooks are not apparent: they are meant to sit quietly until they run and
+ideally to be unobtrusive even then. But this attack made me want to know what
+hooks were in each of my git directories.</p><p>In zsh, you can define a function called <a href="https://zsh.sourceforge.io/Doc/Release/Functions.html#Hook-Functions" rel="external noopener">chpwd</a>, and it
+will execute whenever the current directory changes. Using this feature, I could
+create a script that lists the active hooks when I change into a git
+directory:</p><blockquote class="code"><div class="source"><pre class="shell">git_show_hooks<span class="o">()</span><span class="w">&#xa0;</span><span class="o">{</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span class="nv">git_dir</span><span class="o">=</span><span class="k">$(</span>git<span class="w">&#xa0;</span>rev-parse<span class="w">&#xa0;</span>--absolute-git-dir<span class="w">&#xa0;</span><span class="m">2</span>&gt;/dev/null<span class="k">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>-z<span class="w">&#xa0;</span><span class="nv">$git_dir</span><span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">_git_shown_hooks_dir</span><span class="o">=</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span class="nv">hooks_dir</span><span class="o">=</span><span class="k">$(</span>git<span class="w">&#xa0;</span>rev-parse<span class="w">&#xa0;</span>--git-path<span class="w">&#xa0;</span>hooks<span class="k">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">hooks_dir</span><span class="o">=</span><span class="si">${</span><span class="nv">hooks_dir</span><span class="p">:</span><span class="nv">a</span><span class="si">}</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="c1">#&#xa0;Only&#xa0;announce&#xa0;once&#xa0;per&#xa0;repo,&#xa0;not&#xa0;for&#xa0;every&#xa0;cd&#xa0;inside&#xa0;it.</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span><span class="nv">$hooks_dir</span><span class="w">&#xa0;</span><span class="o">==</span><span class="w">&#xa0;</span><span class="nv">$_git_shown_hooks_dir</span><span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">_git_shown_hooks_dir</span><span class="o">=</span><span class="nv">$hooks_dir</span>
+<br />
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span>-a<span class="w">&#xa0;</span><span>hooks</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span>hook</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span>setopt<span class="w">&#xa0;</span>localoptions<span class="w">&#xa0;</span><span>nullglob</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">for</span><span class="w">&#xa0;</span>hook<span class="w">&#xa0;</span><span class="k">in</span><span class="w">&#xa0;</span><span class="nv">$hooks_dir</span>/*<span class="p">;</span><span class="w">&#xa0;</span><span class="k">do</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>-f<span class="w">&#xa0;</span><span class="nv">$hook</span><span class="w">&#xa0;</span><span class="o">&amp;&amp;</span><span class="w">&#xa0;</span>-x<span class="w">&#xa0;</span><span class="nv">$hook</span><span class="w">&#xa0;</span><span class="o">&amp;&amp;</span><span class="w">&#xa0;</span><span class="nv">$hook</span><span class="w">&#xa0;</span>!<span class="o">=</span><span class="w">&#xa0;</span>*.sample<span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">hooks</span><span class="o">+=(</span><span class="si">${</span><span class="nv">hook</span><span class="p">:</span><span class="nv">t</span><span class="si">}</span><span class="o">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">done</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">((</span><span class="w">&#xa0;</span><span class="nv">$#</span>hooks<span class="w">&#xa0;</span><span class="o">))</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">echo</span><span class="w">&#xa0;</span>-e<span class="w">&#xa0;</span><span class="s2">"\e[31mgit&#xa0;hooks:\e[0m&#xa0;</span><span class="nv">$hooks</span><span class="s2">&#xa0;(from&#xa0;</span><span class="nv">$git_dir</span><span class="s2">)"</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="o">}</span>
+<br />
+<br />autoload<span class="w">&#xa0;</span>-Uz<span class="w">&#xa0;</span><span>add-zsh-hook</span>
+<br />add-zsh-hook<span class="w">&#xa0;</span>chpwd<span class="w">&#xa0;</span><span>git_show_hooks</span>
+<br /></pre></div>
+</blockquote><p>Now entering a git repo I get an announcement of active hooks, if any. It&#8217;s
+very rare to see a hook other than pre-commit, but if any are there, they will
+be reported. The message will only be shown the first time I cd into a repo to
+keep the noise down.</p><p>Once I had this in place, there was another git hook consideration I could
+address: it&#8217;s common to have a .pre-commit-config.yaml file in a repo, but it&#8217;s
+easy to forget to enable the pre-commit hook that will actually use the file.
+Many developers probably have cloned repos where they haven&#8217;t enabled the
+pre-commit hook, so the desired checks aren&#8217;t running.</p><p>A second chpwd function can look for the configuration file and let you know
+if you have the pre-commit hook enabled:</p><blockquote class="code"><div class="source"><pre class="shell">git_check_precommit<span class="o">()</span><span class="w">&#xa0;</span><span class="o">{</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span class="nv">toplevel</span><span class="o">=</span><span class="k">$(</span>git<span class="w">&#xa0;</span>rev-parse<span class="w">&#xa0;</span>--show-toplevel<span class="w">&#xa0;</span><span class="m">2</span>&gt;/dev/null<span class="k">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>-z<span class="w">&#xa0;</span><span class="nv">$toplevel</span><span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">_git_shown_precommit_dir</span><span class="o">=</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="c1">#&#xa0;Only&#xa0;announce&#xa0;once&#xa0;per&#xa0;repo,&#xa0;not&#xa0;for&#xa0;every&#xa0;cd&#xa0;inside&#xa0;it.</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span><span class="nv">$toplevel</span><span class="w">&#xa0;</span><span class="o">==</span><span class="w">&#xa0;</span><span class="nv">$_git_shown_precommit_dir</span><span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">_git_shown_precommit_dir</span><span class="o">=</span><span class="nv">$toplevel</span>
+<br />
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>!<span class="w">&#xa0;</span>-f<span class="w">&#xa0;</span><span class="nv">$toplevel</span>/.pre-commit-config.yaml<span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">return</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span class="nv">hooks_dir</span><span class="o">=</span><span class="k">$(</span>git<span class="w">&#xa0;</span>rev-parse<span class="w">&#xa0;</span>--git-path<span class="w">&#xa0;</span>hooks<span class="k">)</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">hooks_dir</span><span class="o">=</span><span class="si">${</span><span class="nv">hooks_dir</span><span class="p">:</span><span class="nv">a</span><span class="si">}</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">local</span><span class="w">&#xa0;</span><span class="nv">pc_tool</span><span class="o">=</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>-f<span class="w">&#xa0;</span><span class="nv">$hooks_dir</span>/pre-commit<span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span>grep<span class="w">&#xa0;</span>-q<span class="w">&#xa0;</span><span class="s1">'File&#xa0;generated&#xa0;by&#xa0;prek:'</span><span class="w">&#xa0;</span><span class="nv">$hooks_dir</span>/pre-commit<span class="w">&#xa0;</span><span class="m">2</span>&gt;/dev/null<span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">pc_tool</span><span class="o">=</span><span>prek</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">elif</span><span class="w">&#xa0;</span>grep<span class="w">&#xa0;</span>-q<span class="w">&#xa0;</span><span class="s1">'File&#xa0;generated&#xa0;by&#xa0;pre-commit:'</span><span class="w">&#xa0;</span><span class="nv">$hooks_dir</span>/pre-commit<span class="w">&#xa0;</span><span class="m">2</span>&gt;/dev/null<span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nv">pc_tool</span><span class="o">=</span><span>pre-commit</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">if</span><span class="w">&#xa0;</span><span class="o">[[</span><span class="w">&#xa0;</span>-n<span class="w">&#xa0;</span><span class="nv">$pc_tool</span><span class="w">&#xa0;</span><span class="o">]]</span><span class="p">;</span><span class="w">&#xa0;</span><span class="k">then</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">echo</span><span class="w">&#xa0;</span><span class="s2">"</span><span class="nv">$pc_tool</span><span class="s2">&#xa0;installed"</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">else</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="nb">echo</span><span class="w">&#xa0;</span>-e<span class="w">&#xa0;</span><span class="s2">"\e[31mpre-commit:\e[0m&#xa0;not&#xa0;installed,"</span><span class="w">&#xa0;</span><span class="se">\</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="s2">"run&#xa0;'pre-commit&#xa0;install'&#xa0;or&#xa0;'prek&#xa0;install'"</span><span class="w">&#xa0;</span><span class="se">\</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="s2">"(</span><span class="nv">$toplevel</span><span class="s2">/.pre-commit-config.yaml)"</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="k">fi</span>
+<br /><span class="o">}</span>
+<br />
+<br />add-zsh-hook<span class="w">&#xa0;</span>chpwd<span class="w">&#xa0;</span><span>git_check_precommit</span>
+<br /></pre></div>
+</blockquote><p>One more step, just to be extra safe: zsh doesn&#8217;t run the chpwd function when
+starting a new shell. So we run the functions explicitly to check our initial
+directory:</p><blockquote class="code"><div class="source"><pre class="shell"><span class="c1">#&#xa0;Run&#xa0;them&#xa0;once&#xa0;on&#xa0;shell&#xa0;startup&#xa0;to&#xa0;check&#xa0;our&#xa0;starting&#xa0;directory.</span>
+<br /><span>git_show_hooks</span>
+<br /><span>git_check_precommit</span>
+<br /></pre></div>
+</blockquote><p>These shell functions are keeping me aware of the enabled git hooks. The
+messages might appear too often, and I might stop noticing them after a while,
+but I think this is much better than not knowing what&#8217;s going on. I haven&#8217;t seen
+any attacks, but I found at least one of my projects where I forgot to install
+pre-commit.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 11, 2026 12:25 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202610/making_git_hooks_visible"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://sedimental.org/calver_26.html" class="hover:underline"
               >CalVer 26.0: 10th Anniversary Edition</a
             >
@@ -2197,62 +2336,6 @@ The hope is that the recipient of the award will use the award stipend as a cont
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pyfound.blogspot.com/2026/09/python-language-summit-2026.html" class="hover:underline"
-              >Python Language Summit 2026 blog posts are now available</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>On July 14th, 2026, 47 Python core developers and special guests sat down
-at the <a href="https://blog.python.org/2026/09/language-summit-2026">Python Language Summit</a>, this year
-held in Kraków, Poland at EuroPython 2026, to discuss many topics about the future
-of the Python programming language, including free-threading, Rust, garbage collectors,
-type annotations, and namespacing.</p><div class="separator" style="clear: both;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEh9b7Xn98N0VpTwRN2Pu2Jk0q7sfPY_jBway6IkdspPV4vtGpWu4xp8H7Ef2L2K73jc0IC03AYWSP1sJAuKqdOBpKREuvNiYCG0oIM8MZLMeP1p0wLlHUYU1XpnApUMKy26u12RdSIa84wjTThbxk-6hxHA3y1gjy7pfHW6YZd_BfNBgytl_w/s1600/_image.png" style="display: block; padding: 1em 0px; text-align: center;"><img alt="Group photo of the attendees of the 2026 Python Language Summit Photo by EuroPython (CC BY-NC-SA 4.0)" border="0" height="266" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEh9b7Xn98N0VpTwRN2Pu2Jk0q7sfPY_jBway6IkdspPV4vtGpWu4xp8H7Ef2L2K73jc0IC03AYWSP1sJAuKqdOBpKREuvNiYCG0oIM8MZLMeP1p0wLlHUYU1XpnApUMKy26u12RdSIa84wjTThbxk-6hxHA3y1gjy7pfHW6YZd_BfNBgytl_w/w400-h266/_image.png" title="Photo by EuroPython (CC BY-NC-SA 4.0)" width="400" /></a><p>This marked the first time the Python Language
-Summit had been hosted in Europe in 15 years, when the event was
-<a href="https://lwn.net/Articles/449710/">held in Florence on June 19th, 2011</a>.
-Going forward, the Python Language Summit will alternate between
-PyCon US and EuroPython on a yearly basis.</p>
-<p>The summit was organized by Emily Morehouse, Hugo van Kemenade, Lysandros Nikolaou,
-and Łukasz Langa, and blog posts were written by Seth Larson.</p>
-<p>Below are summaries of the 10 full-length
-talks and 5 lightning talks that were presented at the 2026 Python Language Summit.
-I hope you enjoy them, and thank you for your patience.</p>
-<ul><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-namespaces">One namespace to namespace them all</a>” by Pablo Galindo Salgado</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-macos-python">macOS and Python</a>” by Ned Deily</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-garbage-collection-generational-incremental-both">Garbage Collection: Generational? Incremental? Both!</a>” by Mark Shannon</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-memory-buffer-protocol">Memory Buffer Protocol</a>” by Nathan Goldbaum</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-memory-snapshots">Memory Snapshots for CPython</a>” by Hood Chatham</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-rust-for-cpython">Rust for CPython</a>” by David Hewitt</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-spicycrab">Spicycrab</a>” by Kushal Das</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-developer-in-residence-update-and-future">Developer-in-Residence Update &amp; Future</a>” by Petr Viktorin</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-free-threading-post-era">Free-Threaded Python Post-Era</a>” by Donghee Na, Tobias Wrigstad, and Fridtjof Stoldt</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-pep-827-type-manipulation">PEP 827: Type Manipulation</a>” by Michael J. Sullivan</li><li>“<a href="https://blog.python.org/2026/09/language-summit-2026-lightning-talks">Lightning Talks</a>”
-<ul><li>“One-time ABI breakage” by Mark Shannon</li><li>“Safer and Generic Interruptions” by Daniele Parmeggiani</li><li>“EktuPy, Scratch but Python” by Kushal Das</li><li>“<code>AGENTS.md</code> for CPython” by Gregory P. Smith and Łukasz Langa</li><li>“Please read PEP 836 (JIT go brrr)” by Ken Jin</li></ul>
-</li></ul></div>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 30, 2026 01:22 PM UTC by
-            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
-              >Python Software Foundation</a
-            >
-          </div>
-          <a
-            href="https://pyfound.blogspot.com/2026/09/python-language-summit-2026.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -2264,7 +2347,7 @@ I hope you enjoy them, and thank you for your patience.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8320</a></li>
+    <li><a>Total Entries: 8329</a></li>
     <li><a>Unique Feeds: 370</a></li>
     
 
