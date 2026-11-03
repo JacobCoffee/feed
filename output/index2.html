@@ -53,6 +53,421 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/" class="hover:underline"
+              >Custom Voices With Qwen3-TTS</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>With my kids I&#8217;m currently building a little <a href="https://github.com/mitsuhiko/dungeon-crawler">dungeron
+crawler</a> and we&#8217;re trying to
+<a href="https://mitsuhiko.github.io/dungeon-crawler/learn/">learn a bit about game
+development</a> along the way.
+However given that we live in the modern times of increasing capabilities we
+wanted to get a narrator and voice over.</p>
+<p>But we also wanted it to not sound like everyone&#8217;s standard AI voices so I
+looked into what options there are on the table.  After some investigation I
+narrowed down to using <a href="https://github.com/QwenLM/Qwen3-TTS">Qwen3-TTS</a> which
+uses voice embeddings for custom voices.</p>
+<p>With a bit of creativity you can also do more with those custom voices than
+appears initially.  In case this is of interest to you, this post just covers
+what we learned and with some examples.  You can probably point your agent to
+it and it can do something with it.</p>
+<h2>What Qwen Offers</h2>
+<p>Qwen3 is not the only TTS model in town, and it wans&#8217;t even my first choice.  We
+initially used <a href="https://huggingface.co/hexgrad/Kokoro-82M">Kokoro</a>.  However
+Qwen3 supports voice cloning and we wanted to have it feel a bit more unique.</p>
+<p>In practice it&#8217;s a bit tricker though. Qwen3 ships three kinds of models:</p>
+<ul>
+<li><code>1.7B-Base</code> (and 0.6B): clones a voice from a few seconds of reference audio</li>
+<li><code>1.7B-CustomVoice</code>: comes with nine built-in speakers and instructions</li>
+<li><code>1.7B-VoiceDesign</code>: invents a voice from a text description</li>
+</ul>
+<p>The base model clones either in context or from the speaker embedding alone but
+there is no documented way to clone a voice and direct it with instructions.
+That means unlike the custom voice and voice design models you cannot say &#8220;speak
+sad&#8221; or &#8220;whisper&#8221; with a cloned base model.</p>
+<p>At present the official options for a custom voice are fine-tuning Base on a
+single speaker or to make a clip with VoiceDesign and clone it with Base.  That
+is not all that bad, but it means instructions are gone.</p>
+<h2>Playing With It</h2>
+<p>For this blog post I took 28 seconds of me from my talk at <a href="https://www.youtube.com/watch?v=8RHYyRUxVrA">PyAI
+Conf</a>, cut between two pauses so
+that it starts and ends on a full sentence, and transcribed it with Whisper.
+The transcript is really only needed for baking but to compare against an
+already existing voice it&#8217;s useful to have it say the same thing as the original
+recording.</p>
+<p>Note that a conference talk recording is not ideal but it works anyways.  Which
+is also a good reminder that you really don&#8217;t need a particularly clean
+recording (or a very long one) to get a halfway convincing version of a person.
+Particularly when then presented to you on a low quality phone call, it won&#8217;t be
+very hard to trick your grandmother.</p>
+<p>The first thing you can do is to blend that recording with another voice.  For
+instance you can use VoiceDesign to make up a voice from a description.  For this blog
+post the designed voice was created like this, with Qwen&#8217;s own Python package
+<a href="https://pypi.org/project/qwen-tts/"><code>qwen-tts</code></a> (<code>pip install qwen-tts</code>, I used
+0.1.1), which the rest of the code in this post uses too:</p>
+<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">qwen_tts</span><span class="w"> </span><span class="kn">import</span> <span class="n">Qwen3TTSModel</span>
+
+<span class="n">kw</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;mps&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">attn_implementation</span><span class="o">=</span><span class="s2">&quot;sdpa&quot;</span><span class="p">)</span>
+<span class="n">design</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
+<span class="n">wavs</span><span class="p">,</span> <span class="n">sr</span> <span class="o">=</span> <span class="n">design</span><span class="o">.</span><span class="n">generate_voice_design</span><span class="p">(</span>
+    <span class="n">text</span><span class="o">=</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">language</span><span class="o">=</span><span class="s2">&quot;English&quot;</span><span class="p">,</span>
+    <span class="n">instruct</span><span class="o">=</span><span class="s2">&quot;A man in his forties with a warm, natural, medium-low voice, speaking &quot;</span>
+             <span class="s2">&quot;clearly and calmly at an easy conversational pace, like someone reading &quot;</span>
+             <span class="s2">&quot;aloud to a friend.&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+<p>You can see how the two different voices behave, particularly when blended together:</p>
+<p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
+
+<h2>Voice Embeddings</h2>
+<p>What Base takes from a recording when cloning from the embedding alone is a
+speaker embedding which is basically 2048 numbers out of a speaker encoder that
+was trained.  The same voice gets similar numbers and different voices get
+different ones.  Which btw, is also a convenient way to do speaker detection
+from recordings if you want to!  It&#8217;s not perfect, but it&#8217;s quite helpful for a
+single audio track recording to tell two speakers apart if you do some basic
+slicing and dicing (more on that below).</p>
+<p>Because it is just a vector, you can do arithmetic on it.  For instance a
+weighted average of two embeddings is a spaker that is somewhere between two
+voices:</p>
+<div class="highlight"><pre><span></span><span class="n">base</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-Base&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">fingerprint</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">prompt</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">create_voice_clone_prompt</span><span class="p">(</span><span class="n">ref_audio</span><span class="o">=</span><span class="n">path</span><span class="p">,</span> <span class="n">x_vector_only_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">prompt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">ref_spk_embedding</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">blend</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">b</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="n">mixed</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">a</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">b</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">mixed</span> <span class="o">/</span> <span class="n">mixed</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">*</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">a</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">b</span><span class="o">.</span><span class="n">norm</span><span class="p">()))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+
+<span class="n">armin</span><span class="p">,</span> <span class="n">designed</span> <span class="o">=</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/armin.flac&quot;</span><span class="p">),</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/designed.flac&quot;</span><span class="p">)</span>
+</pre></div>
+<p>Here is the same sentence in eleven blends:</p>
+<p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
+<p>Note that it stops sounding like me quite quickly, but it retains some of my
+features.  And it for sure ends up with creating a unique voice regardless.
+I found some better successes when ensuing that the two voices have similar
+spectograms (eg: similar &#8220;recording setups&#8221;).  In this recording you can hear
+that one voice picked up by the lapel mic was a bit hollow compared to the
+designed voice.</p>
+<p>If you like a a voice that comes out, you can bake it back into a new recording
+that you can then use as reference:</p>
+<div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
+
+<span class="n">mixed</span> <span class="o">=</span> <span class="n">blend</span><span class="p">(</span><span class="n">armin</span><span class="p">,</span> <span class="n">designed</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+<span class="n">audio</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">mixed</span><span class="p">)</span>  <span class="c1"># say() is shown further down</span>
+<span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;voices/final.flac&quot;</span><span class="p">,</span> <span class="n">audio</span><span class="p">,</span> <span class="n">rate</span><span class="p">)</span>
+<span class="n">final</span> <span class="o">=</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/final.flac&quot;</span><span class="p">)</span>
+</pre></div>
+<p>The baked voice does not come back exactly as the blend but it makes handling it
+easier if you want to.  It&#8217;s just one voice reference file.</p>
+<p>So on the question of using those embeddings for speaker recognition: how good
+does that work?  I took an episode of <a href="https://www.youtube.com/watch?v=qCpY4K9jtOg">State of Agentic
+Coding</a>, the podcast Ben and I
+record, cut it into 2-second windows one second apart and compared each with an
+embedding of me form the conference.</p>
+<p>Somewhat surprising, but maybe not too surprising using my conference recording
+clip as the reference this does not work at all with Qwen3.  If instead I take
+the 20 seconds where I introduce myself at the start of the episode as the
+reference, it gets 98% of the rest right. </p>
+<p>On the other hand using a model that was trained for speaker verification
+instead does manage to pick me up from the conference recording clip.  For
+instance <a href="https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb">ECAPA</a>,
+finds me from the conference clip in 97% of the windows.</p>
+<p>Here are 20 minutes of that podcast, classified by speaker with the different
+approaches:</p>
+<p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
+<h2>Instructed Cloned Voices</h2>
+<p>But the embeddings a very useful for the voice cloning!  But how to give them
+instructions?  Base and CustomVoice manipulate the speaker the same way: one
+vector inserted into the talker&#8217;s input sequence.  In CustomVoice that vector is
+a row of the embedding table.  In Base it is the x-vector from the speaker
+encoder, which only Base has.  The generation code takes either
+(<code>voice_clone_prompt</code> is a regular argument of <code>generate</code>), and the transformer
+weights of the two models are nearly identical.  So take the embedding with
+Base, then hand it to CustomVoice instead of one of its speakers:</p>
+<div class="highlight"><pre><span></span><span class="n">cv</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">say</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">xvec</span><span class="p">,</span> <span class="n">instruct</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">language</span><span class="o">=</span><span class="s2">&quot;English&quot;</span><span class="p">):</span>
+    <span class="n">ids</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">_tokenize_texts</span><span class="p">([</span><span class="n">cv</span><span class="o">.</span><span class="n">_build_assistant_text</span><span class="p">(</span><span class="n">text</span><span class="p">)])</span>
+    <span class="n">told</span> <span class="o">=</span> <span class="p">[</span><span class="n">cv</span><span class="o">.</span><span class="n">_tokenize_texts</span><span class="p">([</span><span class="n">cv</span><span class="o">.</span><span class="n">_build_instruct_text</span><span class="p">(</span><span class="n">instruct</span><span class="p">)])[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">instruct</span> <span class="k">else</span> <span class="kc">None</span><span class="p">]</span>
+    <span class="n">voice</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;ref_code&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="s2">&quot;ref_spk_embedding&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">xvec</span><span class="p">],</span>
+             <span class="s2">&quot;x_vector_only_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">True</span><span class="p">],</span> <span class="s2">&quot;icl_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">False</span><span class="p">]}</span>
+    <span class="n">codes</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
+        <span class="n">input_ids</span><span class="o">=</span><span class="n">ids</span><span class="p">,</span> <span class="n">instruct_ids</span><span class="o">=</span><span class="n">told</span><span class="p">,</span> <span class="n">voice_clone_prompt</span><span class="o">=</span><span class="n">voice</span><span class="p">,</span>
+        <span class="n">languages</span><span class="o">=</span><span class="p">[</span><span class="n">language</span><span class="p">],</span> <span class="n">non_streaming_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="o">**</span><span class="n">cv</span><span class="o">.</span><span class="n">_merge_generate_kwargs</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span> <span class="n">subtalker_temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">wavs</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">speech_tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">([{</span><span class="s2">&quot;audio_codes&quot;</span><span class="p">:</span> <span class="n">codes</span><span class="p">[</span><span class="mi">0</span><span class="p">]}])</span>
+    <span class="k">return</span> <span class="n">wavs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">rate</span>
+
+<span class="n">wav</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span><span class="s2">&quot;I really thought this would work.&quot;</span><span class="p">,</span> <span class="n">armin</span><span class="p">,</span>
+                <span class="s2">&quot;Speak in a sad, sorrowful tone, voice low and heavy, on the verge of tears.&quot;</span><span class="p">)</span>
+</pre></div>
+<p>Pick a speaker for the slot, a model and an instruction:</p>
+<p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
+<p>Instructions work on cloned voices, but less reliably than on the built-in
+speakers, and it depends on the emotion, but honestly, it came out better than I
+anticipated.  Definitely good enough to have some true custom voices for a voice
+over that don&#8217;t necessarily sound like something, someone else has in their
+game.</p>
+<h2>Other Fun Math</h2>
+<p>If a voice is a point in a 2048-dimensional space and blending works we can maybe
+do some other funny math on it.  The obvious one is to try to see if some math can
+be used to manipulate gender.</p>
+<p>To find it I had VoiceDesign create 14 different voices for men and women each.
+When you then take the average woman minus the average man you can then move any
+voice along that direction:</p>
+<div class="highlight"><pre><span></span><span class="n">women</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">fingerprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;design/f</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">.wav&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">14</span><span class="p">)])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+<span class="n">men</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">([</span><span class="n">fingerprint</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;design/m</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">.wav&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">14</span><span class="p">)])</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+<span class="n">middle</span> <span class="o">=</span> <span class="p">(</span><span class="n">women</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">men</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span> <span class="o">/</span> <span class="mi">2</span>
+<span class="n">axis</span> <span class="o">=</span> <span class="n">women</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">men</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+<span class="n">axis</span> <span class="o">=</span> <span class="n">axis</span> <span class="o">/</span> <span class="n">axis</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">move</span><span class="p">(</span><span class="n">xvec</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Put the voice at position t along the gender axis, keep the rest.&quot;&quot;&quot;</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">xvec</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="p">(</span><span class="n">t</span> <span class="o">-</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">middle</span><span class="p">)</span> <span class="o">@</span> <span class="n">axis</span><span class="p">)</span> <span class="o">*</span> <span class="n">axis</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+</pre></div>
+<p>Here is the result for my clone:</p>
+<p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
+<p>Anyways, that&#8217;s that.  If you want to play around with Qwen3 TTS I hope this was
+of some help, and maybe you got some ideas of what to do with the voice
+embeddings.  Use it for good, not evil.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 29, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://sethmlarson.dev/bowsers-fury?utm_campaign=rss" class="hover:underline"
+              >Bowser’s Fury outshines Sunshine, SA2B, and Billy Hatcher</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://en.wikipedia.org/wiki/Bowser%27s_Fury">Bowser’s Fury</a> masters the “<em>multiple goals; same geometry</em>”
+and “<em>expressiveness through jank</em>”
+themes from GameCube-era platforming adventure games that I consider some of my
+favorites:
+<a href="https://en.wikipedia.org/wiki/Super_Mario_Sunshine">Super Mario Sunshine</a>,
+<a href="https://en.wikipedia.org/wiki/Sonic_Adventure_2">Sonic Adventure 2: Battle</a>,
+and <a href="https://en.wikipedia.org/wiki/Billy_Hatcher_and_the_Giant_Egg">Billy Hatcher</a>. If these games mean anything to
+you, then <em>do not miss Bowser’s Fury</em>.
+The entire game is one cohesive, snackable,
+free-flowing experience with a complete break
+from Super Mario’s arcade and hardware-constrained
+past, removing mainstays like 1-UPs, game-overs,
+segmented levels, and linear progression.</p>
+
+<!-- more -->
+
+<p>Collecting all 100 “Cat Shines” in Bowser’s Fury took
+me <a href="https://github.com/sethmlarson/nintendo-play-activity-ocr/blob/a169c38594020b88a56b7d8006ed6e53497f33cb/nintendo-play-activity.csv#L15">only 6 hours</a>, played in small chunks over the course of two weeks (Sept 10→24).
+When I wasn’t playing, I found myself humming the
+calming <a href="https://www.youtube.com/watch?v=k9b4xUn8Y1Q">Lapcat Lake theme</a> 🎶, and if you’re like
+me, you’ll be humming it long after you’ve finished, too. Seriously, this song
+is a banger. Have this track playing while you read this blog post
+for <em>maximum artistic integrity</em>.</p>
+
+<h2>Perfecting “Multiple goals; Same geometry”</h2>
+
+<p>If you’re a game designer and your game has <em>hundreds of goals
+for the player to accomplish</em>, it’s better to re-use the
+beautifully hand-crafted levels than to create unique (and time-consuming...)
+geometry for each goal ring, shine, or emblem. But there
+was one glaring issue with each of the three games
+I’m referencing today that becomes obvious
+after only a few minutes of playing Bowser’s Fury...</p>
+
+<p><em>“Oh wow, there’s no menus!”</em> I had my brother try Bowser’s Fury shortly
+after wrapping the game myself. After he collected his first Cat Shine, the gameplay
+just... <em>kept going</em>. The difference is night and day compared to games from
+our childhood.
+Long-jumping from Scamper Shores’ lighthouse into the lake rewards you
+with a music change and a new mission: Pounce Bounce Isle. The gameplay loop feels
+this <a href="https://sethmlarson.dev/mario-kart-world-and-seamless-media">seamless</a> until you’re at the very end, cleaning up the last few Cat Shines.</p>
+
+<p>Paging through menus to select a level and being kicked out mid-adventure now
+seems clunky in comparison. I distinctly remember paging through guide books
+to recall which Shine Sprite, Emblem, or Mission I had to select in
+Super Mario Sunshine, Billy Hatcher, and Sonic Adventure 2, respectively, to
+find what I was after. And if you found a secret goal while you were on your
+adventure, it almost felt like being <em>punished</em>, because you’d be forced
+to replay the level after getting kicked back to the “overworld”.</p>
+
+<p>I could feel the playfulness and constraint from the level designers
+in Bowser’s Fury, too. It felt as though the designers created the original geometry
+with a singular goal, and then, <em>without allowing themselves to change
+that geometry at all</em>, had to add five times more goals.
+You’d find yourself traversing levels backwards, exploring previously
+inaccessible areas, or being surprised that the world was much bigger
+than you previously thought. In Bowser’s Fury the “key levels” were used
+for this, forcing players to take different paths with a constrained move-set
+while carrying the key to a locked cage. Slipskate Slope’s key level reminded
+me of Billy Hatcher’s “Climb up the hill” level in Giant Palace, where in both the goal is to
+ascend the slope that you just slid or rolled down in the prior level.</p>
+
+<p>You can tell that this was no small feat, either. Every
+time I loaded the game at the start of a play session, the
+initial loading time would be substantial (~30 seconds?).
+That’s because the entire world needs to be mostly loaded
+at all times; there’s only one level, after all! I found myself
+selecting the load button and then arranging the pillows on the couch or grabbing
+a Diet Coke instead of waiting for Mario to appear.</p>
+
+<blockquote>
+<details><strong>Spoilers inside!</strong> If you don’t want any spoilers, don’t open.
+<p>
+During the kaiju-style battle sequences between Fury Bowser
+and Giga Cat Mario, the levels you were platforming across
+become a massive arena! The geometry is repurposed as cover to dodge fireballs, beams,
+and spiny shell rollouts.
+These segments reminded me of the final
+levels of Katamari Damacy, where you quickly and seamlessly go from rolling up
+junk on a desk to cars, ships, and continents.</p>
+<p>Also, the final battle with Fury Bowser reminded me of <a href="https://sonic.fandom.com/wiki/Finalhazard">Finalhazard</a>,
+the last boss from Sonic Adventure 2. Beams, balls, and a high-speed chase sequence: <em>what more
+could you want?</em></p>
+</details>
+</blockquote>
+
+<h2>“Jank” (aka “Expressiveness”)</h2>
+
+<p>I was doing some research into Sonic Adventure’s design to figure out why Bowser’s Fury
+reminded me so much of playing the Sonic Adventure games.
+One review <a href="https://youtu.be/Mo4M31mhWXY?si=uTcWxPTKshuc9rv9&amp;t=316">highlighted an under-appreciated aspect</a>
+of Sonic Adventure’s design: the idea that “jank” is evidence of “expressiveness”
+in the player’s movement and choices.</p>
+
+<p>Somewhat famously, in Sonic Adventure you’d sometimes fall through the floor,
+or maybe a jump or rail-grind <em>wouldn’t quite connect</em>,
+causing you to awkwardly fly off the stage to your doom.
+This can be off-putting, but what it means for the player is that <em>your movement
+is your own</em>. <em>Platforming is never a set piece</em>; there
+aren’t any tracks or invisible walls keeping you on the geometry.</p>
+
+<p>Bowser’s Fury feels that way, but with Nintendo’s absurd amount of
+polish that keeps you immersed and in the moment. “Oh you can stand on <em>THAT</em>?”
+was a common refrain while searching for a route
+in key levels. Fury Bowser instantly changes any careful moment into a hurried
+frenzy as you dodge his attacks from all angles. The Plessie Medals have you crashing
+through trees and enemies, desperately
+squeezing a high-speed dinosaur through geometry designed for Mario’s footprint.</p>
+
+<p>Through all the chaos and impromptu situations, you won’t find yourself asking
+whether what you’re doing is intentional. You melt into the controller and the moment.</p>
+
+<h2>Notes</h2>
+
+<blockquote>
+  <p><strong>Spoilers ahead!</strong> If you don’t want any spoilers, don’t read beyond this point!</p>
+</blockquote>
+
+<p>Below is a picture and transcription of the notes I took while playing Bowser’s Fury. I’ve been
+<a href="https://www.youtube.com/watch?v=3PIp11iY0pw">keeping notes</a> during my play sessions.</p>
+
+<p><img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/bowsers-fury/bowsers-fury-notes-out.jpeg" style="border: 2px black solid;" /></p>
+
+<blockquote>
+<details>
+Transcription of my handwritten notes
+<p>Bowser’s Fury: only <u>100 shines!</u>
+(Started 9/10/2026, end: 9/24/2026)</p>
+<ul>
+<li>Wow this game is different (and better) than 3D World.</li>
+<li>This is what Billy Hatcher and Sunshine wished it could be.</li>
+<li>Small game</li>
+<li>Boss is insane! Like King Kong vs. Godzilla, big creature battles.
+Giving a bit of Katamari energy too? Small level. “Kaiju”.</li>
+<li>“CAT SHINE” “SHINE GET”</li>
+<li>Power ups / hits feel more natural than “lives”. How does [sic]
+game overs work?</li>
+<li>Falling / failing are natural consequences.</li>
+<li>Same map offering different challenges. Emblems / shines. Go away: new mission loads.</li>
+<li>Billy Hatcher: Slip Slide key level, go the reverse up the slide hopping on the edges.
+Feels like a stage that was “shunted” in after. Kinda the same for small cat shine missions?</li>
+<li>Load times are LONG (does digital matter?)</li>
+<li>Bowser fights, Katamari Damacy the last level, need to find raocow video.</li>
+<li>Last shines go by quick!</li>
+<li>What do I think about Lucky Isle? Like it, map locations. Intro cutscene is short?</li>
+<li><s>Nessie</s> “Plessie Medals” Challenges are really, really good. Goofy. Wish there were
+more of these involving the levels.</li>
+<li>What I wish I knew: save the Bowser [block] shines for later levels of aggro. 40→50 becomes
+tougher to do new levels in the Wasteland.</li>
+<li>CAT PLESSIE: o_o wow. Didn’t explain that, how? [In reference to cats riding Cat Plessie]</li>
+<li>No final: get everything <em>but S rank</em> temptation to add last minute (Lazy “replay value”). SA2B and BH
+did this. Can actually complete, no “unfun” backtracking.</li>
+<li>Final boss is <u>SA2-coded</u>!!! Beams, balls, dodging. Felt like I had to beat a lot :(</li>
+</ul>
+</details>
+</blockquote>
+<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 29, 2026 12:00 AM UTC by
+            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
+              >Seth Michael Larson</a
+            >
+          </div>
+          <a
+            href="https://sethmlarson.dev/bowsers-fury?utm_campaign=rss"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/quizzes/create-scalable-flask-web-app/" class="hover:underline"
               >Quiz: Creating a Scalable Flask Web Application From Scratch</a
             >
@@ -265,113 +680,7 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <strong>Topics covered in this episode:</strong><br />
-
-<ul>
-	<li><strong>PHP wasn’t the only problem last week</strong></li>
-<li><strong><a href="https://mkennedy.codes/docs/chameleon-rs/?featured_on=pythonbytes">chameleon-rs</a></strong></li>
-<li><strong><a href="https://astral.sh/blog/uv-ty-integration?featured_on=pythonbytes">Bringing uv and ty together</a></strong></li>
-<li><strong><a href="https://github.com/whitphx/stlite?featured_on=pythonbytes">Stlite runs Streamlit apps entirely in the browser</a></strong></li>
-<li><strong>Extras</strong></li>
-<li><strong>Joke</strong></li>
-
-</ul><a href="https://www.youtube.com/watch?v=V7m5MAhp4qE" style="font-weight: bold;">Watch on YouTube</a><br />
-
-<p><strong>About the show</strong></p>
-
-<p><strong>Connect with the hosts</strong></p>
-
-<ul>
-<li>Michael: <a href="https://fosstodon.org/@mkennedy">Mastodon</a> / <a href="https://bsky.app/profile/mkennedy.codes?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/mkennedy?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/mkennedy/?featured_on=pythonbytes">LinkedIn</a></li>
-<li>Calvin: <a href="https://sixfeetup.social/@calvin?featured_on=pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/calvinhp.com?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/calvinhp?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/calvinhp/?featured_on=pythonbytes">LinkedIn</a></li>
-<li>Show: <a href="https://fosstodon.org/@pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/pythonbytes.fm">BlueSky</a> / <a href="https://x.com/PythonBytes?featured_on=pythonbytes">X</a>
-Join us on YouTube at <a href="https://pythonbytes.fm/stream/live"><strong>pythonbytes.fm/live</strong></a> to be part of the audience. Usually <strong>Tuesday at 7am PT</strong>. Older video versions available there too.
-Finally, if you want an artisanal, hand-crafted digest of every week of the show notes in email form? Add your name and email to <a href="https://pythonbytes.fm/friends-of-the-show">our friends of the show list</a>, we'll never share it.</li>
-</ul>
-
-<p><strong>Calvin #1: PHP wasn’t the only problem last week</strong></p>
-
-<ul>
-<li>Three security incidents in one week, each at a different layer: CA trust (eMudhra), the release pipeline (LiteLLM) and a C decoder (Brotli). All three have fixes released.</li>
-<li>eMudhra CA: the keys of a compromised eMudhra intermediate CA are now distrusted by CPython. 3.15.1, 3.14.9 and 3.13.17 shipped Oct 21. 3.15.2, 3.14.10, 3.13.18, 3.12.16 and 3.11.18 followed Oct 26 (CVE-2026-115557) and also fix a tarfile filter bypass. Python's post says pip operations are safe even before pip is upgraded.</li>
-<li>eMudhra, tooling: pip 26.2.2 bundles certifi 2026.10.19, which removes the root. uv 0.13.4 (GHSA-hq85-5cpj-mr62) and 0.13.5 (rustls-webpki 0.103.16) are the uv fixes. After upgrading uv, run uv python upgrade. Existing venvs need pip upgraded by hand, and the 3.9 and 3.10 builds still bundle a pip that trusts the root.
-<ul>
-<li>Anyone holding those intermediate keys can mint certificates for any domain that an unpatched client will accept as valid.</li>
-<li>That enables man-in-the-middle attacks: reading or altering HTTPS traffic without a certificate warning.</li>
-<li>The risk is highest where the attacker can sit on the network path, such as hostile Wi-Fi, a compromised router or ISP, or a cloud network position.</li>
-<li>For Python specifically, the exposed traffic would be package downloads from PyPI, API calls with credentials or tokens, and webhooks. A tampered package download is the worst case.</li>
-<li>Containers and old venvs that nobody rebuilds are where this lingers. uv says its Python 3.9 and 3.10 builds still bundle a pip that trusts the root, and existing venvs don't pick up the fix automatically.</li>
-</ul></li>
-<li>LiteLLM 1.107.0: malicious wheels hit PyPI on Oct 21. All seven wheels were live from about 11:40 to 13:23 UTC, with roughly 49k downloads. The Docker images were also infected. It's the second LiteLLM compromise this year, after 1.82.7 and 1.82.8 in March.</li>
-<li>LiteLLM payload: cook.pth runs on every Python start, so nothing has to import litellm. It steals SSH, cloud, browser, CI and AI-tool credentials, and an hourly loader runs remote code. The clean pin is litellm==1.106.4. Kill the loader first, rebuild rather than repair, then rotate everything the host could reach.</li>
-<li>LiteLLM root cause: a master key committed to a public repo on May 27 was never revoked. On Oct 10 it yielded an org owner's GitHub CLI token. The attacker then changed the trusted release workflow to build from a lookalike Berri-AI/litellm repo. BerriAI's first explanation (tokens in logs) was wrong, and the Oct 23 report supersedes it.</li>
-<li>Broccoli2Shell: CVE-2026-111497 is an out-of-bounds write in Google's Brotli C decoder. It affects the Python Brotli and brotlicffi packages 1.0.3 through 1.2.0(.x). Upgrade to Brotli 1.2.1 or brotlicffi 1.2.1.0. The CVE was published Oct 22 and rated 9.2 Critical by GitHub.</li>
-<li>Broccoli2Shell workaround: if you can't upgrade, uninstall both packages. urllib3, requests and aiohttp then fall back to gzip and deflate. Also reject Content-Encoding: br request bodies at the proxy or WAF.
-<strong>Sources</strong></li>
-<li>https://blog.python.org/2026/10/python-3152-31410-31318-31216-31118/</li>
-<li>https://www.stepsecurity.io/blog/litellm-1-107-0-compromised-pypi-backdoored-wheels-credential-stealer</li>
-<li>https://broccoli2shell.com/</li>
-</ul>
-
-<p><strong>Michael #2: <a href="https://mkennedy.codes/docs/chameleon-rs/?featured_on=pythonbytes">chameleon-rs</a></strong></p>
-
-<ul>
-<li><strong>Chameleon templates</strong>, much faster than before (up to 70x faster on start)</li>
-<li><strong>Modernized</strong>: A Rust engine that runs your Chameleon templates unchanged with async rendering, partials (think HTMX), Markdown</li>
-<li><strong>Built-in framework support</strong>: Flask, Quart, FastAPI, Starlette, Pyramid, Robyn and Litestar integrations.</li>
-<li><strong>A <a href="https://mkennedy.codes/docs/chameleon-rs/user-guide/switching-from-chameleon.html?featured_on=pythonbytes">compatibility shim</a></strong> for testing out quickly: <code>chameleon_rs.compat.install()</code></li>
-<li><strong>AI agent support</strong> via docs (every doc page has a .md extension variant, eg <a href="https://mkennedy.codes/docs/chameleon-rs/user-guide/fastapi.md?featured_on=pythonbytes">FastAPI docs</a>) and <a href="https://mkennedy.codes/docs/chameleon-rs/skills.html?featured_on=pythonbytes">the skill</a> is installable or downloadable.</li>
-<li><strong>Byte-for-byte identical</strong> on every page for <a href="http://talkpython.fm?featured_on=pythonbytes">talkpython.fm</a> and <a href="http://training.talkpython.fm?featured_on=pythonbytes">training.talkpython.fm</a></li>
-<li>Passes 100% of the unit tests of the <a href="https://pypi.org/project/Chameleon/?featured_on=pythonbytes">original chameleon project</a>. See <a href="https://mkennedy.codes/docs/chameleon-rs/user-guide/compatibility.html?featured_on=pythonbytes">compatibility page</a>.</li>
-<li>Natively supports my <a href="https://mkennedy.codes/docs/chameleon-flask/?featured_on=pythonbytes">chameleon-flask</a>, <a href="https://mkennedy.codes/docs/fastapi-chameleon/?featured_on=pythonbytes">fastapi-chameleon</a>, and <a href="https://mkennedy.codes/docs/chameleon-partials/?featured_on=pythonbytes">chameleon-partials</a> libraries.</li>
-<li>Swapping Talk Python Training to chameleon-rs <a href="https://blobs.pythonbytes.fm/chameleon-vs-chameleon-rs-perf-chart.webp?cache_id=c63b7e">made it 20% fast</a> (end-to-end, not just template rendering)!</li>
-</ul>
-
-<p><strong>Calvin #3: <a href="https://astral.sh/blog/uv-ty-integration?featured_on=pythonbytes">Bringing uv and ty together</a></strong></p>
-
-<ul>
-<li>Status: Astral (Sara Sklenka, Oct 13) announced "an experimental integration between uv and ty, available in preview." They ask for feedback, and say "in parallel, we're continuing toward ty's stable release."</li>
-<li>uv check: a new uv command that prepares the project environment, installs dependencies and runs ty. Flags are --package [HTML_REMOVED], --all-packages and --script <a href="http://example.py/?featured_on=pythonbytes">example.py</a>. Ruff support is planned, so lint and type check would run in one command.</li>
-<li>Lockfile pinning: uv check uses the ty version recorded in your lockfile. Developers and CI therefore share one ty version without separate pins.</li>
-<li>PEP 723 scripts: ty reads inline script metadata and uses uv to build an environment per script. Each script is checked against its own declared dependencies, even when they differ from the project's. In the editor, saving a script syncs it with uv.</li>
-<li>Enabling it: running uv check turns it on automatically. In VS Code, install the astral-sh.ty extension and set "ty.experimental.useUv": "on". On the command line, run TY_UV=scripts ty check.</li>
-<li>Opt-in: the post says automatic environment setup "is currently opt-in" because installing dependencies can execute third-party code. Astral plans to enable script support by default over time, and automatic setup for standard projects.</li>
-<li>Under the hood: it's powered by uv workspace metadata. uv 0.13.6 (Oct 26) changed that preview output to nest each module's owners in an object, so anything parsing the old flat structure breaks.</li>
-<li>Versions: it needs uv 0.12.3+ and ty 0.0.76+. Current releases are past both (uv 0.13.6, ty 0.0.92 on Oct 26), though I couldn't confirm 0.0.76's exact date.</li>
-<li>Next: Astral says it's working on checks that combine uv's dependency knowledge with ty's code analysis, such as detecting unused dependencies.</li>
-<li>Also credit to listener Sky Kasko. :)</li>
-</ul>
-
-<p><strong>Michael #4: <a href="https://github.com/whitphx/stlite?featured_on=pythonbytes">Stlite runs Streamlit apps entirely in the browser</a></strong></p>
-
-<p><a href="https://streamlit.io?featured_on=pythonbytes">Streamlit</a> is a very unique way to create data-driven dashboards. <a href="https://github.com/whitphx/stlite?featured_on=pythonbytes">Stlite</a> is a WebAssembly port of Streamlit built on Pyodide, so a Streamlit app runs completely in the visitor's browser with no Python server behind it. It ships as three packages (@stlite/browser for web pages, @stlite/desktop for offline desktop apps, @stlite/react for embedding in React), plus Stlite Sharing, a hosted editor for trying apps online. The project has been active since 2022 and is now at 0.85.1 with sponsorship from Streamlit/Snowflake and TestMu AI.</p>
-
-<ul>
-<li>A Streamlit app becomes static files you can host anywhere, the same story JupyterLite tells for notebooks.</li>
-<li>Deployment shrinks to a script tag or a single HTML file; the server only serves static assets and never runs Python.</li>
-<li>It patches requests and urllib through pyodide-http and supports pyfetch, so most existing HTTP code keeps working.</li>
-<li>Real limitations: time.sleep is a no-op in favor of asyncio.sleep, asyncio.run breaks, and packages with unported binary extensions cannot install.</li>
-<li>Files default to ephemeral memory, but IDBFS mountpoints persist data across reloads in the browser's IndexedDB.</li>
-<li>A SharedWorker mode lets multiple apps share one Python runtime to cut memory, at the cost of shared state between apps.</li>
-<li>The @stlite/desktop bundler turns an app into an offline desktop executable, demonstrated converting Streamlit apps to .exe files.</li>
-</ul>
-
-<p><strong>Extras</strong></p>
-
-<p>Calvin:</p>
-
-<ul>
-<li><a href="https://realpython.com/podcasts/rpp/316/?featured_on=pythonbytes">Real Python Podcast #316</a> with Seth Larson on Python security</li>
-<li><a href="https://pyfound.blogspot.com/2026/10/wikis-relaunched.html?featured_on=pythonbytes">**PSF wikis</a> relaunched on GitHub Pages**
-Michael:</li>
-<li><a href="https://www.bleepingcomputer.com/news/security/php-ships-emergency-patches-for-critical-php2shell-flaws/?featured_on=pythonbytes">PHP ships emergency patches for critical PHP2Shell flaws</a></li>
-<li><a href="https://github.com/openai/php2shell-checker?featured_on=pythonbytes">OpenAI released a checker</a></li>
-<li><a href="https://talkpython.fm/meetups?featured_on=pythonbytes">Talk Python Next Tech Talk: Talk Python in Production(v2)</a></li>
-<li><a href="https://0ver.org/#notable-zerover-projects">Notable ZeroVer Projects</a> via Vincent Poulailleau</li>
-<li><a href="https://docs.python.org/release/3.15.2/whatsnew/changelog.html?featured_on=pythonbytes">Python 3.15.2 is out</a></li>
-</ul>
-
-<p><strong>Joke: <a href="https://x.com/PR0GRAMMERHUM0R/status/2056495137933394100?featured_on=pythonbytes">captcha: too real!</a></strong></p>
+            Topics include , chameleon-rs, Bringing uv and ty together, and Stlite runs Streamlit apps entirely in the browser.
           </p>
         </div>
 
@@ -2871,87 +3180,6 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://devblogs.microsoft.com/python/announcing-tsp/" class="hover:underline"
-              >Pylance + Pyrefly: bring your preferred type checker to Visual Studio Code</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Announcing the Type Server Protocol and our partnership with Meta</p>
-<p>The post <a href="https://devblogs.microsoft.com/python/announcing-tsp/">Pylance + Pyrefly: bring your preferred type checker to Visual Studio Code</a> appeared first on <a href="https://devblogs.microsoft.com/python">Microsoft for Python Developers Blog</a>.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 21, 2026 04:42 PM UTC by
-            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
-              >Python Engineering at Microsoft</a
-            >
-          </div>
-          <a
-            href="https://devblogs.microsoft.com/python/announcing-tsp/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/python-itertools-by-example/" class="hover:underline"
-              >Python itertools By Example</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Combine Python's itertools functions into memory-efficient pipelines as you deal cards, analyze stock data, and pick relay teams.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 21, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/python-itertools-by-example/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</button><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index3.html" class="btn">»</a></div></div>
 </div>
@@ -2963,12 +3191,12 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8318</a></li>
-    <li><a>Unique Feeds: 373</a></li>
+    <li><a>Total Entries: 8331</a></li>
+    <li><a>Unique Feeds: 371</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (566)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (502)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (566)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (503)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (217)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (203)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
