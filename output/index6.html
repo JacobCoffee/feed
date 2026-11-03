@@ -53,6 +53,311 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.pypy.org/posts/2026/09/pypy-v800-release.html" class="hover:underline"
+              >PyPy v8.0.0 release</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <section id="pypy-v8-0-0-release-of-python-2-7-3-11-and-3-12-beta-released-2026-09-19">
+<h2>PyPy v8.0.0: release of python 2.7, 3.11, and 3.12 beta released 2026-09-19</h2>
+<p>The PyPy team is proud to release version 8.0.0 of PyPy after the previous
+release on May 26, 2026. This is a major new version, hence the bump to 8.0.0.
+It is our first release of Python 3.12, which may still have some bugs so we
+are calling it "beta" quality.</p>
+<section id="why-the-move-to-8-0-0">
+<h3>Why the move to 8.0.0</h3>
+<section id="glibc2-28">
+<h4>glibc2.28</h4>
+<p>We have updated our linux buildbots (linux64, linux32, aarch64) to use
+manylinux_2_28 images based on AlmaLinux 8 and glibc 2.28. These use gcc14
+instead of the gcc5 previously used.  So our compiled tarballs will require at
+least glibc2.28, which should be universally supported by now (Ubuntu 24.04
+uses glibc2.39). In order to prevent confusion, we felt bumping the major
+version would be prudent.</p>
+</section>
+<section id="cp12-abi3-support">
+<h4>cp12-abi3 support</h4>
+<p>PyPy's Python 3.12 support comes with a new model for the C layer <code class="docutils literal">PyObject</code>.
+In order to link the C object to the internal RPython one, we have an extra
+field in the object <code class="docutils literal">ob_pypy_link</code>, as described in-depth in
+<a class="reference external" href="https://doc.pypy.org/discussion/rawrefcount.html">rawrefcount-and-the-gc</a>. In previous versions, this field was
+visible in a way that makes the <code class="docutils literal">PyObject</code> struct different from the CPython
+one. From v8.0.0, we "hide" the PyPy-only extension in a prefix before
+the pointer we hand off to C-extension modules. The goal of this work is to
+allow PyPy to use cp312-abi3 wheels produced for CPython 3.12 and up, using the
+limited ABI. The required pieces have all been put in place:</p>
+<ul class="simple">
+<li><p>PyPy's C headers, including struct definitions like <code class="docutils literal">PyObject</code>, are
+compatible with CPython's C headers when defining
+<code class="docutils literal">Py_LIMITED_API=0x030C0000</code></p></li>
+<li><p>PyPy no longer mangles exported function names from the limited API.
+In PyPy3.11 and earlier, functions like <code class="docutils literal">PyTuple_New</code> were exported as
+<code class="docutils literal">PyPyTupleNew</code>.</p></li>
+</ul>
+<p>Still missing: the import machinery must be taught that abi3.so shared objects
+are valid for PyPy, and the larger ecosystem (pip, uv) must also accept that
+cp312-abi3 wheels are valid candidates for installation.</p>
+<p>Yes, this is a big step. We are working with Cython and PyO3 to make sure it
+all will Just Work™. Hopefully this will make it easier for packages to
+support PyPy.</p>
+</section>
+</section>
+<section id="what-is-new-in-rpython-code-generation">
+<h3>What is new in RPython code generation</h3>
+<p>PyPy is written in RPython, and has code generation to translate RPython into
+C as part of the VM build process. We have made some improvements to code
+generation in attempts to speed up the base interpreter. While the speedups
+have not been that impressive, we have made some steps forward:</p>
+<ul class="simple">
+<li><p>We now use <a class="reference external" href="https://eli.thegreenplace.net/2012/07/12/computed-goto-for-efficient-dispatch-tables">computed gotos</a> and more aggressively inline code. While this
+produces more compact sources, it does not boost performance as much as we
+wished.</p></li>
+<li><p>The source code includes comments mapping the source back to the RPython code
+that generated the block. This is very helpful to see exactly what is going on,
+and may enable further improvements.</p></li>
+</ul>
+</section>
+<section id="dropping-hpy">
+<h3>Dropping HPy</h3>
+<p>We have dropped the internal <a class="reference external" href="https://hpyproject.org/">HPy</a> backend for PyPy. The HPy project's
+understanding of how to use handles instead of pointers was a good prototype,
+but the project did not attract enough supporters to become a new standard. The
+code is still in the PyPy codebase, and can be toggled on with a <a class="reference external" href="https://doc.pypy.org/config/commandline.html#pypy-python-interpreter-options">build option</a>.</p>
+</section>
+<section id="a-revived-tool-comparing-headers-and-exported-functions">
+<h3>A revived tool comparing headers and exported functions</h3>
+<p>We revived the <a class="reference external" href="https://github.com/pypy/pypy/issues/3397#issuecomment-1872091878">clang-based pyhdrdump</a> to compare PyPy's header files to
+CPython's header files. See <a class="reference external" href="https://github.com/pypy/pypy/tree/py3.12/pypy/tool/pyhdrdump#pyhdrdump">the README</a> for more information on how it works
+and how to use it.</p>
+</section>
+<section id="interpreters">
+<h3>Interpreters</h3>
+<p>The release includes three different interpreters:</p>
+<ul class="simple">
+<li><p>PyPy2.7, supporting the syntax and the features of
+Python 2.7 including the stdlib for CPython 2.7.18+ (the <code class="docutils literal">+</code> is for
+backported security updates)</p></li>
+<li><p>PyPy3.11, supporting the syntax and the features of
+Python 3.11, including the stdlib for CPython 3.11.16. Barring security
+issues, this will be the last release to support 3.11.</p></li>
+<li><p>PyPy3.12, supporting the syntax and features of Python 3.12, including the
+stdlib for CPython 3.12.14.</p></li>
+</ul>
+<p>The interpreters are based on much the same codebase, thus the triple
+release.</p>
+<p>We recommend updating. You can find links to download the releases here:</p>
+<blockquote>
+<p><a class="reference external" href="https://pypy.org/download.html">https://pypy.org/download.html</a></p>
+</blockquote>
+<p>We would like to thank our donors for the continued support of the PyPy
+project. If PyPy is not quite good enough for your needs, we are available for
+<a class="reference external" href="https://www.pypy.org/pypy-sponsors.html">direct consulting</a> work. If PyPy is helping you out, we would love to hear
+about it and encourage submissions to our <a class="reference external" href="https://pypy.org/blog">blog</a> via a pull request
+to <a class="reference external" href="https://github.com/pypy/pypy.org">https://github.com/pypy/pypy.org</a></p>
+<p>We would also like to thank our contributors and encourage new people to join
+the project. PyPy has many layers and we need help with all of them: bug fixes,
+<a class="reference external" href="https://doc.pypy.org/">PyPy</a> and <a class="reference external" href="https://rpython.readthedocs.org">RPython</a> documentation improvements, or general <a class="reference external" href="https://doc.pypy.org/project-ideas.html">help</a> with
+making RPython's JIT even better.</p>
+<p>If you are a python library maintainer and use C-extensions, please consider
+making a <a class="reference external" href="https://cffi.readthedocs.io">CFFI</a> version of your library that would be performant
+on PyPy. Failing that, PyPy will soon support the cp312-abi3 tag for limited
+ABI wheels.  In any case, <a class="reference external" href="https://github.com/joerick/cibuildwheel">cibuildwheel</a> supports building wheels for PyPy.</p>
+</section>
+<section id="what-is-pypy">
+<h3>What is PyPy?</h3>
+<p>PyPy is a Python interpreter, a drop-in replacement for CPython.
+It's fast (<a class="reference external" href="https://speed.pypy.org">PyPy and CPython</a> performance
+comparison) due to its integrated tracing JIT compiler.</p>
+<p>We also welcome developers of other <a class="reference external" href="https://rpython.readthedocs.io/en/latest/examples.html">dynamic languages</a> to see what RPython
+can do for them.</p>
+<p>We provide binary builds for:</p>
+<ul class="simple">
+<li><p><strong>x86</strong> machines on most common operating systems
+(Linux 32/64 bits, Mac OS 64 bits, Windows 64 bits)</p></li>
+<li><p>64-bit <strong>ARM</strong> machines running Linux (<code class="docutils literal">aarch64</code>) and macos (<code class="docutils literal">macos_arm64</code>).</p></li>
+</ul>
+<p>PyPy supports Windows 32-bit, Linux PPC64 big- and little-endian, Linux ARM
+32 bit, RISC-V RV64IMAFD Linux, and s390x Linux but does not release binaries.
+Please reach out to us if you wish to sponsor binary releases for those
+platforms. Downstream packagers provide binary builds for debian, Fedora,
+conda, OpenBSD, FreeBSD, Gentoo, and more.</p>
+</section>
+<section id="what-else-is-new">
+<h3>What else is new?</h3>
+<p>For more information about the 8.0.0 release, see the <a class="reference external" href="https://doc.pypy.org/en/latest/release-v8.0.0.html#changelog">full changelog</a>.</p>
+<p>Please update, and continue to help us make pypy better.</p>
+<p>Cheers,
+The PyPy Team</p>
+</section>
+</section>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 18, 2026 11:00 AM UTC by
+            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
+              >PyPy</a
+            >
+          </div>
+          <a
+            href="https://www.pypy.org/posts/2026/09/pypy-v800-release.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/09/announcing-2026-psf-board-election.html" class="hover:underline"
+              >Announcing the 2026 PSF Board Election Results!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The 2026 election for the PSF Board created an opportunity for conversations about the PSF's work to serve the global Python community. We appreciate community members' perspectives, passion, and engagement in the election process this year.&nbsp;</p><p>We want to send a big thanks to everyone who ran and was willing to serve on the PSF Board. Even if you were not elected, we appreciate all the time and effort you put into thinking about how to improve the PSF and represent the parts of the community you participate in. We hope that you will continue to think about these issues, share your ideas, and join a PSF Work Group or PSF initiative if you feel called to do so.<br /></p><h3 style="text-align: left;">Board Members Elect&nbsp;</h3><p></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjwa029mAK-VzIrvSzCbyYd6Ns0C2gefTG30Zjizu9A4UywuwEimTNiZuURqrcN6QiLAqUq4H7AjytpgKT0dXXgAhF9Bcr1_CaIIPCYIr6N9MasdJ1q1HXJwBWwfj2Y61KtjmjoGAOGt77rGSL_fr2d3cNLWotjwn7bZWb1g_69KhLb_XfIbg/s1200/election%20announcement(1).png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="400" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjwa029mAK-VzIrvSzCbyYd6Ns0C2gefTG30Zjizu9A4UywuwEimTNiZuURqrcN6QiLAqUq4H7AjytpgKT0dXXgAhF9Bcr1_CaIIPCYIr6N9MasdJ1q1HXJwBWwfj2Y61KtjmjoGAOGt77rGSL_fr2d3cNLWotjwn7bZWb1g_69KhLb_XfIbg/w400-h400/election%20announcement(1).png" width="400" /></a></div>Congratulations to our three new and one returning Board members who have been elected!&nbsp;<br /><p></p><ul style="text-align: left;"><li>Elaine Wong</li><li>Ee Durbin</li><li>Laís Carvalho&nbsp;</li><li>Georgi Ker</li></ul><p>We’ll be in touch with all the elected candidates shortly to schedule onboarding. Newly elected PSF Board members are provided orientation for their service and will be joining the upcoming board meeting in October.&nbsp;<br /></p><h3 style="text-align: left;">Thank you!</h3><p>We’d like to take this opportunity to thank our outgoing board members. Cheuk Ting Ho has been a super engaged PSF Board member, participating in many committees, and helping out on many PSF Programs and projects during her time on the PSF Board. Chris Neugebauer has been a longtime board member and in particular has been the watch guard of our bylaws conversations and has always been ready to share institutional knowledge. Denny Perez has been instrumental on the PSF Board, serving on the Executive Committee, as Treasurer, and on various committees during her tenure. All three of you helped shape the PSF’s Strategic Plan for the next 5 years, which was a massive undertaking. Thank you, Cheuk, Chris, and Denny for your leadership and dedication to the PSF and the Python community. You will be missed and are deeply appreciated!</p><p>Our heartfelt thanks go out to each of you who took the time to review the candidates and submit your votes. Your participation helps the PSF represent our community. We received 670 total ballots, easily reaching quorum–1/3 of affirmed voting members (1123). We’re especially grateful for your patience with continuing to navigate the additions to the elections processes with the inaugural Python Packaging Council election.<br /><br />We also want to thank everyone who helped promote this year’s board election, especially Board Member KwonHan Bae, who took the initiative to cover this year’s election and worked with PSF Staff to conduct written interviews with candidates. This promotional effort was inspired by the work of <a href="https://pythoncommunitynews.com/" target="_blank">Python Community News</a> in 2023. We also want to highlight the PSF staff members and PSF Board members who put in tons of effort each year as we work to continually improve the PSF elections.<br /></p><h3 style="text-align: left;">What’s next?</h3><p>If you’re interested in the complete tally, make sure to check the <a href="https://opavote.com/results/6289918744854528" target="_blank">Python Software Foundation Board of Directors Election 2026 Results page</a>. <i>These results will be available until November 10, 2026.</i></p><p>The PSF Election team will conduct a retrospective of this year’s election process to ensure we are improving year over year. We received valuable feedback about the process and tooling. We hope to be able to implement more changes for next year to ensure a smooth and accessible election process for everyone in our community. If you have feedback or comments about this year’s PSF Board election, we welcome you to <a href="https://discuss.python.org/t/2026-psf-board-election/107797" target="_blank">join the discussion on discuss.python.org</a> or email psf-elections@pyfound.org.&nbsp;</p><p>Finally, it might feel a little early to mention this, but we will have at least 3 seats open again next year. If you're interested in running or learning more, we encourage you to contact a current PSF Board member or two this year and ask them about their experience serving on the board.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 17, 2026 12:48 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/09/announcing-2026-psf-board-election.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pyfound.blogspot.com/2026/09/announcing-2026-python-packaging.html" class="hover:underline"
+              >Announcing the 2026 Python Packaging Council Election Results!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The inaugural Python Packaging Council (PPC) election has concluded. With <a href="https://www.python.org/nominations/elections/2026-python-packaging-council/nominees/" target="_blank">17 candidates</a> and plenty of lively <a href="https://discuss.python.org/c/packaging/ppc-nominations/40" target="_blank">AMA discussions on DPO</a>, we are pleased to see the level of engagement with this first PPC election.</p><p>We want to send a big thanks to everyone who ran and was willing to serve on the council. Even if you were not elected, we appreciate all the time and effort you put into thinking about how to improve Python’s packaging ecosystem and represent the parts of the community you participate in.<br /></p><h3 style="text-align: left;">Council Members Elect&nbsp;</h3><p></p><div class="separator" style="clear: both; text-align: center;"><a href="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhj9wYH-WHmTOlLSkOjJY-cmRVETQ6RQ1MEDCZqpBidppUys6fqGN5ovjq40tjJAgvO8qrHbbdNjupiLd4gySvBV5bsOE2aqX5O_bptbGGqHLWOiCspHxJk4KZ1IqTCWla3XwtuTp2jogwyYYRyB0msO9i3ISVxr1ENbunYuxSOu2pMk9whTw/s1200/packaging%20council%20(5).png" style="margin-left: 1em; margin-right: 1em;"><img border="0" height="400" src="https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhj9wYH-WHmTOlLSkOjJY-cmRVETQ6RQ1MEDCZqpBidppUys6fqGN5ovjq40tjJAgvO8qrHbbdNjupiLd4gySvBV5bsOE2aqX5O_bptbGGqHLWOiCspHxJk4KZ1IqTCWla3XwtuTp2jogwyYYRyB0msO9i3ISVxr1ENbunYuxSOu2pMk9whTw/w400-h400/packaging%20council%20(5).png" width="400" /></a></div><p></p><p>Congratulations to our five inaugural Python Packaging Council members who have been elected!&nbsp;<br /></p><ul style="text-align: left;"><li>Brett Cannon – for a 2 year term (Cohort A)</li><li>Pradyun Gedam – for a 2 year term (Cohort A)</li><li>Donald Stufft – for a 1 year term (Cohort B)</li><li>Henry Schreiner – for a 1 year term (Cohort B)</li><li>Ralf Gommers – for a 1 year term (Cohort B)</li></ul><p>Our heartfelt thanks go out to each of you who took the time to review the candidates and submit your votes. We received 541 total ballots.</p><p>We also want to thank everyone who participated in the PEP 772 discussions to establish this council as well as those who helped with this year’s election–especially Barry Warsaw and Pradyun Gedam as community liaisons for this inaugural election. We also want to highlight the PSF staff members and PSF Board members who put in tons of effort each year as we work to continually improve our elections.<br /></p><h3 style="text-align: left;">How do the terms/cohorts work?</h3><p>This inaugural election fills all five seats on the PPC. The two candidates receiving the highest number of votes are designated Cohort A with a two year term, and the three candidates receiving the next highest number of votes are designated Cohort B with a one year term.</p><p>In future elections, each cohort will be elected for a full two-year term in alternating years, so that roughly half of the PPC turns over each cycle.<br /></p><h3 style="text-align: left;">What’s next?</h3><p>We are already in touch with all the elected candidates to schedule onboarding.<br />If you’re interested in the complete tally, make sure to check the <a href="https://opavote.com/results/4727898127990784" target="_blank">Python Packaging Council Election 2026 Results page</a>. <i>These results will be available until November 10, 2026.</i></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 17, 2026 12:36 PM UTC by
+            <a href="http://pyfound.blogspot.com/atom.xml" class="link link-hover text-primary"
+              >Python Software Foundation</a
+            >
+          </div>
+          <a
+            href="https://pyfound.blogspot.com/2026/09/announcing-2026-python-packaging.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202609/silence_is_golden_lightning_talk" class="hover:underline"
+              >Silence is golden lightning talk</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>This is a lightning talk I did at PyCon US 2026: Silence is Golden. The
+overall message is to leave some quiet time so that reluctant speakers have a
+chance to participate.  I start with a jokey disclaimer because I followed Simon
+Willison who gave an energetic, entertaining, and loud(!) speed-run through a
+year of progress in LLMs:</p><div class="figurep"><span class="aspect aspect-16x9"></span></div><p>I do these talks and blog posts about how to better interact with people, but
+I hope they don&#8217;t come off as too preachy. I have to remind myself to keep these
+ideas top of mind.  I am one of those people who speak easily that I describe in
+the lightning talk. I have to remember to hold back, to leave time and space for
+other people.</p><p>I had the idea for this lightning talk a few years ago at PyCon, while
+watching things going wrong. I was in a room with a few dozen people. The goal
+in the room was to hear from lots of people, but the leader of the discussion
+was a &#8220;speaks easily&#8221; kind of person, and I could see the dynamic of the room
+failing to make space for everyone.</p><p>I was really pleased to be able to extend the time-tested and well-known
+<a href="https://www.ericholscher.com/blog/2017/aug/2/pacman-rule-conferences/" rel="external noopener">Pac-Man Rule</a> from space to time. It made for an
+interesting hook, making the talk more interesting than just a scold.</p><p>It&#8217;s really hard to keep quiet. But it&#8217;s important sometimes.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 16, 2026 11:02 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202609/silence_is_golden_lightning_talk"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://talkpython.fm/episodes/show/563/getting-started-with-rust-as-python-devs" class="hover:underline"
               >#563: Getting Started with Rust as Python Devs</a
             >
@@ -287,75 +592,6 @@
           </div>
           <a
             href="https://pythonbytes.fm/episodes/show/496/a-lake-house-in-seattle"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/sep/15/djangocon-europe-2027-is-heading-to-innsbruck/" class="hover:underline"
-              >DjangoCon Europe 2027 is heading to Innsbruck, Austria! 🏔️⛷️🚠🇦🇹</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We’re delighted to announce that DjangoCon Europe 2027 will take place in Innsbruck, Austria, from February 17–21, 2027!</p>
-<p><img alt="View of Innsbruck with buildings in the foreground and the Alps rising behind the city" src="https://media.djangoproject.com/blog/images/2026/09/nicole-baster-DZUgKFjEDuM-unsplash.jpg" /></p>
-<p><em><a href="https://unsplash.com/photos/village-near-mountain-DZUgKFjEDuM">Photo by Nicole Baster on Unsplash</a></em></p>
-<p>Each year, DjangoCon Europe brings together people from across the Django community to learn, share ideas, contribute, and spend time together. In 2027, that community will come together in Innsbruck for five days of Django, Python, and community.</p>
-<p>DjangoCon Europe is organized by community volunteers and has long been one of the highlights of the Django community calendar. Developers, contributors, newcomers, and long-time community members from around the world come together to exchange knowledge, make new connections, and help shape the future of Django.</p>
-<h2 id="s-save-the-dates">Save the dates</h2>
-<p>📅 <strong>February 17–21, 2027</strong></p>
-<p>📍 <strong>Innsbruck, Austria</strong></p>
-<p>And there’s even more good news: the Call for Proposals is open, and tickets are now on sale!</p>
-<h2 id="s-submit-a-proposal">Submit a proposal</h2>
-<p>Have something you’d like to share with the Django community? The Call for Proposals is open.</p>
-<p>Whether you have a deep technical topic, a lesson you’ve learned from building with Django, an idea that could benefit the community, or something completely unexpected, we’d love to hear from you.</p>
-<p><a href="https://pretalx.evolutio.pt/djangocon-europe-2027/">Submit a proposal →</a></p>
-<h2 id="s-get-your-ticket">Get your ticket</h2>
-<p>Ready to join us in Innsbruck?</p>
-<p>Tickets for DjangoCon Europe 2027 are now on sale.</p>
-<p>Come spend five days learning, sharing, meeting fellow Djangonauts, and enjoying everything the Django community has to offer.</p>
-<p><a href="https://pretix.evolutio.pt/evolutio/djceu27/">Get your ticket →</a></p>
-<h2 id="s-volunteer-at-djangocon-europe">Volunteer at DjangoCon Europe</h2>
-<p>DjangoCon Europe is a community-run conference, and volunteers play an important part in making it happen.</p>
-<p>If you’d like to help us make DjangoCon Europe 2027 a great experience for everyone, sign up to volunteer. Whether you’re a long-time member of the community or attending your first DjangoCon, we’d love to have you involved.</p>
-<p><a href="https://forms.gle/sGfXDgnfpVgd4wpL9">Sign up to volunteer →</a></p>
-<h2 id="s-sponsor-djangocon-europe">Sponsor DjangoCon Europe</h2>
-<p>Support the conference financially and gain visibility in the Django community.</p>
-<p><a href="https://2027.djangocon.eu/sponsors/sponsorship/">Learn more about sponsorship →</a></p>
-<p><a href="https://2027.djangocon.eu/static/docs/djc-sponsorship-brochure.pdf">Download the sponsorship brochure →</a></p>
-<p><a href="mailto:sponsors@djangocon.eu">Email the sponsorship team →</a></p>
-<p>There’s plenty more to come as we get closer to the conference. Keep an eye on the DjangoCon Europe 2027 website for the latest news and updates:</p>
-<p><a href="https://2027.djangocon.eu/">Visit the DjangoCon Europe 2027 website →</a></p>
-<p><strong>See you in Innsbruck in 2027! 🇦🇹</strong></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 15, 2026 01:20 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/sep/15/djangocon-europe-2027-is-heading-to-innsbruck/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -665,6 +901,48 @@ this to show up as entirely AI?</p>
           </div>
           <a
             href="https://lucumr.pocoo.org/2026/9/14/interpreting-pangram/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://blog.vrplumber.com/b/2026/09/11/hardware-accelerated-video-capture-for-pyopengl/" class="hover:underline"
+              >Hardware Accelerated Video Capture for PyOpenGL</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>The <a href="https://github.com/mcfletch/pyopengl-video">pyopengl-video</a> library is a small hack that lets you pass FrameBufferObjects (FBOs) directly to the local platform video encoding library (or allows you to use your existing video buffer as an FBO, depending on the platform). The purpose of the library is to allow an off-screen renderer to generate h264 in mp4 video previews of that off-screen rendering. I find that useful to allow an agent to capture e.g. gameplay demos or the like so that you can see what it is working on while you are not at your desk.</p>
+
+<p>On Linux with nVidia uses NVENC. For linux with Intel or AMD uses vaapi. Windows uses D3D11 and COM.  Requires PyOpenGL 4.0.0a5 or above. So far no OS-X solution.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on September 12, 2026 01:05 AM UTC by
+            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
+              >Mike C. Fletcher</a
+            >
+          </div>
+          <a
+            href="http://blog.vrplumber.com/b/2026/09/11/hardware-accelerated-video-capture-for-pyopengl/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -996,7 +1274,293 @@ closed models as well, to keep up with others who do.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I'm using QThreadPool and worker threads in my PyQt application. When I click the X button to close the window, the threads keep running in the background. What's the best way to clean everything up on application exit?
+            <blockquote>
+<p>I'm using QThreadPool and worker threads in my PyQt application. When I click the X button to close the window, the threads keep running in the background. What's the best way to clean everything up on application exit?</p>
+</blockquote>
+<p>This is a very common situation when working with multithreaded PyQt6 applications. You've set up background workers using <code>QThreadPool</code> or <code>QThread</code>, everything runs great &mdash; but when you close the window, the application doesn't fully exit. The threads keep going, and you might even see errors in your console.</p>
+<p>The solution is to hook into your window's close event and explicitly stop your background work before the window finishes closing. Let's walk through how to do this.</p>
+<h2 id="understanding-the-problem">Understanding the problem</h2>
+<p>When you close a PyQt6 window by clicking the X button (or calling <code>close()</code>), Qt destroys the window and its widgets. But any threads you've started &mdash; whether via <code>QThreadPool</code>, <code>QThread</code>, or <code>QRunnable</code> &mdash; are managed separately. They don't automatically stop just because the window is gone.</p>
+<p>This means your Python process can hang, or you might see tracebacks as threads try to interact with widgets that no longer exist.</p>
+<h2 id="overriding-closeevent">Overriding <code>closeEvent</code></h2>
+<p>Every <code>QWidget</code> (including <code>QMainWindow</code>) has a method called <code>closeEvent</code> that Qt calls whenever the widget is about to close. By overriding this method, you can run your own cleanup code at exactly the right moment.</p>
+<p>Here's a minimal example:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">from PyQt6.QtWidgets import QMainWindow
+
+
+class MainWindow(QMainWindow):
+    def closeEvent(self, event):
+        # Put your cleanup code here
+        print("Window is closing &mdash; cleaning up!")
+        event.accept()
+</code></pre>
+</div>
+<p>The <code>event</code> parameter is a <code>QCloseEvent</code>. Calling <code>event.accept()</code> tells Qt to go ahead and close the window. If you wanted to cancel the close (for example, to show a "Save changes?" <a href="https://www.pythonguis.com/tutorials/pyqt6-dialogs/">dialog</a>), you would call <code>event.ignore()</code> instead.</p>
+<h2 id="stopping-workers-on-close">Stopping workers on close</h2>
+<p>If you're managing background workers &mdash; for example, through a <code>QThreadPool</code> &mdash; you'll want to signal them to stop and then wait for them to finish before allowing the window to close.</p>
+<p>Here's how that looks in practice. First, let's set up a simple worker using <code>QRunnable</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import time
+
+from PyQt6.QtCore import QRunnable, pyqtSlot, QObject, pyqtSignal
+
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal()
+
+
+class Worker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.is_running = True
+
+    @pyqtSlot()
+    def run(self):
+        while self.is_running:
+            print("Worker is working...")
+            time.sleep(1)
+        print("Worker stopped.")
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.is_running = False
+</code></pre>
+</div>
+<p>The worker runs in a loop, checking <code>self.is_running</code> on each iteration. When <code>stop()</code> is called, it sets the flag to <code>False</code>, and the loop exits on the next check.</p>
+<p>To stop <code>QRunnable</code> objects you need to use this flag-watching approach.</p>
+<p>If your runnable doesn't have a loop, and is instead doing a long series of processing steps, you instead will need check the flag state multiple times during that code and <code>return</code> or <code>raise</code> to exit the runner.</p>
+<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  The exit can <em>only</em> happen at the points where the flag is checked.</p>
+<p>To avoid multiple <code>if</code> checks in the code, an alternative is to have a check method that raises an exception for the stop state. For example:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">    def maybe_stop(self):
+        if not self.is_running:
+            raise Exception("Worker stopped.")
+</code></pre>
+</div>
+<p>You can then use this as follows:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import time
+
+from PyQt6.QtCore import QRunnable, pyqtSlot, QObject, pyqtSignal
+
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal()
+
+
+class Worker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.is_running = True
+
+    @pyqtSlot()
+    def run(self):
+        print("Worker is working...")
+        self.maybe_stop()
+        time.sleep(5) # &lt;- do some work.
+        self.maybe_stop()
+        time.sleep(5) # &lt;- do some more work.
+        self.maybe_stop()
+        time.sleep(5) # &lt;- do some more work.
+        self.maybe_stop()
+        time.sleep(5) # &lt;- do some more work.
+        self.maybe_stop()
+        time.sleep(5) # &lt;- do some more work.
+        # &lt;- no point stopping now.
+        print("Worker stopped.")
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.is_running = False
+
+    def maybe_stop(self):
+        if not self.is_running:
+            raise Exception("Worker stopped.")
+</code></pre>
+</div>
+<p>We'll not use this approach in our example here, since for testing purposes it is better to have a worker that doesn't stop. But you may find it useful in your own code.</p>
+<p>Now let's put together a <code>QMainWindow</code> that starts a worker and cleans it up on close:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSlot, QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
+
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal()
+
+
+class Worker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.is_running = True
+
+    @pyqtSlot()
+    def run(self):
+        while self.is_running:
+            print("Worker is working...")
+            time.sleep(1)
+        print("Worker stopped.")
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.is_running = False
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Thread Cleanup Example")
+
+        label = QLabel("Close this window to stop the worker.")
+        self.setCentralWidget(label)
+
+        self.threadpool = QThreadPool()
+        self.workers = []
+
+        # Start a background worker.
+        worker = Worker()
+        self.workers.append(worker)
+        self.threadpool.start(worker)
+
+    def closeEvent(self, event):
+        # Signal all workers to stop.
+        for worker in self.workers:
+            worker.stop()
+
+        # Wait for all threads in the pool to finish.
+        self.threadpool.waitForDone()
+        print("All workers stopped. Closing application.")
+        event.accept()
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<p>When you run this and close the window, you'll see the worker print its "stopped" message, and the application exits cleanly.</p>
+<p>Let's look at what's happening in <code>closeEvent</code>:</p>
+<p>First, we loop through all our tracked workers and call <code>stop()</code> on each one, setting the flag that tells them to finish. Then we call <code>self.threadpool.waitForDone()</code>, which blocks until every runnable in the pool has completed. This ensures we don't pull the rug out from under a running thread. Finally, we call <code>event.accept()</code> to let the window close.</p>
+<h2 id="managing-multiple-worker-groups">Managing multiple worker groups</h2>
+<p>If your application has different categories of workers &mdash; say, one group handling camera feeds and another running inference engines &mdash; you can keep separate lists and stop them all in <code>closeEvent</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def closeEvent(self, event):
+    for worker in self.feed_workers:
+        worker.stop()
+    for worker in self.engine_workers:
+        worker.stop()
+
+    self.threadpool.waitForDone()
+    event.accept()
+</code></pre>
+</div>
+<p>The same principle applies: signal every worker to stop, then wait for the thread pool to drain.</p>
+<h2 id="ensuring-a-clean-exit-with-sysexit">Ensuring a clean exit with <code>sys.exit</code></h2>
+<p>You might notice that even after the window closes, the Python process occasionally doesn't exit cleanly. This usually happens when <code>sys.exit()</code> isn't receiving the application's return code properly.</p>
+<p>The standard way to launch and exit a PyQt6 application is:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<p><code>app.exec()</code> starts the Qt event loop and returns an exit code (an integer) when the loop ends. Passing that code to <code>sys.exit()</code> ensures Python terminates with the correct status.</p>
+<p>If you skip <code>sys.exit()</code> and just call <code>app.exec()</code>, Python may not tear down all its resources properly &mdash; particularly if threads or other objects are still being referenced. Wrapping it in <code>sys.exit()</code> triggers a proper <code>SystemExit</code> exception, which gives Python the chance to clean everything up.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's the full working example:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSlot, QObject, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
+
+
+class WorkerSignals(QObject):
+    finished = pyqtSignal()
+
+
+class Worker(QRunnable):
+    def __init__(self, worker_id):
+        super().__init__()
+        self.worker_id = worker_id
+        self.signals = WorkerSignals()
+        self.is_running = True
+
+    @pyqtSlot()
+    def run(self):
+        while self.is_running:
+            print(f"Worker {self.worker_id} is working...")
+            time.sleep(1)
+        print(f"Worker {self.worker_id} stopped.")
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.is_running = False
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Thread Cleanup on Exit")
+        self.resize(400, 200)
+
+        label = QLabel("Close this window to stop all workers.")
+        label.setMargin(20)
+        self.setCentralWidget(label)
+
+        self.threadpool = QThreadPool()
+        self.workers = []
+
+        # Start a few background workers.
+        for i in range(3):
+            worker = Worker(worker_id=i)
+            self.workers.append(worker)
+            self.threadpool.start(worker)
+
+    def closeEvent(self, event):
+        print("Close event received. Stopping workers...")
+
+        for worker in self.workers:
+            worker.stop()
+
+        self.threadpool.waitForDone()
+        print("All workers stopped. Goodbye!")
+        event.accept()
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+sys.exit(app.exec())
+</code></pre>
+</div>
+<p>When you run this, you'll see three workers printing messages to the console. Close the window, and you'll see each worker confirm it has stopped before the application exits.</p>
+<h2 id="summary">Summary</h2>
+<ul>
+<li>Override <code>closeEvent</code> on your main window to run cleanup code when the user closes the application.</li>
+<li>Set a flag on each worker to signal it should stop, and check that flag in the worker's loop.</li>
+<li>Use <code>QThreadPool.waitForDone()</code> to block until all workers have finished before allowing the window to close.</li>
+<li>Always wrap <code>app.exec()</code> with <code>sys.exit()</code> to ensure a clean process exit.</li>
+</ul>
+<p>This pattern works well for any PyQt6 application with background threads, whether you're processing data, handling network requests, or running live camera feeds. Once you have it in place, your application will shut down gracefully every time. For a complete introduction to using <code>QThreadPool</code> and <code>QRunnable</code> for multithreading in PyQt6, see our <a href="https://www.pythonguis.com/tutorials/multithreading-pyqt6-applications-qthreadpool/">Multithreading PyQt6 applications with QThreadPool</a> tutorial. You may also find our guides on <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals and slots</a> and <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-your-first-window/">creating your first PyQt6 window</a> helpful as you build out your application.</p>
           </p>
         </div>
 
@@ -1927,221 +2491,6 @@ toward building the same things.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/podcasts/rpp/310/" class="hover:underline"
-              >The Real Python Podcast – Episode #310: Performance Engineering: Profiling and Making Apps Fast by Default</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            How do you plan for the performance of your Python applications? What does a performance budget entail, and where should you spend your resources? This week on the show, we speak with Den Odell about his new book "Fast by Default: Practical Performance Engineering."
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/podcasts/rpp/310/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.pythonanywhere.com/224/" class="hover:underline"
-              >Annual plans, PostgreSQL 15, and easier database management</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We deployed our latest system update to our EU-based system on <strong>23 June 2026</strong>
-and to our US-based system on <strong>28 July 2026</strong>.</p>
-<p>People creating an account or upgrading from a free account can now choose an
-annual plan. PostgreSQL 15 is available, and the Databases page now makes it
-easier to restart PostgreSQL servers and keep track of MySQL storage limits.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2026 10:00 AM UTC by
-            <a href="http://blog.pythonanywhere.com/feed/" class="link link-hover text-primary"
-              >Python Anywhere</a
-            >
-          </div>
-          <a
-            href="https://blog.pythonanywhere.com/224/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://talkpython.fm/episodes/show/561/tonio-a-multi-threaded-async-runtime-for-python" class="hover:underline"
-              >#561: TonIO, a Multi-threaded Async Runtime for Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            How many cores does your machine have, 10, 18? Your async Python code uses just one of them. That isn't a bug in asyncio. That's the design, and optimizing event loops to be faster by 20% doesn't change it. So Giovanni Barillari started over. Joe is the creator of Granian, the Rust-based server that powers Talk Python. His new project is TonIO, an async runtime written from scratch for free-threaded Python. Real threads, a handful of primitives instead of asyncio's pile of them, and it flat out refuses to start if the GIL is on.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2026 07:33 AM UTC by
-            <a href="http://www.talkpythontome.com/episodes/rss" class="link link-hover text-primary"
-              >Talk Python to Me</a
-            >
-          </div>
-          <a
-            href="https://talkpython.fm/episodes/show/561/tonio-a-multi-threaded-async-runtime-for-python"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://treyhunner.com/2026/09/python-morsels-now-has-spaced-repetition/" class="hover:underline"
-              >Python Morsels now has spaced repetition</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Nearly every book I&rsquo;ve read on teaching and education over the past decade has talked about the value of <strong>spaced repetition</strong>.
-For much of that time, spaced repetition has been something I would <em>recommend</em> learners do, but it wasn&rsquo;t something I <em>helped</em> anyone do&hellip; until now.</p>
-<p>Python Morsels now has <a href="https://www.pythonmorsels.com/recall/">Daily Recall</a>: a spaced repetition system <strong>for Python programmers</strong>.</p>
-<h2>We learn by recalling, not by reading</h2>
-<p>The most effective learning techniques all rely on <strong>active recall</strong>: trying to remember something <em>without</em> looking it up, whether with flash cards, by explaining an idea in your own words, or by doing a task that requires it.</p>
-<p>We don&rsquo;t learn by putting information <em>into</em> our heads.
-We learn by retrieving information <em>from</em> our heads.
-That&rsquo;s why Python Morsels has always been built around exercises rather than videos: writing code is the most useful form of recall for a Python programmer.</p>
-<p>But not everything worth remembering warrants an entire Python exercise.</p>
-<ul>
-<li>Which <code>uv</code> command runs a tool without installing it?</li>
-<li>What is the time complexity of various list operations?</li>
-<li>Which string method can remove a substring from the end of a string?</li>
-</ul>
-<p>A 20-minute exercise is overkill for practicing something that small.
-But practicing it just once isn&rsquo;t enough either.
-A quick question, asked again just before you&rsquo;d forget, is a much better fit.</p>
-<h2>Spaced repetition beats the forgetting curve</h2>
-<p>Many of the things I learned in school are long gone, especially the ones I haven&rsquo;t thought about even once in <em>years</em>.
-I think I could explain photosynthesis in 9th grade.
-I can&rsquo;t today.</p>
-<p>This is explained by <a href="https://en.wikipedia.org/wiki/Forgetting_curve">the forgetting curve</a>: we forget what we don&rsquo;t recall, and the rate of forgetting is somewhat predictable.
-<strong>Spaced repetition</strong> is about using active recall to beat the forgetting curve.
-Instead of recalling an idea over and over right after learning it, you wait until it has <em>started</em> to fade, and then try to recall it.
-Each successful recall earns a longer wait before the next one: minutes at first, then hours, then days, and eventually weeks and months.</p>
-<p>The tricky part is the timing: <em>when</em> should you try to recall each thing?
-That&rsquo;s where an algorithm helps.
-A spaced repetition system tracks every idea you&rsquo;re trying to remember and prompts you to recall each one right before you&rsquo;d forget it.</p>
-<h2>What Daily Recall does</h2>
-<p>Back in April, just before Earth Day, I made <a href="https://whereabouts.earth">Whereabouts.Earth</a> to help me learn the name and location of every country in the world.
-When I started, I could name about 90 of the 197 countries on a map.
-By mid-June, with about 10 minutes of practice a day, I knew all of them.</p>
-<p>Daily Recall is the same idea, but for Python.
-You pick the packs you want to practice, and each day it asks you a few questions from them.
-Answer a question correctly and it&rsquo;ll be a while before you see that one again.
-Miss it and you&rsquo;ll see it again soon.</p>
-<p>Daily Recall uses <a href="https://github.com/open-spaced-repetition/fsrs4anki/wiki/ABC-of-FSRS">FSRS</a> for scheduling, which is one of the most effective spaced repetition algorithms (it&rsquo;s an option in the <a href="https://apps.ankiweb.net/">Anki</a> flash card app).</p>
-<p>If you have trouble remembering which operations on different data structures are fast and which are slow, there&rsquo;s a <a href="https://www.pythonmorsels.com/recall/packs/time-complexity/">Time Complexity pack</a> for that.
-If you&rsquo;re struggling to remember the <em>many</em> different subcommands that <code>uv</code> supports, there&rsquo;s a <a href="https://www.pythonmorsels.com/recall/packs/uv/">uv pack</a> for that.
-There are also <a href="https://www.pythonmorsels.com/recall/packs/">packs</a> on string methods, built-in functions, dictionaries, iterable unpacking, f-strings, pytest, and what&rsquo;s new in Python 3.13 and 3.14.
-I&rsquo;m hoping to release about one new pack each week over the next many months.</p>
-<p>Daily Recall also <strong>works well on a phone</strong> because recall questions don&rsquo;t require typing a bunch of code.
-So you can <strong>replace 5 minutes of your daily doomscrolling</strong> with 5 minutes of extra Python learning.</p>
-<p>Early users who practiced about 5 minutes a day ended their first month with 25 to 50 new things they could still recall weeks after last seeing them.</p>
-<h2>You can use Daily Recall for free</h2>
-<p>Most <a href="https://www.pythonmorsels.com/recall/">Daily Recall</a> packs are free, and the rest are included with the <a href="https://www.pythonmorsels.com/pricing/">All Access</a> plan.
-To get started, <a href="https://www.pythonmorsels.com/accounts/signup/">create a free Python Morsels account</a>, pick a pack or two, and answer a few questions.</p>
-<p>And whether or not you ever use Daily Recall, I&rsquo;d recommend spaced repetition.
-If you&rsquo;d rather write your own flash cards, on Python or anything else, <a href="https://apps.ankiweb.net/">Anki</a> works well too.
-The next time you learn something new in Python, don&rsquo;t just read it a second time.
-Try to recall it tomorrow, and then again next week.</p>
-<p><a class="subscribe-btn form-big" href="https://www.pythonmorsels.com/recall/">Try Daily Recall</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on September 04, 2026 12:30 AM UTC by
-            <a href="https://treyhunner.com/python.xml" class="link link-hover text-primary"
-              >Trey Hunner</a
-            >
-          </div>
-          <a
-            href="https://treyhunner.com/2026/09/python-morsels-now-has-spaced-repetition/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index5.html" class="btn">«</a><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</button><a href="index7.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">7</a><a href="index8.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">8</a><a href="index7.html" class="btn">»</a></div></div>
 </div>
@@ -2153,8 +2502,8 @@ Try to recall it tomorrow, and then again next week.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8331</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8253</a></li>
+    <li><a>Unique Feeds: 370</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
