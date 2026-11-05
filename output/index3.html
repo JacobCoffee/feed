@@ -53,6 +53,167 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://juripakaste.fi/parse3339-swar/" class="hover:underline"
+              >Parse3339: Faster parsing with fixed locations and number packing</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>I maintain a Swift library for parsing (a subset of) RFC 3339 time stamps, <a href="https://github.com/juri/Parse3339" rel="external">Parse3339</a>. It's always been pretty fast, thanks to restricting the supported formats and using straightforward Swift that operates on UTF-8 bytes. I've known it has left some performance on the table compared to parsers that use SIMD tricks, but I've opted to keep it simple.</p>
+<p>Then I saw <a href="https://blog.mahdibm.com/posts/a-very-fast-ipv4-parser-in-swift/" rel="external">A Very Fast IPv4 Parser, in Swift</a>. In it, the author describes an IPv4 address parser that achieves very respectable performance using two techniques: parsing things from known positions, and <a href="https://en.wikipedia.org/wiki/SWAR" rel="external">SWAR</a>, meaning "dealing with many small numbers by packing them into a UInt64". I got nerd sniped.</p>
+<p>I applied similar optimizations to Parse3339: reading from fixed positions instead of using a state machine, and applying SWAR to improve parallelism. The following table shows the p50 and p90 execution times of a benchmark parsing a <code>Span&lt;UInt8&gt;</code> using 100000 samples. The environment is a MacBook Pro M5, macOS 27.2, Swift 6.4.2.</p>
+<table><thead><tr><th>Implementation</th><th style="text-align: right;">p50 (ns)</th><th style="text-align: right;">p90 (ns)</th></tr></thead><tbody>
+<tr><td>State machine</td><td style="text-align: right;">39</td><td style="text-align: right;">39</td></tr>
+<tr><td>Fixed positions</td><td style="text-align: right;">12</td><td style="text-align: right;">12</td></tr>
+<tr><td>SWAR</td><td style="text-align: right;">8</td><td style="text-align: right;">9</td></tr>
+</tbody></table>
+<p>I'm going to go over the changes in this post because I found the whole process pretty enlightening. I hadn't realized how much the fixed position read would win, and the SWAR thing was all new territory for me.</p>
+<h2 id="fixed-positions">Fixed Positions</h2>
+<p>The formats Parse3339 supports are very simple: <code>2026-12-29T13:14:15</code>, followed by an optional fractional second (<code>.12</code>) and a mandatory time zone (<code>Z</code> or <code>-03:45</code>). That makes the first change, parsing from known positions, stupidly simple. So we won't run a state machine; instead we'll just parse bytes at offsets five and six and know they'll be the month. And because it's just a bunch of reads one after another without branching between them, the processor can perform at least some of them in parallel.</p>
+<p>The <a href="https://github.com/juri/Parse3339/commit/44e2ec02b7f26e9a1caaae649a9a0f1454679916" rel="external">change</a> where I replaced the state machine reduced the number of lines in the parser by 176 and shaved a huge chunk off the execution time (see the table above). Losing a good state machine is always a bit sad but I'll live.</p>
+<h2 id="swar">SWAR</h2>
+<p>SWAR means SIMD Within A Register. I bet the parties responsible are <a href="https://en.wikipedia.org/wiki/Gwar" rel="external">GWAR</a> fans.</p>
+<p>Anyway, despite the "SIMD" in there, all this code does is it just splits the input into 8-byte chunks, packs those chunks inside larger integers and then operates on the big boys. More or less. Then the compiler and the processor will do their magic and things will be faster than ever, without me actually having to use SIMD operations myself. The price is readability. In this code, each byte in a UInt64 acts as a "lane", a separate value, and then you operate on the lanes using honking big masks consisting of 8 hex digit pairs (again, UInt64) and things look a bit hairy thanks to that.</p>
+<p>I can't boast about <a href="https://github.com/juri/Parse3339/commit/78d5498821248797af43d7ef74d5c8c0335c43a0" rel="external">the second change</a> shrinking the code or making it easier to understand, but the execution time win was respectable enough.</p>
+<p>Let's walk through the changes.</p>
+<h3 id="unsafe-loads">Unsafe Loads</h3>
+<p>After the code has checked that there are enough bytes in the input byte span, it reads three values:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> date </span><span style="color: #859900;">=</span><span> span.</span><span style="color: #268BD2;">bytes</span><span>.</span><span style="color: #268BD2;">unsafeLoadUnaligned</span><span>(</span><span style="color: #268BD2;">as</span><span>:</span><span style="color: #859900;"> UInt64</span><span>.</span><span style="color: #859900;">self</span><span>).littleEndian</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> time </span><span style="color: #859900;">=</span><span> span.</span><span style="color: #268BD2;">bytes</span><span>.</span><span style="color: #268BD2;">unsafeLoadUnaligned</span><span>(</span><span style="color: #268BD2;">fromByteOffset</span><span>:</span><span style="color: #D33682;"> 8</span><span>, </span><span style="color: #268BD2;">as</span><span>:</span><span style="color: #859900;"> UInt64</span><span>.</span><span style="color: #859900;">self</span><span>).littleEndian</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> tail </span><span style="color: #859900;">=</span><span> span.</span><span style="color: #268BD2;">bytes</span><span>.</span><span style="color: #268BD2;">unsafeLoadUnaligned</span><span>(</span><span style="color: #268BD2;">fromByteOffset</span><span>:</span><span style="color: #D33682;"> 16</span><span>, </span><span style="color: #268BD2;">as</span><span>:</span><span style="color: #859900;"> UInt32</span><span>.</span><span style="color: #859900;">self</span><span>).littleEndian</span></span></code></pre>
+<p><code>unsafe</code> on each line because the earlier length checks allows us to skip range checks, <code>Unaligned</code> because we're reading without requiring byte alignment, <code>littleEndian</code> to ensure byte 0 of the string goes into the low 8 bits of the integer. That's a no-op on Apple platforms, but on big endian platforms it means a byte swap.</p>
+<p>So if the time stamp is <code>2024-10-28T13:14:15Z</code>, <code>date</code> gets <code>2024-10-</code>, <code>time</code> gets <code>28T13:14</code>, and <code>tail</code> gets <code>:15Z</code> (<code>tail</code> is a <code>UInt32</code>, i.e. 4 bytes.)</p>
+<p>The little-endianness means the first input byte appears as the least significant byte, and the bytes appear in reverse string order when represented in hexadecimal. For <code>2024-10-</code>:</p>
+<table><thead><tr><th></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th></tr></thead><tbody>
+<tr><td>chunk byte index</td><td style="text-align: right;">7</td><td style="text-align: right;">6</td><td style="text-align: right;">5</td><td style="text-align: right;">4</td><td style="text-align: right;">3</td><td style="text-align: right;">2</td><td style="text-align: right;">1</td><td style="text-align: right;">0</td></tr>
+<tr><td>character</td><td style="text-align: right;">-</td><td style="text-align: right;">0</td><td style="text-align: right;">1</td><td style="text-align: right;">-</td><td style="text-align: right;">4</td><td style="text-align: right;">2</td><td style="text-align: right;">0</td><td style="text-align: right;">2</td></tr>
+<tr><td>date (hex)</td><td style="text-align: right;">2D</td><td style="text-align: right;">30</td><td style="text-align: right;">31</td><td style="text-align: right;">2D</td><td style="text-align: right;">34</td><td style="text-align: right;">32</td><td style="text-align: right;">30</td><td style="text-align: right;">32</td></tr>
+</tbody></table>
+<p>For <code>28T13:14</code>:</p>
+<table><thead><tr><th></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th></tr></thead><tbody>
+<tr><td>chunk byte index</td><td style="text-align: right;">7</td><td style="text-align: right;">6</td><td style="text-align: right;">5</td><td style="text-align: right;">4</td><td style="text-align: right;">3</td><td style="text-align: right;">2</td><td style="text-align: right;">1</td><td style="text-align: right;">0</td></tr>
+<tr><td>character</td><td style="text-align: right;">4</td><td style="text-align: right;">1</td><td style="text-align: right;">:</td><td style="text-align: right;">3</td><td style="text-align: right;">1</td><td style="text-align: right;">T</td><td style="text-align: right;">8</td><td style="text-align: right;">2</td></tr>
+<tr><td>time (hex)</td><td style="text-align: right;">34</td><td style="text-align: right;">31</td><td style="text-align: right;">3A</td><td style="text-align: right;">33</td><td style="text-align: right;">31</td><td style="text-align: right;">54</td><td style="text-align: right;">38</td><td style="text-align: right;">32</td></tr>
+</tbody></table>
+<p>And for <code>:15Z</code>:</p>
+<table><thead><tr><th></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th><th style="text-align: right;"></th></tr></thead><tbody>
+<tr><td>chunk byte index</td><td style="text-align: right;">3</td><td style="text-align: right;">2</td><td style="text-align: right;">1</td><td style="text-align: right;">0</td></tr>
+<tr><td>character</td><td style="text-align: right;">Z</td><td style="text-align: right;">5</td><td style="text-align: right;">1</td><td style="text-align: right;">:</td></tr>
+<tr><td>tail (hex)</td><td style="text-align: right;">5A</td><td style="text-align: right;">35</td><td style="text-align: right;">31</td><td style="text-align: right;">3A</td></tr>
+</tbody></table>
+<h3 id="separator-check">Separator Check</h3>
+<p>Next we get to this bit:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">guard</span><span> date </span><span style="color: #859900;">&amp;</span><span style="color: #D33682;"> 0xFF_00_00_FF_00_00_00_00</span><span style="color: #859900;"> ==</span><span style="color: #D33682;"> 0x2D_00_00_2D_00_00_00_00</span><span>,</span></span>
+<span class="giallo-l"><span>      time </span><span style="color: #859900;">&amp;</span><span style="color: #D33682;"> 0x00_00_FF_00_00_FF_00_00</span><span style="color: #859900;"> ==</span><span style="color: #D33682;"> 0x00_00_3A_00_00_54_00_00</span><span>,</span></span>
+<span class="giallo-l"><span>      tail </span><span style="color: #859900;">&amp;</span><span style="color: #D33682;"> 0xFF</span><span style="color: #859900;"> ==</span><span style="color: #D33682;"> 0x3A</span></span>
+<span class="giallo-l"><span style="color: #859900;">else</span><span> {</span><span style="color: #859900;"> return</span><span style="color: #B58900;"> nil</span><span> }</span></span></code></pre>
+<p>Each line uses an AND (<code>&amp;</code>) operation, masking out everything but the separator lanes. Then the comparison checks that the separators are what they should be, all at the same time:</p>
+<table><thead><tr><th>Hex</th><th>Character</th></tr></thead><tbody>
+<tr><td><code>2D</code></td><td><code>-</code></td></tr>
+<tr><td><code>3A</code></td><td><code>:</code></td></tr>
+<tr><td><code>54</code></td><td><code>T</code></td></tr>
+</tbody></table>
+<p>Again, remember that the UInts contain the string bytes in reverse order, that's why the <code>time</code> line has <code>3A</code> before <code>54</code>.</p>
+<h3 id="value-normalization">Value Normalization</h3>
+<p>Next is a XOR thing for converting separators to zero and ASCII digits to numbers 0–9:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> dateDigits </span><span style="color: #859900;">=</span><span> date </span><span style="color: #859900;">^</span><span style="color: #D33682;"> 0x2D_30_30_2D_30_30_30_30</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> timeDigits </span><span style="color: #859900;">=</span><span> time </span><span style="color: #859900;">^</span><span style="color: #D33682;"> 0x30_30_3A_30_30_54_30_30</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> secondDigits </span><span style="color: #859900;">= UInt64</span><span>((tail </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 8</span><span>)</span><span style="color: #859900;"> &amp;</span><span style="color: #D33682;"> 0xFFFF</span><span>)</span><span style="color: #859900;"> ^</span><span style="color: #D33682;"> 0x3030</span></span></code></pre>
+<p>ASCII '0'...'9' is <code>0x30</code>...<code>0x39</code>. <code>x ^ 0x30</code> changes that value range to <code>0x00</code>...<code>0x09</code>. And because the code already checked the separators, we can zero them out at the same time: <code>0x2D ^ 0x2D</code> is 0. So if <code>date</code> is <code>0x2D_30_31_2D_34_32_30_32</code>, <code>dateDigits</code> is <code>0x00_00_01_00_04_02_00_02</code>. <code>timeDigits</code> works the same.</p>
+<p><code>secondDigits</code> is different because <code>tail</code> is the UInt32 value. Let's start with <code>0x5A_35_31_3A</code> from the earlier example. The innermost bit shift discards the rightmost byte, the one for <code>:</code>, so we're left with <code>0x5A_35_31</code>. Then the AND takes the two rightmost bytes, the ones representing the seconds value, leaving us with <code>0x35_31</code>. And then the XOR returns <code>0x05_01</code>.</p>
+<h3 id="digit-validation">Digit Validation</h3>
+<p>The next step is digit validation, which again happens all at the same time:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> invalidDigits </span><span style="color: #859900;">=</span><span> ((dateDigits </span><span style="color: #859900;">&amp;+</span><span style="color: #D33682;"> 0x76_76_76_76_76_76_76_76</span><span>)</span><span style="color: #859900;"> |</span><span> dateDigits)</span></span>
+<span class="giallo-l"><span style="color: #859900;">    |</span><span> ((timeDigits </span><span style="color: #859900;">&amp;+</span><span style="color: #D33682;"> 0x76_76_76_76_76_76_76_76</span><span>)</span><span style="color: #859900;"> |</span><span> timeDigits)</span></span>
+<span class="giallo-l"><span style="color: #859900;">    |</span><span> ((secondDigits </span><span style="color: #859900;">&amp;+</span><span style="color: #D33682;"> 0x7676</span><span>)</span><span style="color: #859900;"> |</span><span> secondDigits)</span></span>
+<span class="giallo-l"><span style="color: #859900;">guard</span><span> invalidDigits </span><span style="color: #859900;">&amp;</span><span style="color: #D33682;"> 0x80_80_80_80_80_80_80_80</span><span style="color: #859900;"> ==</span><span style="color: #D33682;"> 0</span><span style="color: #859900;"> else</span><span> {</span><span style="color: #859900;"> return</span><span style="color: #B58900;"> nil</span><span> }</span></span></code></pre>
+<p>What this does is it checks that every byte is less than 10, and does that check for all of them at the same time. This happens by setting the highest bit on every invalid byte to 1. UInt64 is 8 bytes, and each byte is 8 bits: <code>0b00_00_00_00</code> … <code>0b11_11_11_11</code>.</p>
+<p>If we unpack that <code>invalidDigits</code> definition a bit, every line is the same: <code>((value &amp;+ 0x76_76…76) | value)</code>. The results of every line is ORred together, and the result is ANDed with <code>(0x80_80…80)</code> and that result is required to be zero.</p>
+<p>Starting from the most nested level of each line: <code>&amp;+</code> is Swift's wrapping addition operator. Normally an overflow traps; <code>&amp;+</code> makes it wrap, so <code>(255 as UInt8) &amp;+ 1</code> is zero. What's up with the <code>0x76</code> (118, <code>0b01_11_01_10</code>)? If you add it to <code>0x09</code>, you get <code>0x7F</code>, or in binary, <code>0b01_11_11_11</code>. If you add it to <code>0x0a</code> (10), you get <code>0x80</code>, <code>0b10_00_00_00</code>. The step before this normalized all digits — values from 0 to 9 — to be values from <code>0x00</code> to <code>0x09</code>. This means that every value less than or equal to 9 still gets a 0 as the highest bit. Larger values get a 1, either in the addition step or in the subsequent OR step which ensures that if the original had a 1 as the highest bit but the addition wrapped it away, it will still be 1.</p>
+<table><thead><tr><th>value</th><th><code>&amp;+ 0x76</code></th><th><code>OR value</code></th></tr></thead><tbody>
+<tr><td><code>0x00</code></td><td><code>0b01_11_01_10</code></td><td><code>0b01_11_01_10</code></td></tr>
+<tr><td><code>0x01</code> … <code>0x09</code></td><td><code>0b0X_XX_XX_XX</code></td><td><code>0b0Y_YY_YY_YY</code></td></tr>
+<tr><td><code>0x0a</code> … <code>0x7f</code></td><td><code>0b1X_XX_XX_XX</code></td><td><code>0b1Y_YY_YY_YY</code></td></tr>
+<tr><td><code>0x80</code> … <code>0x89</code></td><td><code>0b1X_XX_XX_XX</code></td><td><code>0b1Y_YY_YY_YY</code></td></tr>
+<tr><td><code>0x8a</code></td><td><code>0b00_00_00_00</code></td><td><code>0b10_00_10_10</code></td></tr>
+<tr><td><code>0x8b</code> … <code>0xff</code></td><td><code>0b0X_XX_XX_XX</code></td><td><code>0b1Y_YY_YY_YY</code></td></tr>
+</tbody></table>
+<p>The addition will carry between lanes if the value is large enough, but that's OK: it'll just cause us to reject the output, which is the result we wanted.</p>
+<p>After we've put <code>dateDigits</code>, <code>timeDigits</code> and <code>secondDigits</code> through that — and remember, they're all UInt64s — we OR all of them together. Meaning that every bit that is 1 in one of the values will end up as 1 in <code>invalidDigits</code>.</p>
+<p>Then the <code>guard</code> line ANDs all the lanes in <code>invalidDigits</code> with <code>0x80</code>, i.e. <code>0b10_00_00_00</code>. If any lane has the high bit set, it'll end up as <code>0x80</code> in the result, the equality check won't end up as zero and the guard will return nil, all with one branch.</p>
+<h3 id="read-the-numbers">Read the Numbers</h3>
+<p>After the complexity of validation, operating on those validated values is easier:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> year </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits)</span><span style="color: #859900;"> *</span><span style="color: #D33682;"> 100</span><span style="color: #859900;"> +</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 16</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> month </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 40</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> day </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(timeDigits)</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> hour </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(timeDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 24</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> minute </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(timeDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 48</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> second </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(secondDigits)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">/* … */</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #859900;">private</span><span style="color: #586E75; font-weight: bold;"> func</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(</span><span style="color: #268BD2;">_</span><span> digits: </span><span style="color: #859900;">UInt64</span><span>)</span><span style="color: #859900;"> -&gt; Int</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #859900;">    Int</span><span>(digits </span><span style="color: #859900;">&amp;</span><span style="color: #D33682;"> 0xFF</span><span>)</span><span style="color: #859900;"> *</span><span style="color: #D33682;"> 10</span><span style="color: #859900;"> + Int</span><span>((digits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 8</span><span>)</span><span style="color: #859900;"> &amp;</span><span style="color: #D33682;"> 0xFF</span><span>)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>We already know that the UInt64s contain numbers and separators in known positions. <code>dateDigits</code>, from the example <code>2024-10-</code>, has been reversed, has had its separators converted to zeroes and its numbers normalized, so is <code>0x00_00_01_00_04_02_00_02</code>. <code>decodeTwoDigits</code> decodes the two least significant bytes of its input as a number. The calling code just has to shift the input enough to the right to get the relevant bytes in the correct position. So the values are:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> year </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits)</span><span style="color: #859900;"> *</span><span style="color: #D33682;"> 100</span><span style="color: #859900;"> +</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 16</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">//       = 20                          * 100 + 24</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">//       = 2024</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> month </span><span style="color: #859900;">=</span><span style="color: #268BD2;"> decodeTwoDigits</span><span>(dateDigits </span><span style="color: #859900;">&gt;&gt;</span><span style="color: #D33682;"> 40</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">//        = 10</span></span></code></pre>
+<p>And the same for <code>timeDigits</code> and <code>secondDigits</code>.</p>
+<h3 id="zone-reading-and-validation">Zone Reading and Validation</h3>
+<p>After the time values have been read, there's calendar validation, then fractional second handling, and then time zone validation. The first option for time zone is <code>Z</code>, which doesn't require any work. A ±hours:minutes style (e.g. <code>-02:30</code>) zone requires more work, which uses the same tricks as the above, only on a smaller scale:</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #93A1A1; font-style: italic;">// direction is UInt8 with ASCII value for + or -, index is pointing at its position in span.</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> zoneHours </span><span style="color: #859900;">=</span><span> span.</span><span style="color: #268BD2;">bytes</span><span>.</span><span style="color: #268BD2;">unsafeLoadUnaligned</span><span>(</span><span style="color: #268BD2;">fromByteOffset</span><span>: index </span><span style="color: #859900;">+</span><span style="color: #D33682;"> 1</span><span>, </span><span style="color: #268BD2;">as</span><span>:</span><span style="color: #859900;"> UInt16</span><span>.</span><span style="color: #859900;">self</span><span>).littleEndian</span></span>
+<span class="giallo-l"><span style="color: #859900;">let</span><span> zoneMinutes </span><span style="color: #859900;">=</span><span> span.</span><span style="color: #268BD2;">bytes</span><span>.</span><span style="color: #268BD2;">unsafeLoadUnaligned</span><span>(</span><span style="color: #268BD2;">fromByteOffset</span><span>: index </span><span style="color: #859900;">+</span><span style="color: #D33682;"> 4</span><span>, </span><span style="color: #268BD2;">as</span><span>:</span><span style="color: #859900;"> UInt16</span><span>.</span><span style="color: #859900;">self</span><span>).littleEndian</span></span></code></pre>
+<p>Now, for the <code>-02:30</code> input, <code>zoneHours</code> is <code>0x32_30</code> (ASCII two, ASCII zero), <code>zoneMinutes</code> is <code>0x30_33</code> (ASCII zero, ASCII three). Both values are UInt16, because each holds two bytes.</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">let</span><span> zoneDigits </span><span style="color: #859900;">=</span><span> (</span><span style="color: #859900;">UInt32</span><span>(zoneHours)</span><span style="color: #859900;"> |</span><span> (</span><span style="color: #859900;">UInt32</span><span>(zoneMinutes)</span><span style="color: #859900;"> &lt;&lt;</span><span style="color: #D33682;"> 16</span><span>))</span><span style="color: #859900;"> ^</span><span style="color: #D33682;"> 0x30_30_30_30</span></span></code></pre>
+<p><code>zoneDigits</code> combines those values into one UInt32, with hours as the least significant bits, and digits normalized to bytes <code>0x00</code>–<code>0x09</code>. We can insert the above values into that <code>zoneDigits</code> definition expression, step by step:</p>
+<table><thead><tr><th>Expression</th><th>Output</th></tr></thead><tbody>
+<tr><td><code>UInt32(0x30_33) &lt;&lt; 16</code></td><td><code>0x30_33_00_00</code></td></tr>
+<tr><td><code>UInt32(0x32_30) | 0x30_33_00_00</code></td><td><code>0x30_33_32_30</code></td></tr>
+<tr><td><code>0x30_33_32_30 ^ 0x30_30_30_30</code></td><td><code>0x00_03_02_00</code></td></tr>
+</tbody></table>
+<p><code>0x00_03_02_00</code> is the <code>02:30</code> time zone offset, reversed and hexified.</p>
+<pre class="giallo" style="color: #657B83; background-color: #FDF6E3;"><code><span class="giallo-l"><span style="color: #859900;">guard</span><span> ((zoneDigits </span><span style="color: #859900;">&amp;+</span><span style="color: #D33682;"> 0x76_76_76_76</span><span>)</span><span style="color: #859900;"> |</span><span> zoneDigits)</span><span style="color: #859900;"> &amp;</span><span style="color: #D33682;"> 0x80_80_80_80</span><span style="color: #859900;"> ==</span><span style="color: #D33682;"> 0</span><span style="color: #859900;"> else</span><span> {</span><span style="color: #859900;"> return</span><span style="color: #B58900;"> nil</span><span> }</span></span></code></pre>
+<p>Next it's our old friends <code>0x76</code> and <code>0x80</code> again, because now we're validating the lanes in the UInt32. The innermost addition adds <code>0x76</code> to each lane, then we OR with the original value to ensure that any lane that is not in the range <code>0x00</code>–<code>0x09</code> gets its highest bit set, and then we AND with <code>0x80</code> to check that every lane has zero as its highest bit.</p>
+<p>After that it's just decoding digits, validating the numbers and calculating the offset in minutes and negating the value if the time zone direction symbol was <code>-</code> (or producing a nil offset, with <code>-00:00</code>). Then we return the parsed time stamp.</p>
+<h2 id="32-bit-vs-64-bit">32-bit vs 64-bit</h2>
+<p>Embedded Swift and older computers are a thing and honestly I don't know if this is a good change for people on those platforms. If it turns out to be a problem, I recommend sticking to (or forking) 0.10.0, the version before the SWAR changes. Or if you email me telling me you're using this on such a platform and the changes are a problem, I'll consider putting the old version behind a trait.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 27, 2026 06:40 AM UTC by
+            <a href="http://www.iki.fi/juri/blog/index.rss" class="link link-hover text-primary"
+              >Juri Pakaste</a
+            >
+          </div>
+          <a
+            href="https://juripakaste.fi/parse3339-swar/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://www.pypy.org/posts/2026/10/toy-bit-provenance.html" class="hover:underline"
               >The Shift of Theseus — Toy Bit Provenance Abstract Domain</a
             >
@@ -2168,6 +2329,46 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.scikit-learn.org/updates/intel-benchmarks-update/" class="hover:underline"
+              >Accelerating scikit-learn: early findings of benchmarks on Intel hardware</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Author: Arthur Lacote
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2026 12:00 AM UTC by
+            <a href="https://blog.scikit-learn.org/feed.xml" class="link link-hover text-primary"
+              >scikit-learn</a
+            >
+          </div>
+          <a
+            href="https://blog.scikit-learn.org/updates/intel-benchmarks-update/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://wrongsideofmemphis.com/2026/10/21/jev-webinar-video/" class="hover:underline"
               >Jev webinar video</a
             >
@@ -2481,46 +2682,6 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/courses/building-ai-agent-langgraph-python/" class="hover:underline"
-              >Building an AI Agent With LangGraph and Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn LangGraph in Python with this hands-on video course and build a stateful AI agent using state graphs, nodes, and conditional edges.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 20, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/courses/building-ai-agent-langgraph-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/courses/tell-your-tech-career-story/" class="hover:underline"
               >Tell Your Tech Career Story: Proof, Résumés, and Interviews</a
             >
@@ -2545,6 +2706,46 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
           </div>
           <a
             href="https://realpython.com/courses/tell-your-tech-career-story/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/building-ai-agent-langgraph-python/" class="hover:underline"
+              >Building an AI Agent With LangGraph and Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn LangGraph in Python with this hands-on video course and build a stateful AI agent using state graphs, nodes, and conditional edges.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 20, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/building-ai-agent-langgraph-python/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -2807,205 +3008,6 @@ the amount of short-notice demands on volunteers or open source projects.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://peter-hoffmann.com/2026/home-server-with-a-read-only-agent-and-pyinfra.html" class="hover:underline"
-              >Home Server Ops with a Read-Only Agent and pyinfra</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>My home server is a small mini PC running Debian. It holds the file
-shares, Time Machine backups, Gitea, a music server and a few small apps of my
-own. Like most home servers it grew by hand over the years: a command here, a
-config edit there, notes somewhere else. Its exact state was mostly in my
-head, and not reliably.</p>
-<p>Over two days I moved it to a setup where a coding agent does most of the
-work, but can't change the server on its own. This setup has proven to be
-extremely reliable and helpful: the server now has a declarative state, and I
-can review every change the agent proposes before it is applied.</p>
-<h2>The idea</h2>
-<p>The setup is built on two rules:</p>
-<ol>
-<li><strong>The agent gets read-only access.</strong> It can SSH into the server as my normal
-user and look at everything: systemd units, logs, disk usage, config files,
-cron jobs. <code>sudo</code> requires a password, which the agent doesn't have. So in
-practice it can explore, but not change anything.</li>
-<li><strong>Every change is code.</strong> The agent never runs ad-hoc commands to fix
-something. It writes or changes a <a href="https://pyinfra.com">pyinfra</a> deploy in a
-git repo. pyinfra is &quot;Ansible in Python&quot;: you describe the desired state with
-Python operations, it compares that state with the server and only applies
-the difference.</li>
-</ol>
-<p>The sudo password is the boundary between the two. I run the dry run and the
-real deploy in my own terminal, see the diff and type the password. No special
-user, no extra tooling.</p>
-<p><img alt="The agent explores the server read-only and writes pyinfra deploys; only my deploy with the sudo password changes the server" src="https://peter-hoffmann.com/static/2026/home-server-agent-pyinfra.png" /></p>
-<h2>The repo</h2>
-<div class="highlight"><pre><span></span>miniserver/
-├── CLAUDE.md        # rules for the agent
-├── SERVER.md        # current state of the server, written by the agent
-├── inventory.py     # the server, resolved via ~/.ssh/config
-├── justfile         # plan, deploy, ping, fact, ...
-├── deploys/         # one pyinfra deploy per topic
-│   ├── base.py      # packages, time sync, unattended-upgrades
-│   ├── backup.py
-│   ├── proxy.py
-│   ├── ...
-│   └── all.py       # includes everything in order
-└── files/           # scripts and systemd units deployed to the server
-</pre></div>
-<p><code>CLAUDE.md</code> holds the rules the agent follows in every session. The important
-part is short:</p>
-<div class="highlight"><pre><span></span>- Read-only exploration is fine: ssh in and run commands that only read state.
-- Never modify the server without explicit permission.
-- Prefer pyinfra over ad-hoc commands for changes. Always do a dry run first
-  (`just plan [deploys/&lt;file&gt;.py]`) and review the plan before the real run.
-- `files/` holds the scripts/units deployed to the server; edit them here,
-  never directly on the server.
-</pre></div>
-<p><code>SERVER.md</code> is the inventory the agent wrote in the first session by exploring
-the server: OS, hardware, disks, users, services, backups. It gets updated at
-the end of every session, so the next session starts from a description instead
-of from scratch.</p>
-<h2>A deploy</h2>
-<p>A deploy is plain Python. This one manages a single setting in Gitea's
-<code>app.ini</code>, restarts Gitea only if the setting changed, and checks the result:</p>
-<div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pyinfra.operations</span><span class="w"> </span><span class="kn">import</span> <span class="n">files</span><span class="p">,</span> <span class="n">server</span><span class="p">,</span> <span class="n">systemd</span>
-
-<span class="n">APP_INI</span> <span class="o">=</span> <span class="s2">&quot;/home/git/gitea/custom/conf/app.ini&quot;</span>
-<span class="n">ROOT_URL</span> <span class="o">=</span> <span class="s2">&quot;http://gitea.local/&quot;</span>
-
-<span class="n">root_url</span> <span class="o">=</span> <span class="n">files</span><span class="o">.</span><span class="n">line</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;app.ini: ROOT_URL = </span><span class="si">{</span><span class="n">ROOT_URL</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">path</span><span class="o">=</span><span class="n">APP_INI</span><span class="p">,</span>
-    <span class="n">line</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;^ROOT_URL *=.*$&quot;</span><span class="p">,</span>
-    <span class="n">replace</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;ROOT_URL = </span><span class="si">{</span><span class="n">ROOT_URL</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
-    <span class="n">_sudo</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">systemd</span><span class="o">.</span><span class="n">service</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Restart gitea after config change&quot;</span><span class="p">,</span>
-    <span class="n">service</span><span class="o">=</span><span class="s2">&quot;gitea&quot;</span><span class="p">,</span>
-    <span class="n">restarted</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-    <span class="n">_if</span><span class="o">=</span><span class="n">root_url</span><span class="o">.</span><span class="n">did_change</span><span class="p">,</span>
-    <span class="n">_sudo</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">server</span><span class="o">.</span><span class="n">shell</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Verify Gitea&quot;</span><span class="p">,</span>
-    <span class="n">commands</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;systemctl is-active gitea&quot;</span><span class="p">],</span>
-    <span class="n">_sudo</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-<span class="p">)</span>
-</pre></div>
-<p>Deploys are idempotent: running them again changes nothing. That makes it safe
-to run <code>all.py</code> at any time to check whether the server still matches the repo.</p>
-<h2>The workflow</h2>
-<p>A typical change looks like this:</p>
-<ol>
-<li>I describe what I want, e.g. &quot;every app should get a name like
-<code>gitea.local</code> instead of a port&quot;.</li>
-<li>The agent explores the server read-only, writes the deploy (here: Caddy as
-reverse proxy plus mDNS aliases) and tells me what will change.</li>
-<li>I run <code>just plan deploys/proxy.py</code>, a pyinfra dry run with diff, and review
-it.</li>
-<li>I run <code>just deploy deploys/proxy.py</code>.</li>
-<li>The agent verifies the result over SSH, updates <code>SERVER.md</code> and commits.</li>
-</ol>
-<p>The agent does the tedious parts (reading man pages, finding config locations,
-writing systemd units, checking logs), while I keep control over what actually
-changes. And the git history doubles as an operations log.</p>
-<h2>What came out of it</h2>
-<p>In two days the repo grew to about 40 commits: a full system upgrade, the
-printer moved over from an old Raspberry Pi, Time Machine backups for the
-Macs, push notifications for failed jobs, a reverse proxy with local names for
-all apps, and two of my own Python apps deployed as pinned releases.</p>
-<p>Mistakes still happened, but they ended up in <code>CLAUDE.md</code> as lessons learned
-for the next session. A few examples:</p>
-<ul>
-<li><code>apt autoremove</code> after the upgrade removed about 250 packages, including
-<code>smartmontools</code>. pyinfra's dry run can't show what apt will remove, so now
-the rule is to check <code>apt-get -s autoremove</code> first.</li>
-<li>A backup of an unmounted mount point &quot;succeeds&quot; with an empty snapshot. The
-backup script now refuses an empty source or a missing destination.</li>
-<li><code>OnFailure=</code> on a unit with <code>Restart=always</code> fires on every restart, which
-means a flood of notifications.</li>
-</ul>
-<p>One caveat: read-only doesn't mean the agent sees nothing sensitive. It can
-read everything my user can read. For a home server I'm fine with that, but
-it's worth keeping in mind before you do the same with a machine that holds
-other people's data.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 19, 2026 12:00 AM UTC by
-            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
-              >Peter Hoffmann</a
-            >
-          </div>
-          <a
-            href="https://peter-hoffmann.com/2026/home-server-with-a-read-only-agent-and-pyinfra.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.europython.eu/humans-of-ep-emma/" class="hover:underline"
-              >Humans of EuroPython: Emma Cooke</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            “[The] first time I attended EuroPython I was just in awe of the dedication of the volunteer team, and I wanted to know more about how it all came together.” An interview with Emma Cooke.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 17, 2026 08:36 PM UTC by
-            <a href="http://blog.europython.eu/rss" class="link link-hover text-primary"
-              >EuroPython</a
-            >
-          </div>
-          <a
-            href="https://blog.europython.eu/humans-of-ep-emma/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -3017,8 +3019,8 @@ other people's data.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8250</a></li>
-    <li><a>Unique Feeds: 368</a></li>
+    <li><a>Total Entries: 8294</a></li>
+    <li><a>Unique Feeds: 369</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
