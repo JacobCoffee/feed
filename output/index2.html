@@ -63,7 +63,198 @@
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            How can I change the color of a QProgressBar delegate in a QTableView when a process starts or stops? I'm using a delegate to show an indeterminate progress bar (with <code>setRange(0, 0)</code>), and I want it to be green when running and red when stopped, but replacing the delegate doesn't seem to redraw the color.
+            <blockquote>
+<p>How can I change the color of a QProgressBar delegate in a QTableView when a process starts or stops? I'm using a delegate to show an indeterminate progress bar (with <code>setRange(0, 0)</code>), and I want it to be green when running and red when stopped, but replacing the delegate doesn't seem to redraw the color.</p>
+</blockquote>
+<p>The issue here comes from how delegates and persistent editors interact. When you call <code>openPersistentEditor</code>, Qt creates the editor widget and keeps it alive. Replacing the delegate on a row doesn't automatically close and recreate those existing editors &mdash; so even though you're assigning a new <code>ProgressBarDelegate</code> with a different color, the old progress bar widget is still sitting there unchanged.</p>
+<p>The solution is to store the color information in the <em>model data</em> and have a single delegate read that color when it creates or updates the editor. This way, when the data changes, the delegate can update the editor's stylesheet accordingly.</p>
+<p>Let's walk through how to set this up properly.</p>
+<h2 id="store-state-in-the-model-not-the-delegate">Store state in the model, not the delegate</h2>
+<p>Rather than creating a new delegate every time a button is clicked, store the running/stopped state in the model itself. You can use a custom <code>Qt.ItemDataRole</code> (or just <code>Qt.UserRole</code>) to hold the color or state for each row. The delegate then reads this value when painting or configuring the editor.</p>
+<p>This keeps your architecture clean: the model holds the data, and the delegate is responsible only for presentation.</p>
+<h2 id="use-seteditordata-to-update-the-progress-bar">Use <code>setEditorData</code> to update the progress bar</h2>
+<p>The <code>setEditorData</code> method on your delegate is called whenever the model data changes for an index that has a persistent editor. This is where you update the progress bar's stylesheet based on the current state.</p>
+<p>Here's how to write a <code>ProgressBarDelegate</code> that reads a color from the model:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class ProgressBarDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() == 2:
+            if (
+                isinstance(self.parent(), QtWidgets.QAbstractItemView)
+                and self.parent().model() is index.model()
+            ):
+                self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        editor = QtWidgets.QProgressBar(parent)
+        editor.setRange(0, 0)
+        editor.setTextVisible(False)
+        return editor
+
+    def setEditorData(self, editor, index):
+        color = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if color:
+            editor.setStyleSheet(
+                f"QProgressBar::chunk {{background-color: {color}; "
+                f"width: 20px; margin: 0.5px;}}"
+            )
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+</code></pre>
+</div>
+<p>The delegate no longer stores any color itself. Instead, <code>setEditorData</code> looks up the color from <code>Qt.UserRole</code> on the model index and applies it to the stylesheet. Every time you call <code>setData</code> on the model with <code>Qt.UserRole</code>, Qt will automatically call <code>setEditorData</code> on the persistent editor for that index.</p>
+<h2 id="update-the-model-when-the-button-is-clicked">Update the model when the button is clicked</h2>
+<p>In your button click handler, instead of creating a new delegate, just update the model data:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def on_button_clicked(self, index):
+    model = self.table_view.model()
+    progress_index = model.index(index.row(), 2)
+
+    current_state = progress_index.data(QtCore.Qt.ItemDataRole.DisplayRole)
+
+    if current_state is None or current_state == 0:
+        model.setData(progress_index, "green", QtCore.Qt.ItemDataRole.UserRole)
+        model.setData(progress_index, 1, QtCore.Qt.ItemDataRole.DisplayRole)
+    else:
+        model.setData(progress_index, "red", QtCore.Qt.ItemDataRole.UserRole)
+        model.setData(progress_index, 0, QtCore.Qt.ItemDataRole.DisplayRole)
+</code></pre>
+</div>
+<p>The <code>DisplayRole</code> tracks the state (1 for running, 0 for stopped), and <code>UserRole</code> holds the color string. When <code>setData</code> is called, the model emits <code>dataChanged</code>, which triggers <code>setEditorData</code> on the persistent editor &mdash; and the progress bar updates its color.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's the full example putting everything together. The <a href="https://www.pythonguis.com/tutorials/pyside6-qtableview-modelviews-numpy-pandas/">QTableView</a> shows a list of paths, each with a Start/Stop button and an indeterminate progress bar. Clicking the button toggles the progress bar between green and red using a single <a href="https://www.pythonguis.com/tutorials/pyside6-modelview-architecture/">delegate</a> that reads color from the model.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PySide6 import QtCore, QtGui, QtWidgets
+
+
+class ProgressBarDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() == 2:
+            if (
+                isinstance(self.parent(), QtWidgets.QAbstractItemView)
+                and self.parent().model() is index.model()
+            ):
+                self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        editor = QtWidgets.QProgressBar(parent)
+        editor.setRange(0, 0)
+        editor.setTextVisible(False)
+        return editor
+
+    def setEditorData(self, editor, index):
+        color = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if color:
+            editor.setStyleSheet(
+                f"QProgressBar::chunk {{background-color: {color}; "
+                f"width: 20px; margin: 0.5px;}}"
+            )
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+
+
+class PushButtonDelegate(QtWidgets.QStyledItemDelegate):
+    clicked = QtCore.Signal(QtCore.QModelIndex)
+
+    def paint(self, painter, option, index):
+        if (
+            isinstance(self.parent(), QtWidgets.QAbstractItemView)
+            and self.parent().model() is index.model()
+        ):
+            self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        button = QtWidgets.QPushButton(parent)
+        button.clicked.connect(lambda *args, ix=index: self.clicked.emit(ix))
+        return button
+
+    def setEditorData(self, editor, index):
+        editor.setText("Start/Stop")
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(600, 300)
+
+        self.table_view = QtWidgets.QTableView()
+        layout = QtWidgets.QHBoxLayout()
+        layout.addWidget(self.table_view)
+        cw = QtWidgets.QWidget()
+        cw.setLayout(layout)
+        self.setCentralWidget(cw)
+
+        self.init_model()
+
+        self.button_delegate.clicked.connect(self.on_button_clicked)
+
+    def init_model(self):
+        headers = ["Path", "Control", "Progress"]
+
+        self.button_delegate = PushButtonDelegate(self.table_view)
+        self.progress_delegate = ProgressBarDelegate(self.table_view)
+
+        self.model = QtGui.QStandardItemModel()
+        self.model.setHorizontalHeaderLabels(headers)
+
+        for row in range(5):
+            self.model.setItem(
+                row, 0, QtGui.QStandardItem(f"some_path{row}")
+            )
+            self.model.setItem(row, 1, QtGui.QStandardItem())
+            self.model.setItem(row, 2, QtGui.QStandardItem())
+
+        self.table_view.setModel(self.model)
+        self.table_view.setItemDelegateForColumn(1, self.button_delegate)
+        self.table_view.setItemDelegateForColumn(2, self.progress_delegate)
+        self.table_view.resizeColumnsToContents()
+        self.table_view.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+
+    def on_button_clicked(self, index):
+        model = self.table_view.model()
+        progress_index = model.index(index.row(), 2)
+
+        current_state = progress_index.data(QtCore.Qt.ItemDataRole.DisplayRole)
+
+        if current_state is None or current_state == 0:
+            model.setData(
+                progress_index, "green", QtCore.Qt.ItemDataRole.UserRole
+            )
+            model.setData(
+                progress_index, 1, QtCore.Qt.ItemDataRole.DisplayRole
+            )
+        else:
+            model.setData(
+                progress_index, "red", QtCore.Qt.ItemDataRole.UserRole
+            )
+            model.setData(
+                progress_index, 0, QtCore.Qt.ItemDataRole.DisplayRole
+            )
+
+
+if __name__ == "__main__":
+    app = QtWidgets.QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+</code></pre>
+</div>
+<p>When you run this, each row has a "Start/Stop" button. Clicking it the first time turns the progress bar green (running). Clicking again turns it red (stopped). Each subsequent click toggles between the two states.</p>
           </p>
         </div>
 
@@ -1731,8 +1922,8 @@ embeddings.  Use it for good, not evil.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8336</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8351</a></li>
+    <li><a>Unique Feeds: 372</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
