@@ -879,293 +879,7 @@ closed models as well, to keep up with others who do.</p>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            <blockquote>
-<p>I'm using QThreadPool and worker threads in my PyQt application. When I click the X button to close the window, the threads keep running in the background. What's the best way to clean everything up on application exit?</p>
-</blockquote>
-<p>This is a very common situation when working with multithreaded PyQt6 applications. You've set up background workers using <code>QThreadPool</code> or <code>QThread</code>, everything runs great &mdash; but when you close the window, the application doesn't fully exit. The threads keep going, and you might even see errors in your console.</p>
-<p>The solution is to hook into your window's close event and explicitly stop your background work before the window finishes closing. Let's walk through how to do this.</p>
-<h2 id="understanding-the-problem">Understanding the problem</h2>
-<p>When you close a PyQt6 window by clicking the X button (or calling <code>close()</code>), Qt destroys the window and its widgets. But any threads you've started &mdash; whether via <code>QThreadPool</code>, <code>QThread</code>, or <code>QRunnable</code> &mdash; are managed separately. They don't automatically stop just because the window is gone.</p>
-<p>This means your Python process can hang, or you might see tracebacks as threads try to interact with widgets that no longer exist.</p>
-<h2 id="overriding-closeevent">Overriding <code>closeEvent</code></h2>
-<p>Every <code>QWidget</code> (including <code>QMainWindow</code>) has a method called <code>closeEvent</code> that Qt calls whenever the widget is about to close. By overriding this method, you can run your own cleanup code at exactly the right moment.</p>
-<p>Here's a minimal example:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">from PyQt6.QtWidgets import QMainWindow
-
-
-class MainWindow(QMainWindow):
-    def closeEvent(self, event):
-        # Put your cleanup code here
-        print("Window is closing &mdash; cleaning up!")
-        event.accept()
-</code></pre>
-</div>
-<p>The <code>event</code> parameter is a <code>QCloseEvent</code>. Calling <code>event.accept()</code> tells Qt to go ahead and close the window. If you wanted to cancel the close (for example, to show a "Save changes?" <a href="https://www.pythonguis.com/tutorials/pyqt6-dialogs/">dialog</a>), you would call <code>event.ignore()</code> instead.</p>
-<h2 id="stopping-workers-on-close">Stopping workers on close</h2>
-<p>If you're managing background workers &mdash; for example, through a <code>QThreadPool</code> &mdash; you'll want to signal them to stop and then wait for them to finish before allowing the window to close.</p>
-<p>Here's how that looks in practice. First, let's set up a simple worker using <code>QRunnable</code>:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import time
-
-from PyQt6.QtCore import QRunnable, pyqtSlot, QObject, pyqtSignal
-
-
-class WorkerSignals(QObject):
-    finished = pyqtSignal()
-
-
-class Worker(QRunnable):
-    def __init__(self):
-        super().__init__()
-        self.signals = WorkerSignals()
-        self.is_running = True
-
-    @pyqtSlot()
-    def run(self):
-        while self.is_running:
-            print("Worker is working...")
-            time.sleep(1)
-        print("Worker stopped.")
-        self.signals.finished.emit()
-
-    def stop(self):
-        self.is_running = False
-</code></pre>
-</div>
-<p>The worker runs in a loop, checking <code>self.is_running</code> on each iteration. When <code>stop()</code> is called, it sets the flag to <code>False</code>, and the loop exits on the next check.</p>
-<p>To stop <code>QRunnable</code> objects you need to use this flag-watching approach.</p>
-<p>If your runnable doesn't have a loop, and is instead doing a long series of processing steps, you instead will need check the flag state multiple times during that code and <code>return</code> or <code>raise</code> to exit the runner.</p>
-<p class="admonition admonition-note"><span class="admonition-kind"><i class="fas fa-sticky-note"></i></span>  The exit can <em>only</em> happen at the points where the flag is checked.</p>
-<p>To avoid multiple <code>if</code> checks in the code, an alternative is to have a check method that raises an exception for the stop state. For example:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">    def maybe_stop(self):
-        if not self.is_running:
-            raise Exception("Worker stopped.")
-</code></pre>
-</div>
-<p>You can then use this as follows:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import time
-
-from PyQt6.QtCore import QRunnable, pyqtSlot, QObject, pyqtSignal
-
-
-class WorkerSignals(QObject):
-    finished = pyqtSignal()
-
-
-class Worker(QRunnable):
-    def __init__(self):
-        super().__init__()
-        self.signals = WorkerSignals()
-        self.is_running = True
-
-    @pyqtSlot()
-    def run(self):
-        print("Worker is working...")
-        self.maybe_stop()
-        time.sleep(5) # &lt;- do some work.
-        self.maybe_stop()
-        time.sleep(5) # &lt;- do some more work.
-        self.maybe_stop()
-        time.sleep(5) # &lt;- do some more work.
-        self.maybe_stop()
-        time.sleep(5) # &lt;- do some more work.
-        self.maybe_stop()
-        time.sleep(5) # &lt;- do some more work.
-        # &lt;- no point stopping now.
-        print("Worker stopped.")
-        self.signals.finished.emit()
-
-    def stop(self):
-        self.is_running = False
-
-    def maybe_stop(self):
-        if not self.is_running:
-            raise Exception("Worker stopped.")
-</code></pre>
-</div>
-<p>We'll not use this approach in our example here, since for testing purposes it is better to have a worker that doesn't stop. But you may find it useful in your own code.</p>
-<p>Now let's put together a <code>QMainWindow</code> that starts a worker and cleans it up on close:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import sys
-import time
-
-from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSlot, QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
-
-
-class WorkerSignals(QObject):
-    finished = pyqtSignal()
-
-
-class Worker(QRunnable):
-    def __init__(self):
-        super().__init__()
-        self.signals = WorkerSignals()
-        self.is_running = True
-
-    @pyqtSlot()
-    def run(self):
-        while self.is_running:
-            print("Worker is working...")
-            time.sleep(1)
-        print("Worker stopped.")
-        self.signals.finished.emit()
-
-    def stop(self):
-        self.is_running = False
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Thread Cleanup Example")
-
-        label = QLabel("Close this window to stop the worker.")
-        self.setCentralWidget(label)
-
-        self.threadpool = QThreadPool()
-        self.workers = []
-
-        # Start a background worker.
-        worker = Worker()
-        self.workers.append(worker)
-        self.threadpool.start(worker)
-
-    def closeEvent(self, event):
-        # Signal all workers to stop.
-        for worker in self.workers:
-            worker.stop()
-
-        # Wait for all threads in the pool to finish.
-        self.threadpool.waitForDone()
-        print("All workers stopped. Closing application.")
-        event.accept()
-
-
-app = QApplication(sys.argv)
-window = MainWindow()
-window.show()
-sys.exit(app.exec())
-</code></pre>
-</div>
-<p>When you run this and close the window, you'll see the worker print its "stopped" message, and the application exits cleanly.</p>
-<p>Let's look at what's happening in <code>closeEvent</code>:</p>
-<p>First, we loop through all our tracked workers and call <code>stop()</code> on each one, setting the flag that tells them to finish. Then we call <code>self.threadpool.waitForDone()</code>, which blocks until every runnable in the pool has completed. This ensures we don't pull the rug out from under a running thread. Finally, we call <code>event.accept()</code> to let the window close.</p>
-<h2 id="managing-multiple-worker-groups">Managing multiple worker groups</h2>
-<p>If your application has different categories of workers &mdash; say, one group handling camera feeds and another running inference engines &mdash; you can keep separate lists and stop them all in <code>closeEvent</code>:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">def closeEvent(self, event):
-    for worker in self.feed_workers:
-        worker.stop()
-    for worker in self.engine_workers:
-        worker.stop()
-
-    self.threadpool.waitForDone()
-    event.accept()
-</code></pre>
-</div>
-<p>The same principle applies: signal every worker to stop, then wait for the thread pool to drain.</p>
-<h2 id="ensuring-a-clean-exit-with-sysexit">Ensuring a clean exit with <code>sys.exit</code></h2>
-<p>You might notice that even after the window closes, the Python process occasionally doesn't exit cleanly. This usually happens when <code>sys.exit()</code> isn't receiving the application's return code properly.</p>
-<p>The standard way to launch and exit a PyQt6 application is:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">app = QApplication(sys.argv)
-window = MainWindow()
-window.show()
-sys.exit(app.exec())
-</code></pre>
-</div>
-<p><code>app.exec()</code> starts the Qt event loop and returns an exit code (an integer) when the loop ends. Passing that code to <code>sys.exit()</code> ensures Python terminates with the correct status.</p>
-<p>If you skip <code>sys.exit()</code> and just call <code>app.exec()</code>, Python may not tear down all its resources properly &mdash; particularly if threads or other objects are still being referenced. Wrapping it in <code>sys.exit()</code> triggers a proper <code>SystemExit</code> exception, which gives Python the chance to clean everything up.</p>
-<h2 id="complete-working-example">Complete working example</h2>
-<p>Here's the full working example:</p>
-<div class="code-block">
-<span class="code-block-language code-block-python">python</span>
-<pre><code class="python">import sys
-import time
-
-from PyQt6.QtCore import QRunnable, QThreadPool, pyqtSlot, QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel
-
-
-class WorkerSignals(QObject):
-    finished = pyqtSignal()
-
-
-class Worker(QRunnable):
-    def __init__(self, worker_id):
-        super().__init__()
-        self.worker_id = worker_id
-        self.signals = WorkerSignals()
-        self.is_running = True
-
-    @pyqtSlot()
-    def run(self):
-        while self.is_running:
-            print(f"Worker {self.worker_id} is working...")
-            time.sleep(1)
-        print(f"Worker {self.worker_id} stopped.")
-        self.signals.finished.emit()
-
-    def stop(self):
-        self.is_running = False
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Thread Cleanup on Exit")
-        self.resize(400, 200)
-
-        label = QLabel("Close this window to stop all workers.")
-        label.setMargin(20)
-        self.setCentralWidget(label)
-
-        self.threadpool = QThreadPool()
-        self.workers = []
-
-        # Start a few background workers.
-        for i in range(3):
-            worker = Worker(worker_id=i)
-            self.workers.append(worker)
-            self.threadpool.start(worker)
-
-    def closeEvent(self, event):
-        print("Close event received. Stopping workers...")
-
-        for worker in self.workers:
-            worker.stop()
-
-        self.threadpool.waitForDone()
-        print("All workers stopped. Goodbye!")
-        event.accept()
-
-
-app = QApplication(sys.argv)
-window = MainWindow()
-window.show()
-sys.exit(app.exec())
-</code></pre>
-</div>
-<p>When you run this, you'll see three workers printing messages to the console. Close the window, and you'll see each worker confirm it has stopped before the application exits.</p>
-<h2 id="summary">Summary</h2>
-<ul>
-<li>Override <code>closeEvent</code> on your main window to run cleanup code when the user closes the application.</li>
-<li>Set a flag on each worker to signal it should stop, and check that flag in the worker's loop.</li>
-<li>Use <code>QThreadPool.waitForDone()</code> to block until all workers have finished before allowing the window to close.</li>
-<li>Always wrap <code>app.exec()</code> with <code>sys.exit()</code> to ensure a clean process exit.</li>
-</ul>
-<p>This pattern works well for any PyQt6 application with background threads, whether you're processing data, handling network requests, or running live camera feeds. Once you have it in place, your application will shut down gracefully every time. For a complete introduction to using <code>QThreadPool</code> and <code>QRunnable</code> for multithreading in PyQt6, see our <a href="https://www.pythonguis.com/tutorials/multithreading-pyqt6-applications-qthreadpool/">Multithreading PyQt6 applications with QThreadPool</a> tutorial. You may also find our guides on <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals and slots</a> and <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-your-first-window/">creating your first PyQt6 window</a> helpful as you build out your application.</p>
+            I'm using QThreadPool and worker threads in my PyQt application. When I click the X button to close the window, the threads keep running in the background. What's the best way to clean everything up on application exit?
           </p>
         </div>
 
@@ -1205,7 +919,204 @@ sys.exit(app.exec())
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I'm using a threaded runner to stream a live video feed by converting a NumPy array to a <code>QImage</code>, then to a <code>QPixmap</code>, and displaying it on a <code>QLabel</code>. But I'm frequently encountering crashes when the label is resized too quickly or the scroll area is scrolled. Could this be a problem with the <code>QImage</code> memory buffer getting cleared before the <code>QPixmap</code> can update? Is this fixable, or is it a fundamental issue with threads in Python/Qt?
+            <blockquote>
+<p>I'm using a threaded runner to stream a live video feed by converting a NumPy array to a <code>QImage</code>, then to a <code>QPixmap</code>, and displaying it on a <code>QLabel</code>. But I'm frequently encountering crashes when the label is resized too quickly or the scroll area is scrolled. Could this be a problem with the <code>QImage</code> memory buffer getting cleared before the <code>QPixmap</code> can update? Is this fixable, or is it a fundamental issue with threads in Python/Qt?</p>
+</blockquote>
+<p>This is a common problem when working with NumPy arrays and <code>QImage</code> across threads. The good news is that it's fixable. The crashes come from how <code>QImage</code> handles the underlying memory of a NumPy array.</p>
+<h2 id="why-the-crash-happens">Why the crash happens</h2>
+<p>When you create a <code>QImage</code> from a NumPy array, <code>QImage</code> doesn't copy the data. Instead it holds a reference to the original memory buffer provided by the NumPy array.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import numpy as np
+from PyQt6.QtGui import QImage
+
+# Create a NumPy array (e.g. a video frame)
+array = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+
+# QImage points to the same memory &mdash; no copy is made
+image = QImage(
+    array.data,
+    array.shape[1],
+    array.shape[0],
+    array.strides[0],
+    QImage.Format.Format_RGB8888,
+)
+</code></pre>
+</div>
+<p>This is efficient, but it creates a dangerous situation in a multithreaded application. If the NumPy array is modified or goes out of scope in the worker thread while the GUI thread is still using the <code>QImage</code> to paint, the memory that <code>QImage</code> is pointing to may no longer be valid. The result is a segfault or (worse) a silent crash without any information about what has happened.</p>
+<p>This is especially likely when frames are arriving quickly (as with a live video feed) and the GUI is being redrawn frequently &mdash; for example, during a resize or a scroll.</p>
+<h2 id="the-fix-copy-the-image-data">The fix: copy the image data</h2>
+<p>The simplest and most reliable fix is to make sure the <code>QImage</code> owns its own copy of the pixel data before you pass it to the GUI thread. You can do this by calling <code>.copy()</code> on the <code>QImage</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">image = QImage(
+    array.data,
+    array.shape[1],
+    array.shape[0],
+    array.strides[0],
+    QImage.Format.Format_RGB888,
+).copy()
+</code></pre>
+</div>
+<p>The <code>.copy()</code> call creates a new <code>QImage</code> with its own independent memory buffer. Now it doesn't matter if the original NumPy array changes or disappears &mdash; the <code>QImage</code> is safe to use from the GUI thread.</p>
+<p>If you've already tried using <code>.copy()</code> and it hasn't worked, bear in mind that <em>where</em> you use the copy matters just as much as using it at all.</p>
+<h2 id="where-to-copy-matters">Where to copy matters</h2>
+<p>If you create the <code>QImage</code> in the worker thread and emit it via a <a href="https://www.pythonguisi.com/tutorials/pyqt6-signals-slots-events/">signal</a>, the copy needs to happen <strong>before</strong> the signal is emitted. If the signal carries a reference to the original (non-copied) <code>QImage</code>, the data might still be invalidated before the GUI thread processes it.</p>
+<p>Here's the pattern that works:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python"># In the worker thread
+image = QImage(
+    frame.data,
+    frame.shape[1],
+    frame.shape[0],
+    frame.strides[0],
+    QImage.Format.Format_RGB888,
+).copy()  # Copy immediately, before emitting
+
+self.signals.result.emit(image)  # Now safe to send to GUI thread
+</code></pre>
+</div>
+<p>And in the main thread, connect that signal to a slot that updates the display:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def update_display(self, image):
+    pixmap = QPixmap.fromImage(image)
+    self.label.setPixmap(pixmap)
+</code></pre>
+</div>
+<p>Because the <code>QImage</code> was copied before it crossed the thread boundary, the GUI thread has full ownership of the data and can paint it safely.</p>
+<h2 id="use-signals-to-control-the-update-flow">Use signals to control the update flow</h2>
+<p>Another source of crashes is calling GUI methods directly from a worker thread. In Qt, <strong>all GUI updates must happen on the main thread</strong>. If you're calling <code>label.setPixmap(...)</code> from inside a worker or a callback running on a background thread, that's undefined behavior and will eventually crash.</p>
+<p>The solution is to always use <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals and slots</a> to communicate between threads. Emit a signal from the worker carrying the processed image, and connect it to a slot on the main thread that performs the GUI update.</p>
+<p>This also gives you a natural way to throttle updates. If frames are arriving faster than the GUI can paint them, you can use a flag to skip frames that arrive while the previous one is still being displayed.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's a full example that simulates a video feed using a <code>QRunnable</code> and a <code>QThreadPool</code>. It generates random NumPy frames in a background thread and safely displays them on a <code>QLabel</code>. If you're new to running background tasks with <code>QThreadPool</code>, see our <a href="https://www.pythonguis.com/tutorials/multithreading-pyqt6-applications-qthreadpool/">detailed guide to multithreading PyQt6 applications</a>.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+import numpy as np
+from PyQt6.QtCore import (
+    QObject,
+    QRunnable,
+    QThreadPool,
+    pyqtSignal,
+    pyqtSlot,
+)
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+class WorkerSignals(QObject):
+    frame_ready = pyqtSignal(QImage)
+    finished = pyqtSignal()
+
+
+class VideoWorker(QRunnable):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+        self.running = True
+
+    @pyqtSlot()
+    def run(self):
+        while self.running:
+            # Simulate a video frame (e.g. from a camera or stream)
+            frame = np.random.randint(
+                0, 255, (480, 640, 3), dtype=np.uint8
+            )
+
+            # Create QImage and copy it immediately so it owns its data
+            image = QImage(
+                frame.data,
+                frame.shape[1],
+                frame.shape[0],
+                frame.strides[0],
+                QImage.Format.Format_RGB888,
+            ).copy()
+
+            # Emit the safe, copied image to the main thread
+            self.signals.frame_ready.emit(image)
+
+            # Simulate ~30 fps
+            time.sleep(1 / 30)
+
+        self.signals.finished.emit()
+
+    def stop(self):
+        self.running = False
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Threaded Video Display")
+
+        self.label = QLabel("Waiting for frames...")
+        self.label.setScaledContents(True)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.label)
+        scroll_area.setWidgetResiizable(True)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.addWidget(scroll_area)
+        self.setCentralWidget(container)
+
+        self.resize(700, 520)
+
+        # Set up threading
+        self.threadpool = QThreadPool()
+        self.worker = VideoWorker()
+        self.worker.signals.frame_ready.connect(self.update_display)
+        self.worker.signals.finished.connect(self.on_finished)
+        self.threadpool.start(self.worker)
+
+    def update_display(self, image):
+        """Runs on the main thread &mdash; safe to update the GUI here."""
+        pixmap = QPixmap.fromImage(image)
+        self.label.setPixmap(pixmap)
+
+    def on_finished(self):
+        print("Worker finished.")
+
+    def closeEvent(self, event):
+        self.worker.stop()
+        self.threadpool.waitForDone(2000)
+        event.accept()
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>When you run this, you'll see a window displaying rapidly changing random noise &mdash; a stand-in for a real video stream. You can resize the window and scroll around without crashes, because the image data is safely copied before it crosses the thread boundary, and all GUI updates happen on the main thread via signals.</p>
+<h2 id="recap">Recap</h2>
+<p>When working with NumPy arrays and <code>QImage</code> across threads, keep these three things in mind:</p>
+<ol>
+<li>
+<p><strong><code>QImage</code> does not copy NumPy data.</strong> It points to the original array's memory buffer. If that buffer changes or is freed, the <code>QImage</code> becomes invalid.</p>
+</li>
+<li>
+<p><strong>Call <code>.copy()</code> on the <code>QImage</code> before emitting it across threads.</strong> This gives the <code>QImage</code> its own memory, independent of the NumPy array.</p>
+</li>
+<li>
+<p><strong>Always update the GUI from the main thread.</strong> Use <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals</a> to send data from background workers to slots connected on the main thread, where it's safe to call <code>setPixmap()</code> and other GUI methods.</p>
+</li>
+</ol>
+<p>With these practices in place, you can stream video or display rapidly changing image data without encountering the mysterious crashes that come from shared memory across threads.</p>
           </p>
         </div>
 
@@ -2418,7 +2329,7 @@ Try to recall it tomorrow, and then again next week.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8341</a></li>
+    <li><a>Total Entries: 8293</a></li>
     <li><a>Unique Feeds: 371</a></li>
     
 
