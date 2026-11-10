@@ -53,6 +53,361 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://peter-hoffmann.com/2026/loading-peaks-on-demand-with-a-z10-tile-grid.html" class="hover:underline"
+              >Loading 33,000 Peaks on Demand with a z10 Tile Grid</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p><a href="https://biwak.info">biwak.info</a> is my mobile-first map of Alpine huts and
+bivouacs. Recently I wanted to add peaks: tap anywhere near a summit and get its
+name, elevation, prominence, a photo and the Wikipedia link. The data for that
+comes from OpenStreetMap and Wikidata: <strong>33,437 named peaks</strong> between Nice and
+Vienna.</p>
+<p>As a single <code>peaks.json</code> file this is 15.4 MB (1.8 MB gzipped). That's fine for
+a desktop, but on a phone with one bar of signal in a valley it is not, and most
+of it is never used: you look at one valley, not the whole Alps.</p>
+<p>The site is hosted as plain static files, without a database or an application
+server, and I wanted to keep it that way. So the question was: how do you load
+only the peaks the user is looking at, using nothing but files?</p>
+<p><img alt="The 356 z10 tiles that contain peaks, darker means more peaks. The Matterhorn tile 533/364 is outlined in red." src="https://peter-hoffmann.com/static/2026/biwak-peaks-z10-grid.webp" /></p>
+<h2>Use the map's own tile grid</h2>
+<p>Leaflet already splits the world into a grid: the slippy map tiles <code>z/x/y</code> that
+every OpenStreetMap-style basemap uses. At zoom level <code>z</code> there are <code>2^z × 2^z</code>
+tiles, and any coordinate maps to exactly one of them with two lines of math:</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">lon2x</span><span class="p">(</span><span class="n">lon</span><span class="p">,</span> <span class="n">z</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="n">lon</span> <span class="o">+</span> <span class="mi">180</span><span class="p">)</span> <span class="o">/</span> <span class="mi">360</span> <span class="o">*</span> <span class="mi">2</span><span class="o">**</span><span class="n">z</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">lat2y</span><span class="p">(</span><span class="n">lat</span><span class="p">,</span> <span class="n">z</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">lat_rad</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">radians</span><span class="p">(</span><span class="n">lat</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">math</span><span class="o">.</span><span class="n">floor</span><span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">tan</span><span class="p">(</span><span class="n">lat_rad</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">lat_rad</span><span class="p">))</span> <span class="o">/</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span> <span class="o">*</span> <span class="mi">2</span><span class="o">**</span><span class="n">z</span><span class="p">)</span>
+</pre></div>
+<p>The idea: cut the peaks into files along that same grid at one fixed zoom
+level, one JSON file per tile. The browser computes which tiles cover the
+current view and fetches only those. Because the build (Python) and the client
+(JavaScript) use the same formula, they always agree on which file a peak is in.
+The <code>floor</code> also means every peak belongs to exactly one tile, so nothing is
+duplicated.</p>
+<p>The Matterhorn (45.97639, 7.65833) for example lands in tile <code>10/533/364</code>. I keep
+a handful of these as unit test fixtures for the build and the client.</p>
+<h2>Why zoom level 10</h2>
+<p>The zoom level of the data grid is independent of the zoom level the map is
+showing. It is a trade-off between the number of requests and the size of each
+file:</p>
+<ul>
+<li>A z10 tile is about <strong>27 × 27 km</strong> in the Alps.</li>
+<li>Peaks are only drawn from map zoom 12 on. There a phone screen (390 × 790 px)
+shows roughly 10 × 21 km. With a 25% margin around the view to preload
+neighbours, a view touches at most <strong>6 tiles at zoom 12 and 4 at zoom 13</strong>.</li>
+<li>The whole Alps fit into <strong>356 non-empty tiles</strong>. A tile holds 93 peaks in the
+median, the densest one 348: tile <code>541/358</code> in the Allgäu Alps, with the
+Hochvogel and Krottenkopf.</li>
+<li>A tile is 13 KB of JSON in the median (3.6 KB gzipped), the largest 87 KB.</li>
+</ul>
+<p>At z9 the tiles would hold four times as many peaks, so most of each download
+would be off-screen. At z11 a view would need four times as many requests. z10
+is the sweet spot for this density of data.</p>
+<h2>The build: one small file per tile</h2>
+<p>A Python script (<code>tools/build_peaks.py</code>) reads the big <code>peaks.json</code> and writes
+the grid:</p>
+<div class="highlight"><pre><span></span>data/peaks/manifest.json      non-empty tiles with peak counts
+data/peaks/10/{x}/{y}.json    one file per tile
+</pre></div>
+<p>Each tile is a compact table: a <code>fields</code> header and one array per peak, instead
+of repeating the key names thousands of times. Coordinates are stored as integers
+in 1e-5 degrees, which is about one meter and saves the long float strings:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span><span class="nt">&quot;cat&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">&quot;fields&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;lat_e5&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;lon_e5&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;ele&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;rank&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;name&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;prominence&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;wikipedia&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;wikidata&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;image&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">],</span>
+<span class="w"> </span><span class="nt">&quot;rows&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">   </span><span class="p">[</span><span class="s2">&quot;n26863664&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">4597643</span><span class="p">,</span><span class="w"> </span><span class="mi">765860</span><span class="p">,</span><span class="w"> </span><span class="mi">4478</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Matterhorn&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">1038</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;it:Cervino&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Q1374&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;https://...&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">],</span>
+<span class="w">   </span><span class="p">[</span><span class="s2">&quot;n1436639948&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">4603418</span><span class="p">,</span><span class="w"> </span><span class="mi">761193</span><span class="p">,</span><span class="w"> </span><span class="mi">4358</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Dent Blanche&quot;</span><span class="p">,</span><span class="w"> </span><span class="mi">915</span><span class="p">,</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;Q15125&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;https://...&quot;</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">]</span>
+<span class="w"> </span><span class="p">],</span>
+<span class="w"> </span><span class="nt">&quot;x&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">533</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;y&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">364</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;z&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">}</span>
+</pre></div>
+<p>The manifest lists only the tiles that exist (7 KB). The client checks it first
+and never requests a tile over the Po valley or the Mediterranean that would only
+return a 404.</p>
+<p>The build is deterministic: the same input gives byte-identical files. That
+keeps the git diffs readable when the OSM data changes, and <code>rsync</code> only uploads
+the tiles that really changed.</p>
+<h2>Not every peak at every zoom</h2>
+<p>At zoom 12 the Alps are full of small bumps that are technically named peaks. So
+every peak gets a <strong>rank</strong> from 0 to 3 at build time. The rank comes from the
+prominence (how far you have to descend before you can climb anything higher)
+or, if that is unknown, from the isolation (the distance to the nearest higher
+peak):</p>
+<div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">peak_rank</span><span class="p">(</span><span class="n">ele</span><span class="p">,</span> <span class="n">prominence</span><span class="p">,</span> <span class="n">isolation_km</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">ele</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">0</span>
+    <span class="k">if</span> <span class="n">prominence</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">3</span> <span class="k">if</span> <span class="n">prominence</span> <span class="o">&gt;=</span> <span class="mi">500</span> <span class="k">else</span> <span class="mi">2</span> <span class="k">if</span> <span class="n">prominence</span> <span class="o">&gt;=</span> <span class="mi">150</span> <span class="k">else</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">prominence</span> <span class="o">&gt;=</span> <span class="mi">50</span> <span class="k">else</span> <span class="mi">0</span>
+    <span class="k">if</span> <span class="n">isolation_km</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">0</span>
+    <span class="k">return</span> <span class="mi">3</span> <span class="k">if</span> <span class="n">isolation_km</span> <span class="o">&gt;=</span> <span class="mi">5</span> <span class="k">else</span> <span class="mi">2</span> <span class="k">if</span> <span class="n">isolation_km</span> <span class="o">&gt;=</span> <span class="mi">2</span> <span class="k">else</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">isolation_km</span> <span class="o">&gt;=</span> <span class="mf">0.8</span> <span class="k">else</span> <span class="mi">0</span>
+</pre></div>
+<p>That gives 1,558 peaks with rank 3, 7,385 with rank 2, 18,015 with rank 1 and
+6,479 with rank 0. The rows in each tile are sorted by rank, then by elevation.
+The map shows rank ≥ 2 at zoom 12, rank ≥ 1 at zoom 13 and everything from zoom
+14 on.</p>
+<h2>The client: fetch what the view needs</h2>
+<p>In the browser (<code>peaks.js</code>) it all hangs off Leaflet's <code>moveend</code> event. From zoom
+11 on, one zoom level before anything is drawn, the visible bounds plus a 25%
+margin are turned into tile keys. Missing tiles are queued:</p>
+<div class="highlight"><pre><span></span><span class="kd">function</span><span class="o">*</span><span class="w"> </span><span class="nx">tileKeys</span><span class="p">(</span><span class="nx">bounds</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">x0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">lon2x</span><span class="p">(</span><span class="nx">bounds</span><span class="p">.</span><span class="nx">getWest</span><span class="p">()),</span><span class="w"> </span><span class="nx">x1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">lon2x</span><span class="p">(</span><span class="nx">bounds</span><span class="p">.</span><span class="nx">getEast</span><span class="p">());</span>
+<span class="w">  </span><span class="kd">const</span><span class="w"> </span><span class="nx">y0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">lat2y</span><span class="p">(</span><span class="nx">bounds</span><span class="p">.</span><span class="nx">getNorth</span><span class="p">()),</span><span class="w"> </span><span class="nx">y1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">lat2y</span><span class="p">(</span><span class="nx">bounds</span><span class="p">.</span><span class="nx">getSouth</span><span class="p">());</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">let</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">x0</span><span class="p">;</span><span class="w"> </span><span class="nx">x</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="nx">x1</span><span class="p">;</span><span class="w"> </span><span class="nx">x</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">let</span><span class="w"> </span><span class="nx">y</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">y0</span><span class="p">;</span><span class="w"> </span><span class="nx">y</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="nx">y1</span><span class="p">;</span><span class="w"> </span><span class="nx">y</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="k">yield</span><span class="w"> </span><span class="sb">`</span><span class="si">${</span><span class="nx">x</span><span class="si">}</span><span class="sb">/</span><span class="si">${</span><span class="nx">y</span><span class="si">}</span><span class="sb">`</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kd">function</span><span class="w"> </span><span class="nx">loadVisiblePeakTiles</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="nx">peakManifest</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">map</span><span class="p">.</span><span class="nx">getZoom</span><span class="p">()</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="nx">LOAD_FROM_ZOOM</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="p">;</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kd">const</span><span class="w"> </span><span class="nx">key</span><span class="w"> </span><span class="k">of</span><span class="w"> </span><span class="nx">tileKeys</span><span class="p">(</span><span class="nx">map</span><span class="p">.</span><span class="nx">getBounds</span><span class="p">().</span><span class="nx">pad</span><span class="p">(</span><span class="nx">VIEW_PAD</span><span class="p">)))</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="o">!</span><span class="p">(</span><span class="nx">key</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="nx">peakManifest</span><span class="p">.</span><span class="nx">tiles</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">peakTiles</span><span class="p">.</span><span class="nx">has</span><span class="p">(</span><span class="nx">key</span><span class="p">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nx">peakTileState</span><span class="p">.</span><span class="nx">has</span><span class="p">(</span><span class="nx">key</span><span class="p">))</span><span class="w"> </span><span class="k">continue</span><span class="p">;</span>
+<span class="w">    </span><span class="nx">peakTileState</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span><span class="nx">key</span><span class="p">,</span><span class="w"> </span><span class="s1">'loading'</span><span class="p">);</span>
+<span class="w">    </span><span class="nx">fetchQueue</span><span class="p">.</span><span class="nx">push</span><span class="p">(</span><span class="nx">key</span><span class="p">);</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="nx">pumpFetchQueue</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="nx">map</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s1">'moveend'</span><span class="p">,</span><span class="w"> </span><span class="nx">loadVisiblePeakTiles</span><span class="p">);</span>
+</pre></div>
+<p>A few details made it work well on a phone:</p>
+<ul>
+<li><strong>At most 4 requests in parallel</strong>, so a fast pan doesn't fire a dozen fetches
+at once. A failed tile is retried once after two seconds and otherwise skipped
+for the session. The map keeps working, just without peaks in that square.</li>
+<li><strong>An LRU of 64 tiles.</strong> A JavaScript <code>Map</code> keeps insertion order, so deleting
+and re-inserting a key on every use turns it into an LRU for free. When there
+are more than 64 tiles, the least recently used ones are dropped, but never one
+that is in the current view.</li>
+<li><strong>Rows become objects shaped like the hut records</strong>, so the existing detail
+view shows peaks without any changes.</li>
+</ul>
+<h2>Drawing: one canvas, no markers</h2>
+<p>33,000 Leaflet markers would be far too heavy, and the basemap
+(<a href="https://opentopomap.org">OpenTopoMap</a>) already prints peak names and
+elevations. So the peaks layer is a single <code>&lt;canvas&gt;</code> on its own map pane that
+draws small, slightly transparent grey triangles after each move. During a zoom
+animation the canvas is hidden, because it isn't transformed with the map. It
+is redrawn on <code>zoomend</code>.</p>
+<p>Tapping is a nearest-neighbour search over the loaded tiles: anything within
+30 px of the tap counts, from zoom 12 on. The search box can span a tile border,
+so it looks at all tiles it touches. A peak right at the edge of its tile is
+still found when you tap just across the line.</p>
+<h2>Deep links come for free</h2>
+<p>Since then every hut and peak also has a stable URL like
+<a href="https://biwak.info/p/matterhorn">biwak.info/p/matterhorn</a>. For a peak, the slug
+lookup only needs to store its coordinates: the client computes the tile from
+them with the same <code>lon2x</code>/<code>lat2y</code>, fetches that one file and opens the peak.
+The grid works as a spatial index that needs no extra code.</p>
+<h2>What I'd do next</h2>
+<ul>
+<li><strong>More categories.</strong> Passes, viewpoints, springs and drinking water can use the
+same grid. Their files only need a category field and a per-category count in
+the manifest, so the client can skip tiles without any enabled category.</li>
+<li><strong>Vector tiles.</strong> If the map ever moves to MapLibre, the same build pipeline
+could write MVT tiles instead of JSON. The grid and the ranking would stay.</li>
+</ul>
+<p>For data of this size, tens of thousands of points over a mountain range, the
+plain file grid works very well: no server, no database, a few kilobytes per
+view, and the whole thing is about 430 lines of Python and JavaScript.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2026 12:00 AM UTC by
+            <a href="http://peter-hoffmann.com/feed/atom-python.xml" class="link link-hover text-primary"
+              >Peter Hoffmann</a
+            >
+          </div>
+          <a
+            href="https://peter-hoffmann.com/2026/loading-peaks-on-demand-with-a-z10-tile-grid.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.scikit-learn.org/updates/intel-benchmarks-update/" class="hover:underline"
+              >Accelerating scikit-learn: early findings of benchmarks on Intel hardware</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Author: Arthur Lacote
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 22, 2026 12:00 AM UTC by
+            <a href="https://blog.scikit-learn.org/feed.xml" class="link link-hover text-primary"
+              >scikit-learn</a
+            >
+          </div>
+          <a
+            href="https://blog.scikit-learn.org/updates/intel-benchmarks-update/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://wrongsideofmemphis.com/2026/10/21/jev-webinar-video/" class="hover:underline"
+              >Jev webinar video</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            I hosted a webinar on the 20th talking about the Jev model, which is a new AI decision model that works well in responding quickly to simple questions to a particular piece of information. This model has been talked about quite a lot recently when it was introduced, as it helps in a lot of workflows where it can be an alternative that&#8217;s faster and cheaper than LLMs. It has also spurred a lot of competing decision models, including of course Open Weights alternatives. You can see the recording of the webinar... <a class="read-more" href="https://wrongsideofmemphis.com/2026/10/21/jev-webinar-video/">Read More</a>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2026 06:41 PM UTC by
+            <a href="http://wrongsideofmemphis.wordpress.com/feed/atom/?tag=english+python" class="link link-hover text-primary"
+              >Jaime Buelta</a
+            >
+          </div>
+          <a
+            href="https://wrongsideofmemphis.com/2026/10/21/jev-webinar-video/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.rosehosting.com/blog/how-to-set-up-flask-python-application-with-gunicorn-and-nginx-on-ubuntu-26-04/" class="hover:underline"
+              >How to Set Up Flask Python Application with Gunicorn and NGINX on Ubuntu 26.04</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Flask is one of the most popular microframeworks for creating websites in Python. Gunicorn (Green Unicorn) is a WSGI (Web ... </p>
+<p class="read-more-container"><a class="read-more button" href="https://www.rosehosting.com/blog/how-to-set-up-flask-python-application-with-gunicorn-and-nginx-on-ubuntu-26-04/#more-52213" title="How to Set Up Flask Python Application with Gunicorn and NGINX on Ubuntu 26.04">Read More</a></p>
+<p>The post <a href="https://www.rosehosting.com/blog/how-to-set-up-flask-python-application-with-gunicorn-and-nginx-on-ubuntu-26-04/">How to Set Up Flask Python Application with Gunicorn and NGINX on Ubuntu 26.04</a> appeared first on <a href="https://www.rosehosting.com/blog">RoseHosting</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2026 05:30 PM UTC by
+            <a href="https://www.rosehosting.com/blog/tag/python/feed/" class="link link-hover text-primary"
+              >RoseHosting Blog</a
+            >
+          </div>
+          <a
+            href="https://www.rosehosting.com/blog/how-to-set-up-flask-python-application-with-gunicorn-and-nginx-on-ubuntu-26-04/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://devblogs.microsoft.com/python/announcing-tsp/" class="hover:underline"
+              >Pylance + Pyrefly: bring your preferred type checker to Visual Studio Code</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Announcing the Type Server Protocol and our partnership with Meta</p>
+<p>The post <a href="https://devblogs.microsoft.com/python/announcing-tsp/">Pylance + Pyrefly: bring your preferred type checker to Visual Studio Code</a> appeared first on <a href="https://devblogs.microsoft.com/python">Microsoft for Python Developers Blog</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on October 21, 2026 04:42 PM UTC by
+            <a href="https://blogs.msdn.microsoft.com/pythonengineering/feed/" class="link link-hover text-primary"
+              >Python Engineering at Microsoft</a
+            >
+          </div>
+          <a
+            href="https://devblogs.microsoft.com/python/announcing-tsp/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/courses/python-itertools-by-example/" class="hover:underline"
               >Python itertools By Example</a
             >
@@ -77,48 +432,6 @@
           </div>
           <a
             href="https://realpython.com/courses/python-itertools-by-example/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycoders.com/issues/757" class="hover:underline"
-              >Issue #757: Django Migrations, Functional Programming, MVC, and More (2026-10-20)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p> <span>#757 – OCTOBER 20, 2026</span><br /> <span><a href="https://pycoders.com/issues/757/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17260/feed" target="_blank">Django ORM, Migrations and <code>makemigrations</code></a></h3> <p style="margin-bottom: 0;"> This tutorial builds a small coffee and tea store one migration at a time, then breaks it on purpose. You&rsquo;ll backfill a required field, roll a migration back, untangle two developers&rsquo; migrations and fix a slow page with Django 6.1&rsquo;s new fetch modes.<br /> <span><a href="https://pycoders.com/link/17260/feed" target="_blank">MY-SPACE.IO</a> • Shared by <a href="https://pycoders.com/link/17264/feed" target="_blank">Mirza Ishraq Yeahia</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17254/feed" target="_blank">Functional Programming in Python: When and How to Use It</a></h3> <p style="margin-bottom: 0;"> See how Python supports functional programming, what the paradigm actually is, and where it fits in the code you write day to day.<br /> <span><a href="https://pycoders.com/link/17254/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17284/feed" target="_blank">MCP Auth That Passes the Security Review</a></h3> <a href="https://pycoders.com/link/17284/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/012e0a1cbc39d888c748f46d3b3a4e1a" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> When your customers connect AI agents to your product, their security team will have questions. PropelAuth has the answers built in: role-gated scopes, enterprise SSO through Okta and Entra ID, phishing-resistant consent screens, and an audit log of every agent connection. <a href="https://pycoders.com/link/17284/feed" target="_blank">Learn More →</a><br /> <span><a href="https://pycoders.com/link/17284/feed" target="_blank">PROPELAUTH</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17279/feed" target="_blank">Exploring the MVC Pattern in Python</a></h3> <p style="margin-bottom: 0;"> Learn how the Model-View-Controller pattern organizes Python web apps, then build a small Flask app using models, views, and controllers.<br /> <span><a href="https://pycoders.com/link/17279/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">course</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17278/feed" target="_blank">Quiz: Exploring the MVC Pattern in Python</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17278/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17257/feed" target="_blank">Python 3.16.0 Alpha 1 Is Now Available</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17257/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17277/feed" target="_blank">Python Bytes Podcast Hits Episode 500!</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17277/feed" target="_blank">PYTHON BYTES</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17258/feed" target="_blank">PyPy v8.0.1 Release</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17258/feed" target="_blank">PYPY.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17286/feed" target="_blank">Claude Code Course: Stop Copy-Pasting From ChatGPT</a></h3> <p style="margin-bottom: 0;"> Build a complete Python CLI app from an empty directory with Claude Code, in two live 4-hour sessions on October 24–25. You&rsquo;ll plan features, run tests, manage git, and debug AI-generated code.<br /> <span><a href="https://pycoders.com/link/17286/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17274/feed" target="_blank">PyTorch Year in Review: OpenTeams&rsquo; Contributions in 2026</a></h3> <p style="margin-bottom: 0;"> OpenTeams&rsquo; PyTorch team reviews their 2026 contributions, in a year when PyTorch received 58% more pull requests than the same period of 2025, a growing share of them written with AI coding agents. Highlights include a redesign of the symbolic interpreter in torch.compile, day 1 compiler support for Python 3.15, a new operator, and a build backend re-write!<br /> <span><a href="https://pycoders.com/link/17274/feed" target="_blank">ANDREW JAMES</a> • Shared by <a href="https://pycoders.com/link/17266/feed" target="_blank">Andrew James</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17248/feed" target="_blank">Bayesian Optimization for Efficient Hyperparameter Search</a></h3> <p style="margin-bottom: 0;"> Instead of testing every hyperparameter combination, Bayesian optimization uses results from earlier trials to decide what to try next. This hands-on tutorial builds it step by step with scikit-learn’s GaussianProcessRegressor and a custom Expected Improvement function, plotting the model’s predictions and uncertainty along with each point the search picks.<br /> <span><a href="https://pycoders.com/link/17248/feed" target="_blank">KHUYEN TRAN</a> • Shared by <a href="https://pycoders.com/link/17253/feed" target="_blank">Khuyen Tran</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17267/feed" target="_blank">Pendulum and the Most Cursed <code>+</code> Operator in All of Python</a></h3> <p style="margin-bottom: 0;"> Pendulum, a popular Python datetime library, has a + operator that inspects the call stack to decide which answer to give you. The post explains how it ended up there, and why the design behind it, a &ldquo;drop-in&rdquo; subclass of datetime, still matters for your code now that the hack itself has been patched.<br /> <span><a href="https://pycoders.com/link/17267/feed" target="_blank">ARIE BOVENBERG</a> • Shared by Arie Bovenberg</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17249/feed" target="_blank">Checking Email Reputation, and Allowing Outlook Again</a></h3> <p style="margin-bottom: 0;"> Two years ago, PyPI prohibited Outlook email domains in the registration of new accounts due to a large malware campaign. With an update to how email reputation is calculated, addresses from <code>outlook.com</code> and <code>hotmail.com</code> can once more be used.<br /> <span><a href="https://pycoders.com/link/17249/feed" target="_blank">MIKE FIEDLER</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17252/feed" target="_blank">Why Parquet Dominates Modern Data Engineering</a></h3> <p style="margin-bottom: 0;"> How Parquet&rsquo;s columnar layout, encodings, zstd compression, and row group statistics make it smaller and faster to read than CSV, measured on NYC taxi trips data with Polars, DuckDB, and PyArrow.<br /> <span><a href="https://pycoders.com/link/17252/feed" target="_blank">ORAL ERSOY DOKUMACI</a> • Shared by Oral Ersoy Dokumaci</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17273/feed" target="_blank">Gemini 4 Argon Draws a Python Reading a Book</a></h3> <p style="margin-bottom: 0;"> Explore Gemini 4 Argon&rsquo;s Python code, turtle drawing, and responses to small tasks that check modern syntax, release knowledge, focused edits, and made-up functions.<br /> <span><a href="https://pycoders.com/link/17273/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17261/feed" target="_blank">Python Project Structure: How to Choose the Right Layout</a></h3> <p style="margin-bottom: 0;"> Learn how to structure Python projects: pick between flat and <code>src/</code> layouts, organize your code, and apply the patterns to CLI, web, and GUI apps.<br /> <span><a href="https://pycoders.com/link/17261/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17250/feed" target="_blank">Docling vs LlamaParse: How to Extract PDF Tables in Python</a></h3> <p style="margin-bottom: 0;"> Learn how to extract tables from a PDF in Python with Docling and LlamaParse, and compare local parsing against a cloud API on speed and cost.<br /> <span><a href="https://pycoders.com/link/17250/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17269/feed" target="_blank">Quiz: Docling vs LlamaParse</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17269/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17272/feed" target="_blank">Strings and Character Data in Python</a></h3> <p style="margin-bottom: 0;"> Work with Python strings using a rich set of operators and functions: string literals, the <code>str()</code> function, and the methods you&rsquo;ll use most.<br /> <span><a href="https://pycoders.com/link/17272/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17247/feed" target="_blank">How to Use Python: Taking Your First Steps</a></h3> <p style="margin-bottom: 0;"> Take your first steps with Python. Install it, run your first program, and work with variables, data types, loops, functions, and errors.<br /> <span><a href="https://pycoders.com/link/17247/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">course</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17282/feed" target="_blank">11 Beginner Tips for Learning Python Programming</a></h3> <p style="margin-bottom: 0;"> Python tips for beginners: the learning strategies and habits that take you from your first script to code you&rsquo;re proud of.<br /> <span><a href="https://pycoders.com/link/17282/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17271/feed" target="_blank">Full-Text Search for Django Models Using RediSearch</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17271/feed" target="_blank">GITHUB.COM/SAADMK11</a> • Shared by <a href="https://pycoders.com/link/17251/feed" target="_blank">Maksudul Haque</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17256/feed" target="_blank">PyGithub: Typed Interactions With the GitHub API v3</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17256/feed" target="_blank">GITHUB.COM/PYGITHUB</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17263/feed" target="_blank">actually_interactive_rebase: TUI for Git Rebase</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17263/feed" target="_blank">GITHUB.COM/TOLOMEA</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17281/feed" target="_blank">hefty: Forecasting Tools for Solar, Wind, and Load</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17281/feed" target="_blank">GITHUB.COM/WILLIAMHOBBS</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17265/feed" target="_blank">django-benchmark: Django Performance Benchmark Profiler</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17265/feed" target="_blank">GITHUB.COM/JUSTINMAYER</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17270/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> October 21, 2026<br /> <span><a href="https://pycoders.com/link/17270/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17255/feed" target="_blank">Swiss Python Summit 2026</a></h3> <p style="margin-bottom: 0;"> October 22 to October 24, 2026<br /> <span><a href="https://pycoders.com/link/17255/feed" target="_blank">PYTHON-SUMMIT.CH</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17262/feed" target="_blank">PyCon Panamá 2026</a></h3> <p style="margin-bottom: 0;"> October 22 to October 24, 2026<br /> <span><a href="https://pycoders.com/link/17262/feed" target="_blank">PYCON.PA</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17268/feed" target="_blank">Django Girls Ho 2026</a></h3> <p style="margin-bottom: 0;"> October 22 to October 24, 2026<br /> <span><a href="https://pycoders.com/link/17268/feed" target="_blank">DJANGOGIRLS.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17283/feed" target="_blank">PyHo 2026</a></h3> <p style="margin-bottom: 0;"> October 23 to October 25, 2026<br /> <span><a href="https://pycoders.com/link/17283/feed" target="_blank">PYTHONHO.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17276/feed" target="_blank">PyBeach 2026</a></h3> <p style="margin-bottom: 0;"> October 24 to October 25, 2026<br /> <span><a href="https://pycoders.com/link/17276/feed" target="_blank">PYBEACH.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17259/feed" target="_blank">FastAPI Conf 2026</a></h3> <p style="margin-bottom: 0;"> October 28 to October 29, 2026<br /> <span><a href="https://pycoders.com/link/17259/feed" target="_blank">FASTAPICONF.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17280/feed" target="_blank">PyConFR 2026</a></h3> <p style="margin-bottom: 0;"> October 29 to November 2, 2026<br /> <span><a href="https://pycoders.com/link/17280/feed" target="_blank">PYCON.FR</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #757.<br /><a href="https://pycoders.com/issues/757/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/757/open/feed" width="1" /> 
-        <hr />
-        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 20, 2026 07:30 PM UTC by
-            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
-              >PyCoder’s Weekly</a
-            >
-          </div>
-          <a
-            href="https://pycoders.com/issues/757"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1398,254 +1711,6 @@ class ProgressBar(Widget):
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://blog.jetbrains.com/go/2026/10/13/python-vs-go/" class="hover:underline"
-              >Python vs Go: A Practical Comparison for Developers</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Two things are true about Python: It’s the most popular programming language in the world, and it’s the most common companion language for Go developers. How do we know that? From the Developer Ecosystem 2026 survey by JetBrains. But we also know a lot more about the developers who use these two languages – both [&#8230;]
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 13, 2026 09:02 AM UTC by
-            <a href="http://feeds.feedburner.com/Pycharm" class="link link-hover text-primary"
-              >PyCharm</a
-            >
-          </div>
-          <a
-            href="https://blog.jetbrains.com/go/2026/10/13/python-vs-go/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/gaming-all-digital-future-and-creative-constraint?utm_campaign=rss" class="hover:underline"
-              >Gaming’s all-digital future doesn’t include “Sonic the Hedgehog 3” and “Pikmin 2”</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Sony announced that all games from 2028 and onwards
-would be digital-only. It seems likely that Xbox will follow and that Nintendo will continue
-making “physical” releases for first-party games during
-the Switch 2 generation.</p>
-
-<p>In the all-digital gaming future, every game platform
-will be subject to the same problems and constraints as media streaming services
-like Netflix and Spotify.
-We can see hints of how this will affect future games and creative freedom in the medium
-by looking at re-releases of older games, in particular: Sonic the Hedgehog 3 and Pikmin 2.</p>
-
-<!-- more -->
-
-<hr />
-
-<p>The core problem is that digital games are licenses, which forces
-an ongoing relationship between you and the owner of the media.
-And because there’s an ongoing relationship with you, any
-ongoing licensing relationships that the media owner has
-<em>also affect you and your games</em>. If a license for any media that
-is part of the game expires or is affected, then the developer
-must take action to remediate the “issue” in the game.</p>
-
-<p>This is already commonplace for games that feature music,
-such as Rock Band or Guitar Hero, but maybe players find this
-more “expected” because these games are essentially
-a music streaming service in themselves.
-But what about games that aren’t like this on the surface?</p>
-
-<p>
-<center>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/digital-only-future/IMG_6576_small.jpeg" style="border: 2px black solid;" />
-<br />
-<em><small>Sonic the Hedgehog 3 for Genesis (1994), GameCube (2002), and Switch (2022)</small></em>
-</center>
-</p>
-
-<p><a href="https://en.wikipedia.org/wiki/Sonic_the_Hedgehog_3">Sonic the Hedgehog 3</a> was originally published in 1994, and
-beyond the game being great to play, the soundtrack is
-really something special. I have fond memories of dancing
-to the <a href="https://www.youtube.com/watch?v=G8bNZboAPfc">end credits music</a> on my parents’ bed with my brother as a kid after beating the game.</p>
-
-<p>Unfortunately, this track and many others in the game
-would not survive our all-digital future. <a href="https://en.wikipedia.org/wiki/Sonic_the_Hedgehog_3#Michael_Jackson's_involvement">Michael Jackson’s
-alleged uncredited involvement with Sonic 3</a>
-has meant that all re-releases of Sonic 3 since 2009
-have not included the entire original soundtrack. If this
-game were released only digitally today, it can be assumed that
-these tracks would be pulled from the game, just as
-is done for Rock Band and Guitar Hero when licensing terms
-expire or there are legal issues.</p>
-
-<p>
-<center>
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/digital-only-future/IMG_6575_small.jpeg" style="border: 2px black solid;" />
-<br />
-<em><small>Pikmin 2 for GameCube (JP, NA, PAL, 2004) and Switch (2023)</small></em>
-</center>
-</p>
-
-<p><a href="https://en.wikipedia.org/wiki/Pikmin_2">Pikmin 2</a> was published in 2004,
-and the main objective is collecting “treasure” from an alien planet in the form
-of food, toys, and, most surprisingly, <a href="https://sethmlarson.dev/pikmin-2-international-treasure-hoard">items featuring real-life brands</a>
-like Duracell, Dr. Pepper, Yoo-Hoo, and Snapple. This artistic
-decision and the work to license and include these brands were a substantial part of the surprise and delight
-while playing the game.</p>
-
-<p>However, you can see that these licensing terms
-eventually run out, too: in all re-releases of Pikmin 2 from 2023 onwards,
-the real-life brands are <a href="https://www.pikminwiki.com/Pikmin_2_(Nintendo_Switch)#List_of_treasures_with_different_appearances">replaced with generic fictional brands</a>.
-It’s not clear to me whether licensing agreements with
-so many brands would be undertaken in the future if work would
-have to be done to create fictional models and textures anyway
-once the license terms expire.</p>
-
-<p>If it wasn’t clear from this post, I’m not excited for an all-digital
-future of games. An all-digital future for games means the medium will be further constrained
-creatively, in addition to the negative impacts on ownership and preservation.
-Read-only physical media does more for gaming
-than being something to collect and own: developers can make
-choices that they won’t have to walk back in 20 years,
-and players can continue to enjoy games <em>as the developers
-intended</em> long after licensing terms expire.</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 13, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/gaming-all-digital-future-and-creative-constraint?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="http://blog.vrplumber.com/b/2026/10/11/pyopengl-400a7-cleanup-and-preparation/" class="hover:underline"
-              >PyOpenGL 4.0.0a7 -- Cleanup and Preparation</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>4.0.0a7 is closing in on the final form for the 4.0.0 release. There's a raft of bug-fixes from testing and tickets, the Windows GLUT binaries are now a separate python package, documentation system updates, and OpenGL_accelerate now pins the OpenGL version exactly.</p>
-
-<p>At this point it's likely worth testing your PyOpenGL codebases with the alpha to report any regressions. This is a major release with a raft of changes. It's also tested far more than any PyOpenGL release has ever been tested, so I'm relatively confident that it works in the sense of letting you write 3D rendering engines with modern features, but there are potentially going to be regressions, particularly if you have older code (the majority of testing is all on OpenGL 3.3+ contexts with legacy-free feature-sets), or Tk based apps (where there's a new widget implementation).</p>
-
-<p>We're still missing some Mac work, porting the new Tk widget to use CGL. We've also not yet got confirmation that we've got real-world (as opposed to CI) operation all working on Macs.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 12, 2026 02:27 AM UTC by
-            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
-              >Mike C. Fletcher</a
-            >
-          </div>
-          <a
-            href="http://blog.vrplumber.com/b/2026/10/11/pyopengl-400a7-cleanup-and-preparation/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://nuitka.net/posts/nuitka-release-43.html" class="hover:underline"
-              >Nuitka Release 4.3</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            This is to inform you about the new stable release of Nuitka. It is the extremely compatible Python compiler,
-“download now”.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 11, 2026 10:00 PM UTC by
-            <a href="http://nuitka.net/categories/Python.xml" class="link link-hover text-primary"
-              >Kay Hayen</a
-            >
-          </div>
-          <a
-            href="https://nuitka.net/posts/nuitka-release-43.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index3.html" class="btn">«</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</button><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index6.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">6</a><a href="index5.html" class="btn">»</a></div></div>
 </div>
@@ -1657,12 +1722,12 @@ intended</em> long after licensing terms expire.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8293</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8315</a></li>
+    <li><a>Unique Feeds: 372</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (567)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (503)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (567)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (504)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
