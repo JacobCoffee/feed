@@ -1278,10 +1278,11 @@ post the designed voice was created like this, with Qwen&#8217;s own Python pack
 <span class="n">kw</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">device_map</span><span class="o">=</span><span class="s2">&quot;mps&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">,</span> <span class="n">attn_implementation</span><span class="o">=</span><span class="s2">&quot;sdpa&quot;</span><span class="p">)</span>
 <span class="n">design</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
 <span class="n">wavs</span><span class="p">,</span> <span class="n">sr</span> <span class="o">=</span> <span class="n">design</span><span class="o">.</span><span class="n">generate_voice_design</span><span class="p">(</span>
-    <span class="n">text</span><span class="o">=</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">language</span><span class="o">=</span><span class="s2">&quot;English&quot;</span><span class="p">,</span>
+    <span class="n">text</span><span class="o">=</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span>
+    <span class="n">language</span><span class="o">=</span><span class="s2">&quot;English&quot;</span><span class="p">,</span>
     <span class="n">instruct</span><span class="o">=</span><span class="s2">&quot;A man in his forties with a warm, natural, medium-low voice, speaking &quot;</span>
-             <span class="s2">&quot;clearly and calmly at an easy conversational pace, like someone reading &quot;</span>
-             <span class="s2">&quot;aloud to a friend.&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;clearly and calmly at an easy conversational pace, like someone reading &quot;</span>
+    <span class="s2">&quot;aloud to a friend.&quot;</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <p>You can see how the two different voices behave, particularly when blended together:</p>
@@ -1300,14 +1301,19 @@ weighted average of two embeddings is a spaker that is somewhere between two
 voices:</p>
 <div class="highlight"><pre><span></span><span class="n">base</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-Base&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
 
+
 <span class="k">def</span><span class="w"> </span><span class="nf">fingerprint</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
     <span class="n">prompt</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">create_voice_clone_prompt</span><span class="p">(</span><span class="n">ref_audio</span><span class="o">=</span><span class="n">path</span><span class="p">,</span> <span class="n">x_vector_only_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">prompt</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">ref_spk_embedding</span>
 
+
 <span class="k">def</span><span class="w"> </span><span class="nf">blend</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
     <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">b</span><span class="o">.</span><span class="n">float</span><span class="p">()</span>
     <span class="n">mixed</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">a</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">b</span>
-    <span class="k">return</span> <span class="p">(</span><span class="n">mixed</span> <span class="o">/</span> <span class="n">mixed</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">*</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">a</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">b</span><span class="o">.</span><span class="n">norm</span><span class="p">()))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">mixed</span> <span class="o">/</span> <span class="n">mixed</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">*</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">a</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span> <span class="o">+</span> <span class="n">t</span> <span class="o">*</span> <span class="n">b</span><span class="o">.</span><span class="n">norm</span><span class="p">()))</span><span class="o">.</span><span class="n">to</span><span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span>
+    <span class="p">)</span>
+
 
 <span class="n">armin</span><span class="p">,</span> <span class="n">designed</span> <span class="o">=</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/armin.flac&quot;</span><span class="p">),</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/designed.flac&quot;</span><span class="p">)</span>
 </pre></div>
@@ -1324,7 +1330,9 @@ that you can then use as reference:</p>
 <div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">soundfile</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sf</span>
 
 <span class="n">mixed</span> <span class="o">=</span> <span class="n">blend</span><span class="p">(</span><span class="n">armin</span><span class="p">,</span> <span class="n">designed</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
-<span class="n">audio</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">mixed</span><span class="p">)</span>  <span class="c1"># say() is shown further down</span>
+<span class="n">audio</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span>
+    <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;voices/transcript.txt&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">(),</span> <span class="n">mixed</span>
+<span class="p">)</span>  <span class="c1"># say() is shown further down</span>
 <span class="n">sf</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;voices/final.flac&quot;</span><span class="p">,</span> <span class="n">audio</span><span class="p">,</span> <span class="n">rate</span><span class="p">)</span>
 <span class="n">final</span> <span class="o">=</span> <span class="n">fingerprint</span><span class="p">(</span><span class="s2">&quot;voices/final.flac&quot;</span><span class="p">)</span>
 </pre></div>
@@ -1357,22 +1365,35 @@ weights of the two models are nearly identical.  So take the embedding with
 Base, then hand it to CustomVoice instead of one of its speakers:</p>
 <div class="highlight"><pre><span></span><span class="n">cv</span> <span class="o">=</span> <span class="n">Qwen3TTSModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">&quot;Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kw</span><span class="p">)</span>
 
+
 <span class="k">def</span><span class="w"> </span><span class="nf">say</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">xvec</span><span class="p">,</span> <span class="n">instruct</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">language</span><span class="o">=</span><span class="s2">&quot;English&quot;</span><span class="p">):</span>
     <span class="n">ids</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">_tokenize_texts</span><span class="p">([</span><span class="n">cv</span><span class="o">.</span><span class="n">_build_assistant_text</span><span class="p">(</span><span class="n">text</span><span class="p">)])</span>
-    <span class="n">told</span> <span class="o">=</span> <span class="p">[</span><span class="n">cv</span><span class="o">.</span><span class="n">_tokenize_texts</span><span class="p">([</span><span class="n">cv</span><span class="o">.</span><span class="n">_build_instruct_text</span><span class="p">(</span><span class="n">instruct</span><span class="p">)])[</span><span class="mi">0</span><span class="p">]</span>
-            <span class="k">if</span> <span class="n">instruct</span> <span class="k">else</span> <span class="kc">None</span><span class="p">]</span>
-    <span class="n">voice</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;ref_code&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">None</span><span class="p">],</span> <span class="s2">&quot;ref_spk_embedding&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">xvec</span><span class="p">],</span>
-             <span class="s2">&quot;x_vector_only_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">True</span><span class="p">],</span> <span class="s2">&quot;icl_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">False</span><span class="p">]}</span>
+    <span class="n">told</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">cv</span><span class="o">.</span><span class="n">_tokenize_texts</span><span class="p">([</span><span class="n">cv</span><span class="o">.</span><span class="n">_build_instruct_text</span><span class="p">(</span><span class="n">instruct</span><span class="p">)])[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">instruct</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="p">]</span>
+    <span class="n">voice</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;ref_code&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">None</span><span class="p">],</span>
+        <span class="s2">&quot;ref_spk_embedding&quot;</span><span class="p">:</span> <span class="p">[</span><span class="n">xvec</span><span class="p">],</span>
+        <span class="s2">&quot;x_vector_only_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">True</span><span class="p">],</span>
+        <span class="s2">&quot;icl_mode&quot;</span><span class="p">:</span> <span class="p">[</span><span class="kc">False</span><span class="p">],</span>
+    <span class="p">}</span>
     <span class="n">codes</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span>
-        <span class="n">input_ids</span><span class="o">=</span><span class="n">ids</span><span class="p">,</span> <span class="n">instruct_ids</span><span class="o">=</span><span class="n">told</span><span class="p">,</span> <span class="n">voice_clone_prompt</span><span class="o">=</span><span class="n">voice</span><span class="p">,</span>
-        <span class="n">languages</span><span class="o">=</span><span class="p">[</span><span class="n">language</span><span class="p">],</span> <span class="n">non_streaming_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">input_ids</span><span class="o">=</span><span class="n">ids</span><span class="p">,</span>
+        <span class="n">instruct_ids</span><span class="o">=</span><span class="n">told</span><span class="p">,</span>
+        <span class="n">voice_clone_prompt</span><span class="o">=</span><span class="n">voice</span><span class="p">,</span>
+        <span class="n">languages</span><span class="o">=</span><span class="p">[</span><span class="n">language</span><span class="p">],</span>
+        <span class="n">non_streaming_mode</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
         <span class="o">**</span><span class="n">cv</span><span class="o">.</span><span class="n">_merge_generate_kwargs</span><span class="p">(</span><span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span> <span class="n">subtalker_temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">),</span>
     <span class="p">)</span>
     <span class="n">wavs</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">cv</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">speech_tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">([{</span><span class="s2">&quot;audio_codes&quot;</span><span class="p">:</span> <span class="n">codes</span><span class="p">[</span><span class="mi">0</span><span class="p">]}])</span>
     <span class="k">return</span> <span class="n">wavs</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">rate</span>
 
-<span class="n">wav</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span><span class="s2">&quot;I really thought this would work.&quot;</span><span class="p">,</span> <span class="n">armin</span><span class="p">,</span>
-                <span class="s2">&quot;Speak in a sad, sorrowful tone, voice low and heavy, on the verge of tears.&quot;</span><span class="p">)</span>
+
+<span class="n">wav</span><span class="p">,</span> <span class="n">rate</span> <span class="o">=</span> <span class="n">say</span><span class="p">(</span>
+    <span class="s2">&quot;I really thought this would work.&quot;</span><span class="p">,</span>
+    <span class="n">armin</span><span class="p">,</span>
+    <span class="s2">&quot;Speak in a sad, sorrowful tone, voice low and heavy, on the verge of tears.&quot;</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 <p>Pick a speaker for the slot, a model and an instruction:</p>
 <p><em><a href="https://lucumr.pocoo.org/2026/10/29/qwen3-custom-voices/">Interactive demo: see the post on the website.</a></em></p>
@@ -1393,6 +1414,7 @@ voice along that direction:</p>
 <span class="n">middle</span> <span class="o">=</span> <span class="p">(</span><span class="n">women</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">men</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">))</span> <span class="o">/</span> <span class="mi">2</span>
 <span class="n">axis</span> <span class="o">=</span> <span class="n">women</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span> <span class="o">-</span> <span class="n">men</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 <span class="n">axis</span> <span class="o">=</span> <span class="n">axis</span> <span class="o">/</span> <span class="n">axis</span><span class="o">.</span><span class="n">norm</span><span class="p">()</span>
+
 
 <span class="k">def</span><span class="w"> </span><span class="nf">move</span><span class="p">(</span><span class="n">xvec</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;Put the voice at position t along the gender axis, keep the rest.&quot;&quot;&quot;</span>
@@ -1794,8 +1816,8 @@ did this. Can actually complete, no “unfun” backtracking.</li>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8394</a></li>
-    <li><a>Unique Feeds: 375</a></li>
+    <li><a>Total Entries: 8302</a></li>
+    <li><a>Unique Feeds: 371</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
