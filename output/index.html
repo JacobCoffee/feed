@@ -53,6 +53,381 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/505/introducing-diskcache-oxide" class="hover:underline"
+              >#505 Introducing diskcache-oxide</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <strong>Topics covered in this episode:</strong><br />
+
+<ul>
+	<li><strong><a href="https://github.com/Piergiuseppe/tinyjobs?featured_on=pythonbytes">tinyjobs: a SQLite job queue goes free-threaded</a></strong></li>
+<li><strong><a href="https://alexwlchan.net/2026/funkycache/?featured_on=pythonbytes">funkycache</a>: cache Python functions in SQLite</strong></li>
+<li><strong><a href="https://github.com/4yk5/Ghostman?featured_on=pythonbytes">Ghostman</a> - a keyboard-driven terminal API client</strong></li>
+<li><strong><a href="https://mkennedy.codes/docs/diskcache-oxide/?featured_on=pythonbytes">diskcache-oxide: A shared, durable disk cache</a></strong></li>
+<li><strong>Extras</strong></li>
+<li><strong>Joke</strong></li>
+
+</ul><a href="https://www.youtube.com/watch?v=SM5OwEmfHVA" style="font-weight: bold;">Watch on YouTube</a><br />
+
+<p><strong>About the show</strong></p>
+
+<p><strong>Sponsored by</strong> LongLink: <a href="https://pythonbytes.fm/longlink">pythonbytes.fm/longlink</a></p>
+
+<p><strong>Connect with the hosts</strong></p>
+
+<ul>
+<li>Michael: <a href="https://fosstodon.org/@mkennedy">Mastodon</a> / <a href="https://bsky.app/profile/mkennedy.codes?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/mkennedy?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/mkennedy/?featured_on=pythonbytes">LinkedIn</a></li>
+<li>Calvin: <a href="https://sixfeetup.social/@calvin?featured_on=pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/calvinhp.com?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/calvinhp?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/calvinhp/?featured_on=pythonbytes">LinkedIn</a></li>
+<li>Show: <a href="https://fosstodon.org/@pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/pythonbytes.fm">BlueSky</a> / <a href="https://x.com/PythonBytes?featured_on=pythonbytes">X</a></li>
+</ul>
+
+<p>Join us on YouTube at <a href="https://pythonbytes.fm/stream/live"><strong>pythonbytes.fm/live</strong></a> to be part of the audience. Usually <strong>Tuesday at 7am PT</strong>. Older video versions available there too.</p>
+
+<p>Finally, if you want an artisanal, hand-crafted digest of every week of the show notes in email form? Add your name and email to <a href="https://pythonbytes.fm/friends-of-the-show">our friends of the show list</a>, we'll never share it.</p>
+
+<p><strong>Michael #1: <a href="https://github.com/Piergiuseppe/tinyjobs?featured_on=pythonbytes">tinyjobs: a SQLite job queue goes free-threaded</a></strong></p>
+
+<p>tinyjobs is a Python job queue and cron scheduler that starts with a SQLite file and no dependencies. Switch the URL to Postgres or Redis without rewriting tasks. It runs async tasks natively, embeds workers in FastAPI, and plugs into Django 6's tasks framework. The creator's free-threading audit found four races hidden by the GIL.</p>
+
+<ul>
+<li>Background jobs without deploying a broker, plus a concrete case study in what removing the GIL exposes.</li>
+<li>The creator reports races in the task registry, codec cache, cross-thread flag and thread pool. hiredis can re-enable the GIL; the worker warns when it detects that.</li>
+<li>On 3.14t, --loops N runs event loops in separate threads. The author's laptop benchmark hit 42,000 async jobs/s with eight loops and two Redis instances, close to eight processes. SQLite rejects loops above one.</li>
+<li>Clock-skew lesson: two hosts 20 minutes apart duplicated 492 of 3,000 jobs on 0.7.0. Using Redis server time fixed that test, not the general exactly-once problem.</li>
+<li>Author's SQLite measurements: about 572 jobs/s end-to-end; a 20,000-job burst drained in four seconds. Synthetic workloads and different harnesses, not interchangeable throughput claims.</li>
+<li>At-least-once delivery still requires idempotent tasks. Python 3.12+; young project, with the README now listing v0.11.0 versus the email's v0.9.0.
+Docker setup:</li>
+</ul>
+
+<div class="codehilite">
+<pre><span></span><code><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">web</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">uvicorn main:api --host 0.0.0.0</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">jobs</span><span class="p p-Indicator">:</span><span class="nv">/data</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">worker</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+<span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tinyjobs worker --app tasks:app --shutdown-timeout 25</span>
+<span class="w">    </span><span class="nt">stop_grace_period</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">40s</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">jobs</span><span class="p p-Indicator">:</span><span class="nv">/data</span><span class="p p-Indicator">]</span>
+<span class="nt">volumes</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">jobs</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">external</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre>
+</div>
+
+<p><strong>Calvin #2: <a href="https://alexwlchan.net/2026/funkycache/?featured_on=pythonbytes">funkycache</a>: cache Python functions in SQLite</strong></p>
+
+<ul>
+<li>Alex Chan's <code>functools.cache-style</code> decorator stores results in SQLite, so they survive after the process exits. He built it to speed up his static site build.</li>
+<li>It's released on PyPI: <code>funkycache</code> 1.0.4, from November 15. The first release, 1.0.0, came out November 7. It needs Python 3.14+ and depends on <code>pydantic</code> and <code>xxhash</code>.</li>
+<li>Usage: <code>cache = FunkyCache(storage="sqlite")</code>, then <code>@cache.register(files=[...], values=[...])</code>. A cache entry is invalidated when the function's source file changes or when any listed file or value changes, such as a library version.</li>
+<li>Return values go through Pydantic's <code>TypeAdapter</code>, based on the return type hint, so it only works on typed code.</li>
+<li>Generators get special handling. <code>functools.cache</code> hands every caller the same generator object. funkycache saves the output as a list and gives each caller a fresh iterator, up to a soft memory limit.</li>
+<li>Cache keys are JSON hashed with XXH64. They're deliberately lossy, and that's fine because nothing reads the original arguments back out of a key.</li>
+<li>The design notes are a good segment on their own: the author had used MD5 because they "conflated weak with fast," and in their limited testing JSON was faster than pickle and easier to debug.</li>
+<li>With a warm cache the site builds in about half a second, and the library is only a few hundred lines including tests. It doesn't watch files on purpose, to stay small.</li>
+</ul>
+
+<p><strong>Calvin #3: <a href="https://github.com/4yk5/Ghostman?featured_on=pythonbytes">Ghostman</a> - a keyboard-driven terminal API client</strong></p>
+
+<ul>
+<li>A local-first Postman alternative that runs in the terminal, with no cloud account required. It's MIT licensed and was featured in PyCoder's Weekly #760.</li>
+<li>It's released on PyPI: pip install ghostman, then run ghostman. The current version is 0.1.8, from November 3. The first release, 0.1.0, came out October 31. It needs Python 3.10+.</li>
+<li>It's built on Textual, httpx and Rich, so it's pure Python under the hood.</li>
+<li>It sends GET, POST, PUT, DELETE and PATCH requests, shows DNS and time-to-first-byte timing live, and colors JSON responses automatically.</li>
+<li>A built-in webhook inspector: Ctrl+W starts a listener on port 9090. Captured payloads show headers and timestamps, and you can load one straight into the request editor.</li>
+<li>Collections are plain JSON/YAML files you can commit to Git. The README gives two different folders for them (.ghostman/ and ~/.ghostman/).</li>
+<li>It's fully keyboard-driven: Ctrl+S sends, Ctrl+K saves, Ctrl+N starts a new request, Ctrl+Q quits.</li>
+<li>The author claims about 30MB of RAM and a cold start of about 150ms; I haven't checked either number. It's a young project, with 158 stars and 15 commits.</li>
+</ul>
+
+<p>Michael #4: <a href="https://mkennedy.codes/docs/diskcache-oxide/?featured_on=pythonbytes">diskcache-oxide: A shared, durable disk cache</a></p>
+
+<p>Michael's diskcache-oxide is a Rust-backed, SQLite-based cache for Python workers sharing one directory on the same machine. Entries survive process restarts without running a cache server. It keeps the familiar diskcache API, adds fork and free-threading safety, and uses msgpack or JSON by default instead of pickle.</p>
+
+<ul>
+<li>Michael's item: a shared cache for multi-worker apps without deploying Redis or keeping a separate dict warm in every process.</li>
+<li>Cache, FanoutCache sharding and transactions are available now. NullCache switches caching off without changing call sites; Caches manages named caches for an app.</li>
+<li>Author's bench/gate.py, Linux container on Apple Silicon, CPython 3.14, 99:1 reads/writes: about 750k ops/s with one thread and 723k with eight; diskcache 5.6.3 falls to 44k. Not independently tested here.</li>
+<li>Free-threading support is explicit: the Rust extension declares gil_used = false. A process-wide fork barrier protects SQLite state when workers fork.</li>
+<li>Pickle is opt-in. Tagged serialization preserves types such as tuples, sets, datetimes and Decimals, with registration for custom types.</li>
+<li>The docs come to about <strong>70,000 words</strong>, the length of a typical novel. Of that, about 53,000 are the written story (guide, recipes and the home page), and the rest is API reference, the agent skill and code samples.</li>
+<li>Early release, not full diskcache parity: string keys only; AsyncCache, memoize, tags, Deque and Index are still planned. The network cache server is a roadmap item too.</li>
+<li>Python 3.14+; macOS and Linux wheels include SQLite. Windows support is planned. Migration changes the import and uses a new directory, not the old cache.db.</li>
+</ul>
+
+<p><strong>Extras</strong></p>
+
+<p>Calvin:</p>
+
+<ul>
+<li>Django Software Foundation <a href="https://www.djangoproject.com/weblog/2026/nov/15/2027-dsf-board-nominations/?featured_on=pythonbytes">Board Nominations</a> open until December 2nd
+Michael:</li>
+<li><a href="https://www.startpage.com/bill/plan-selection?sc=gQhKyhqUvCKn0oNP9jyRwvCbbJR1aKQqd3wHub8JxnqtNC93sPzZGl3WhHVfkT88mpDQILTiYK6yFx93LyoDt9e3eQz9MuHuH0H1MmSe9rtc9vd1P&amp;t=device&amp;segment=startpage.udog&amp;lui=english&amp;language=english&amp;cat=web&amp;abd=1&amp;abe=1&amp;query=&amp;featured_on=pythonbytes">Startpage paid plans</a></li>
+<li>Test driving <a href="https://helium.computer/?featured_on=pythonbytes">Helium Browser</a></li>
+<li><a href="https://github.com/mikeckennedy/tallyman/releases/tag/v0.4.3?featured_on=pythonbytes">Tallyman</a> got a big update, give it another try
+<ul>
+<li>Tallyman is my command-line tool for seeing the shape of a codebase, with line counts grouped by language and categories such as Code, Docs, and Specs. Version 0.4.3 bundles new controls and a long list of fixes.
+<ul>
+<li>I made a bunch of massive updates this week. If you tried Tallyman before and it didn't work for your project, give it another try.</li>
+<li>Use --no-save to try setup choices without writing a config, and --exclude PATTERN for one-run file exclusions.</li>
+<li>Lots of fixes to gitignore handling, nested configs, the setup TUI, encodings, and image export. First runs in CI or pipes no longer hang waiting for setup.</li>
+<li>Optional exclusion of inline Rust test code, plus MATLAB and Solidity support, bringing the language count to 44.</li>
+<li>Want another feature? Submit an idea through a GitHub issue.</li>
+</ul></li>
+</ul></li>
+<li><a href="http://Bunny.net?featured_on=pythonbytes">Bunny.net</a> fonts disappoint.
+<ul>
+<li><strong>Root cause:</strong> Bunny Fonts began serving its font files from <code>cdn.jsdelivr.net</code>, which our <strong>CSP blocks</strong> - production had silently fallen back to system fonts.</li>
+</ul></li>
+<li><a href="https://talkpython.fm/meetups/sqlite-might-actually-be-all-you-need?featured_on=pythonbytes">Talk Python Meetup: SQLite Might <em>Actually</em> Be All You Need</a></li>
+</ul>
+
+<p><strong>Jokes</strong>:</p>
+
+<ul>
+<li><a href="https://x.com/pr0grammerhum0r/status/2121573926568395183?a=0VHlGMnpqO9U8FjKPKw&amp;s=46&amp;featured_on=pythonbytes">Disaster recovery</a></li>
+<li><a href="https://www.reddit.com/r/iiiiiiitttttttttttt/s/THQxhz3hfz?featured_on=pythonbytes">Prophecy fulfilled</a></li>
+</ul>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 10:23 PM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/505/introducing-diskcache-oxide"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycon.blogspot.com/2026/11/pycon-us-2027-call-for-proposals-now.html" class="hover:underline"
+              >PyCon US 2027 - Call for Proposals Now Open!</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            PyCon US 2027 is heading back to California for a second year in our sunny host city of Long Beach, CA!<div><br /></div>We’re also excited to announce the launch of our <a href="http://us.pycon.org/2027/">conference website</a>, along with our <a href="https://pretalx.com/pycon-us-2027/">Call for Proposals</a> and <a href="https://us.pycon.org/2027/sponsorship/why-sponsor/">our sponsorship program</a>!<h3 style="text-align: left;">Welcome Back to Long Beach!</h3><div><div>PyCon US is returning to Long Beach, CA, located in the heart of sunny Southern California, right along the Pacific Ocean.</div></div><br />PyCon US 2027 will be held at the&nbsp;<a href="https://www.longbeachcc.com/">Long Beach Convention and Entertainment Center</a>, in downtown Long Beach, CA, on the following dates:<br /><ul style="text-align: left;"><li>May 12-13, 2027 - Tutorials</li><li>May 13-14, 2027 - Sponsor Presentations</li><li>May 14-16, 2027 - Main Conference Days—Keynotes, Talks, Charlas, Expo Hall, and more</li><li>May 17-18, 2027 - Sprints</li></ul>We will continue to return in person, with <a href="https://us.pycon.org/2027/about/health-safety-guidelines/">Health and Safety Guidelines</a> in place.<div><h3 style="text-align: left;">PyCon US 2027 Website is Live</h3>You can now head over to the <a href="http://us.pycon.org/2027/">PyCon US 2027 website</a> for all the conference details and more information about our sponsorship program.<br /><br />This year’s PyCon US design leans into the storied silver screen history of Southern California, giving a Pythonic twist to classic Hollywood glamour.<br /><br />We’re excited to collaborate with designer <a href="https://dribbble.com/DeMart">Anastasiia</a>, whose illustrations and designs brought the PyCon US 2027 website to life. The design was brought together with the coordination of Georgi K and implemented by <a href="https://mirakuru.eu/">Mirakuru Europa OÜ</a>.</div><div><h3 style="text-align: left;">PyCon US Call for Proposals is Now Open</h3><a href="https://us.pycon.org/2027/speaking/guidelines/">PyCon US 2027’s Call for Proposals</a> is officially open for Talks, Tutorials, Posters, and Charlas! The deadline to submit for all tracks is December 19, 2026.<br /><br />We need beginner, intermediate, and advanced proposals on all sorts of topics—and beginner, intermediate, and advanced speakers to give said presentations. You don’t need to be a 20-year veteran who has spoken at dozens of conferences! On all fronts, we need all types of people. Our community is composed of a diverse set of people with unique skill sets, and we want our conference program to be a true reflection of that diversity.<br /><br />PyCon US is bringing back two dedicated Talk tracks to the schedule: “the Future of AI with Python” and “Trailblazing Python Security”. For more information and how to submit your proposal, <a href="https://us.pycon.org/2027/speaking/guidelines/">visit the speaker guidelines page</a>.<br /><br />For new and first-time speakers, be sure to take advantage of the speaker mentorship program where you can be matched with experienced speakers who can help you with crafting your proposal–deadline November 27, 2026. Check out the info on our <a href="https://us.pycon.org/2027/speaking/mentorship/">Proposal Mentorship Program page</a>.<br /><br />For more information on where and how to submit your proposal, visit the <a href="https://us.pycon.org/2027/speaking/guidelines/">Proposal Guidelines page</a> on the PyCon US 2027 website.</div><div><h3 style="text-align: left;">Sponsorship Has Tremendous Impact</h3>Sponsors are what make PyCon US and the <a href="https://www.python.org/psf-landing/">Python Software Foundation (PSF)</a> possible. PyCon US is the main source of revenue for the PSF, the non-profit behind the Python language and the <a href="https://pypi.org/">Python Packaging Index (PyPI)</a>, and the hub for the Python community.<br /><br />PyCon US is the largest and longest-running Python gathering globally, with a diverse group of highly engaged attendees, many of whom you won’t find at other conferences. We’re excited to be able to provide our sponsors with opportunities to connect with and support the Python community. You’ll be face-to-face with talented developers, qualified recruits, and potential customers, access a large and diverse audience, as well as elevate your visibility and corporate identity within the Python community.<br /><br /><a href="http://python.org/psf/prospectus2027">Check out our prospectus</a> and <a href="https://www.python.org/sponsors/application/">our full menu of benefits</a> to learn more about the 2027 PSF sponsorship program.<br /><br />What you can expect when you sponsor PyCon US and the PSF:<br /><ul style="text-align: left;"><li>Reach - Access to 2000+ attendees interested in your products and services and generate qualified leads.</li><li>Brand strength - Be part of the biggest and most prestigious Python conference in the world and support the nonprofit organization behind the Python language.</li><li>Connections - Networking with attendees in person to create connections and provide detailed information about your products and services.</li><li>Recruiting - Access to qualified job candidates. If you’re hiring, there’s no better place to find Python developers than PyCon US.</li><li>12 months of benefits - Reach the Python community during PyCon US and beyond, with options for recognition on <a href="http://python.org">Python.org</a>, <a href="http://pypi.org">PyPI.org</a>, and more.</li></ul>Because of the generosity of our sponsors, the PSF is able to continually improve our support of Python and its community. Read more about t<a href="https://us.pycon.org/2027/about/psf/">he PSF on the PyCon US website</a> and in the most recent <a href="https://www.python.org/psf/annual-report/2024/">PSF Annual Impact Report</a>. You can help us ensure the Python ecosystem thrives for years to come.<br /><br />Apply to sponsor PyCon US and the PSF today! Head over to <a href="https://www.python.org/psf/prospectus2027">our prospectus</a> to learn more about the 2027 PSF sponsorship program or go directly to the <a href="https://www.python.org/sponsors/application/">Sponsorship Application page</a> to sign up to sponsor.<br /><br />If you have any questions about sponsoring PyCon US and the PSF, please contact us at <a href="mailto:sponsors@python.org">sponsors@python.org</a>.</div><div><h3 style="text-align: left;">Stay in the Loop</h3>As we get closer to the event, the <a href="https://us.pycon.org/2027/">conference website</a> is where you’ll find details for our call for proposals, registration launch, venue information, and everything PyCon US-related! <br /><br />Be sure to subscribe here to the <a href="https://pycon.blogspot.com/">PyCon US Blog</a>, follow <a href="https://x.com/pycon/">@PyCon on X</a>, <a href="https://bsky.app/profile/pycon.us">@PyCon.US on Bluesky</a>, <a href="https://fosstodon.org/@pycon">@pycon@fosstodon.org</a> and <a href="https://fosstodon.org/@ThePSF">@ThePSF@fosstodon.org on Mastodon</a>, <a href="https://www.linkedin.com/company/thepsf/">the PSF on LinkedIn</a>, and <a href="https://pycon.us19.list-manage.com/subscribe?u=5697f493c3a48994f504d4deb&amp;id=a0a3bd5663">subscribe to PyCon US 2027 News</a> so you won’t miss a thing. Our official hashtag is #PyConUS.<div><br /></div></div>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 08:31 PM UTC by
+            <a href="http://feeds.feedburner.com/PyCon" class="link link-hover text-primary"
+              >PyCon</a
+            >
+          </div>
+          <a
+            href="https://pycon.blogspot.com/2026/11/pycon-us-2027-call-for-proposals-now.html"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycoders.com/issues/761" class="hover:underline"
+              >Issue #761: Goose Typing, Gemini 4 Carbon, HTTPX2, and More (2026-11-17)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p> <span>#761 – NOVEMBER 17, 2026</span><br /> <span><a href="https://pycoders.com/issues/761/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17391/feed" target="_blank">Goose Typing</a></h3> <p style="margin-bottom: 0;"> In Python you can practice type checking while also practicing duck typing. This article shows you how to use the <code>__instancecheck__()</code> method to change the behaviour of <code>isinstance()</code>.<br /> <span><a href="https://pycoders.com/link/17391/feed" target="_blank">TREY HUNNER</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17402/feed" target="_blank">Gemini 4 Carbon: Google&rsquo;s Model That Thinks Longer</a></h3> <p style="margin-bottom: 0;"> Gemini 4 Carbon is Google&rsquo;s new reasoning model. Learn what it is, what it costs, and how to call it from Python with the google-genai SDK.<br /> <span><a href="https://pycoders.com/link/17402/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17416/feed" target="_blank">Positron: The Data Science IDE from Posit PBC</a></h3> <a href="https://pycoders.com/link/17416/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/030cd73e287f0daa443a02544e074e46" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> Tired of duct-taping your Python workflow together? Positron is a free, with interactive data frames, Jupyter notebooks, AI assistance, and one-click app deployment, all in one editor. Download it free. <a href="https://pycoders.com/link/17416/feed" target="_blank">Explore Positron</a><br /> <span><a href="https://pycoders.com/link/17416/feed" target="_blank">POSIT</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17396/feed" target="_blank">Python HTTPX: Making HTTP Requests With HTTPX2</a></h3> <p style="margin-bottom: 0;"> Learn how to use Python HTTPX (now HTTPX2) to make HTTP requests, send async calls, set safe timeouts, stream large downloads, and enable HTTP/2.<br /> <span><a href="https://pycoders.com/link/17396/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17407/feed" target="_blank">Quiz: Python HTTPX: Making HTTP Requests With HTTPX2</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17407/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17395/feed" target="_blank">Python 3.16.0 Alpha 2 Is Now Available</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17395/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <h2>Discussions</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17393/feed" target="_blank">In Memoriam: Tim Peters 1952–2026</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17393/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17390/feed" target="_blank">Mentoring Developers Beyond the Code With Tim Schilling</a></h3> <p style="margin-bottom: 0;"> What&rsquo;s it take to be a mentor to developers? Where in an engineer&rsquo;s career can a mentor make an impact? This week we speak with Tim Schilling, Django Steering Council member and Djangonaut Space administrator, about mentoring Python developers.<br /> <span><a href="https://pycoders.com/link/17390/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17399/feed" target="_blank">Keep Threads Free: Introducing <code>gilguard</code></a></h3> <p style="margin-bottom: 0;"> On free-threaded Python, one import can quietly turn the GIL back on for good. <code>gilguard</code> turns that moment into an error that names the module, the package, and the line of your code that pulled it in.<br /> <span><a href="https://pycoders.com/link/17399/feed" target="_blank">MICHAEL KENNEDY</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17397/feed" target="_blank">Adopting Python 3.15&rsquo;s Lazy Imports</a></h3> <p style="margin-bottom: 0;"> This post describes one company&rsquo;s experience with Python 3.15&rsquo;s lazy import mechanism. It resulted in a 4x speed-up for one of their CLIs, but also describes the places where it didn&rsquo;t help.<br /> <span><a href="https://pycoders.com/link/17397/feed" target="_blank">NAMEGARAGE</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17400/feed" target="_blank">PyPI&rsquo;s Redesigned Project Pages Are Now Live</a></h3> <p style="margin-bottom: 0;"> In July, PyPI announced a series of updates to the PyPI UI. The work is now complete and includes a new &ldquo;Security&rdquo; tab which gives details on where files are sourced from.<br /> <span><a href="https://pycoders.com/link/17400/feed" target="_blank">NICOLE HARRIS</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17410/feed" target="_blank">TDD With AI Agents</a></h3> <p style="margin-bottom: 0;"> Learn how to use test-driven development (TDD) with AI agents in Python. Design the tests first, then let a coding agent write code that passes them.<br /> <span><a href="https://pycoders.com/link/17410/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17408/feed" target="_blank">Get Started With Meta Muse in Python: Spark and Glimmer</a></h3> <p style="margin-bottom: 0;"> Get started with Meta Muse in Python. Make your first Muse Spark call, then add streaming, images, and tool calls, and try the open-weights Glimmer.<br /> <span><a href="https://pycoders.com/link/17408/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17415/feed" target="_blank">Memory Management in Python</a></h3> <p style="margin-bottom: 0;"> Take a deep dive into Python memory management and learn how CPython allocates and frees memory for your objects with arenas, pools, and blocks.<br /> <span><a href="https://pycoders.com/link/17415/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17413/feed" target="_blank">Making Django Admin Easier to Use Every Day</a></h3> <p style="margin-bottom: 0;"> This post describes a few improvements to the Django Admin: a command palette, a search shortcut, and tabs for long forms.<br /> <span><a href="https://pycoders.com/link/17413/feed" target="_blank">RUST SAIARGALIEV</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17387/feed" target="_blank">Migrating to Python 3.15</a></h3> <p style="margin-bottom: 0;"> This practical guide tells you what to pay attention to when migrating to Python 3.15.<br /> <span><a href="https://pycoders.com/link/17387/feed" target="_blank">RODRIGO GIRÃO SERRÃO</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17401/feed" target="_blank">Could a Modern Chess Engine on a Pentium Have Defeated Kasparov in 1996?</a></h3> <p style="margin-bottom: 0;"> Sometimes the right algorithm matters more than the beefiest hardware. This post shows how better approaches to chess in software mean that old hardware could have beat the supercomputers used to challenge grand masters at the time.<br /> <span><a href="https://pycoders.com/link/17401/feed" target="_blank">NICHOLAS CARLINI</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17394/feed" target="_blank">Wheelgap: Which Dependencies Will Compile From Source?</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17394/feed" target="_blank">GITHUB.COM/PATRICKBALLARD</a> • Shared by <a href="https://pycoders.com/link/17403/feed" target="_blank">Patrick Ballard</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17405/feed" target="_blank">Waymark: Resumable Python Workflows Backed by Postgres</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17405/feed" target="_blank">GITHUB.COM/PIERCEFREEMAN</a> • Shared by Pierce Freeman</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17392/feed" target="_blank">sqlty: Type-Check Raw SQL in Python Without Database</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17392/feed" target="_blank">KUNCAR.DEV</a> • Shared by <a href="https://pycoders.com/link/17414/feed" target="_blank">Jiri Kuncar</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17412/feed" target="_blank">izaya: HTMX-Powered Autocomplete Widget for Django Forms</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17412/feed" target="_blank">GITHUB.COM/METRON-PROJECT</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17388/feed" target="_blank">django-cmdbar: A Navigation Palette for Django Admin</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17388/feed" target="_blank">GITHUB.COM/AMUREKI</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17411/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> November 18, 2026<br /> <span><a href="https://pycoders.com/link/17411/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17409/feed" target="_blank">Wagtail Space 2026</a></h3> <p style="margin-bottom: 0;"> November 18 to November 21, 2026<br /> <span><a href="https://pycoders.com/link/17409/feed" target="_blank">WAGTAIL.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17406/feed" target="_blank">PyData Bristol Meetup</a></h3> <p style="margin-bottom: 0;"> November 19, 2026<br /> <span><a href="https://pycoders.com/link/17406/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17404/feed" target="_blank">PyLadies Dublin</a></h3> <p style="margin-bottom: 0;"> November 19, 2026<br /> <span><a href="https://pycoders.com/link/17404/feed" target="_blank">PYLADIES.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17389/feed" target="_blank">PyCon Wroclaw 2026</a></h3> <p style="margin-bottom: 0;"> November 20 to November 21, 2026<br /> <span><a href="https://pycoders.com/link/17389/feed" target="_blank">PYCONWROCLAW.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17398/feed" target="_blank">PyCon Ireland 2026</a></h3> <p style="margin-bottom: 0;"> November 21 to November 22, 2026<br /> <span><a href="https://pycoders.com/link/17398/feed" target="_blank">PYCON.IE</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #761.<br /><a href="https://pycoders.com/issues/761/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/761/open/feed" width="1" /> 
+        <hr />
+        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 07:30 PM UTC by
+            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
+              >PyCoder’s Weekly</a
+            >
+          </div>
+          <a
+            href="https://pycoders.com/issues/761"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/python-bindings-overview/" class="hover:underline"
+              >Python Bindings: Calling C or C++ From Python</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn how Python bindings let you call C or C++ code from Python, and compare tools like ctypes, CFFI, PyBind11, and Cython.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/python-bindings-overview/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/courses/getting-started-with-git/" class="hover:underline"
+              >Getting Started With Git</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Learn how to set up Git, create a repository, track and commit changes, undo mistakes with git reset, and ignore files using .gitignore.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/courses/getting-started-with-git/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.pythonlibrary.org/2026/11/17/python-black-friday-2026-sale/" class="hover:underline"
+              >Python Black Friday 2026 Sale</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Python is still a great language to start learning even in this age of AI. I am starting my Black Friday day sales early so everyone can get a jump start on their learning this holiday season or prepare for 2027! You can use the following coupon code to get 35% off anything in my [&#8230;]</p>
+<p>The post <a href="https://blog.pythonlibrary.org/2026/11/17/python-black-friday-2026-sale/">Python Black Friday 2026 Sale</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 17, 2026 01:54 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://blog.pythonlibrary.org/2026/11/17/python-black-friday-2026-sale/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/quizzes/understanding-python-namespace-packages/" class="hover:underline"
               >Quiz: Understanding Python Namespace Packages</a
             >
@@ -427,6 +802,110 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://blog.vrplumber.com/b/2026/11/13/tim-peters-will-be-missed/" class="hover:underline"
+              >Tim Peters will be missed</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Tim spent a very long time in the early days of Python List teaching me all sorts of things I didn't know from my father's scattershot teaching as a child. He was generous with his time, full of humour and willing to teach some random kid on the internet when he had lots of other important things he could be doing.</p>
+
+<p>Spending ages with him and Christian trying to optimise some random function to the Nth degree to work around Python's quirks is one of my fondest memories from that era of my life.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 13, 2026 05:28 PM UTC by
+            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
+              >Mike C. Fletcher</a
+            >
+          </div>
+          <a
+            href="http://blog.vrplumber.com/b/2026/11/13/tim-peters-will-be-missed/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="http://blog.vrplumber.com/b/2026/11/13/pyopengl-400b1-released/" class="hover:underline"
+              >PyOpenGL 4.0.0b1 Released</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>So we seem to have reached mostly-stable state for the PyOpenGL 4.0.0 release. There's no other planned major changes to the core library, so unless we see significant regressions we'll likely release 4.0.0 final over the next few weeks.</p>
+
+<p>Changes since the 4.0.0a5 release last mentioned here:</p>
+
+<p>Bug/crash fixes:</p>
+
+<p>* OSMesa -- a dropped OffscreenContext cleans up and prevents further writes<br />* Buffers -- a memoryview upload sent the wrapper instead of the data; this is fixed<br />* Buffers -- use-after-free in the buffers format handler is fixed<br />* Offsets -- an integer where a const void* is wanted is treated as a buffer offset (regression)<br />* Arrays -- bare numbers are accepted as input types again (regression)<br />* Arrays -- an input array is checked against the length count<br />* Dispatch -- a function derived from a C entry point keeps its own customisations<br />* Dispatch -- define() applies the annotation table to every command<br />* Dispatch -- context handles now compares equal to themselves<br />* Bindings -- glGetUniformIndices takes names and returns indices<br />* Bindings -- GL 3.0 pixel formats (GL_RG and similar) are sized without importing their extension module <br />* Bindings -- A wrapper that names a parameter its entry point lacks is handled<br />* OpenGL.GLES2 imports with error checking switched off (regression)<br />* Errors -- error messages are bounded size for all wrappers<br />* Errors -- NullFunctionError says which of three things went wrong<br />* Errors -- a platform plugin or format handler that will not import now reports which one and why<br />* Errors -- a config flag set too late says so rather than silently failing to activate<br />* Python 3.15 -- no longer reads ctypes.__version__ and 3.15 is added to CI/tox</p>
+
+<p>VBO Helper</p>
+
+<p>* References and aliases -- VBO attributes hold their own references<br />* VBO and VBOOffset are accepted by every array alias<br />* vbo.VBO is a class to type checkers<br />* Context sharing -- dispatch.share_context, gives contexts that share objects one identity</p>
+
+<p>Platform Support</p>
+
+<p>* Tk GLFrame for macOS (Aqua), working on Apple silicon (only tested in CI however)<br />* Tk Contexts take a swapInterval<br />* OSMesa now runs on Windows<br />* EGL -- the gbm render node is opened read-write<br />* Windows -- a GL library beside the interpreter is preferred to the system one (ANGLE support)<br />* Windows -- user-installed freeglut is found by its own name<br />* Windows -- opengl32 is loaded from Windows rather than from PATH<br />* Windows -- freeglut and GLE binaries left the main wheel. <code>pip install PyOpenGL[glut]</code> brings them back<br />* Namespaces -- a platform-specific API says which platform serves it</p>
+
+<p>Packaging and CI</p>
+
+<p>* Wheels -- arm64, aarch64 and Intel Mac wheels are built<br />* PyOpenGL_accelerate now has the same version as PyOpenGL, run-time checks it<br />* sdist no longer ships Cython output<br />* Test and CI setup -- the suite runs on OSMesa, and CI runs it there<br />* macOS test suite that never ran is not counted as a failing suite.</p>
+
+<p>Tests, tooling and docs</p>
+
+<p>* Tests -- a large batch of added tests. Many are tickets from the github tracker<br />* Lint -- ruff cleanups, typing cleanups<br />* Docs -- lots of updates, particularly around how we're generating them</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 13, 2026 04:11 PM UTC by
+            <a href="http://blog.vrplumber.com/index.php?/feeds/categories/1-Snaking.rss" class="link link-hover text-primary"
+              >Mike C. Fletcher</a
+            >
+          </div>
+          <a
+            href="http://blog.vrplumber.com/b/2026/11/13/pyopengl-400b1-released/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://blog.jetbrains.com/pycharm/2026/11/what-s-fixed-and-improved-in-pycharm-2026-3/" class="hover:underline"
               >What’s Fixed and Improved in PyCharm 2026.3</a
             >
@@ -739,975 +1218,6 @@
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://lukeplant.me.uk/blog/posts/why-im-calling-your-contribution-slop/" class="hover:underline"
-              >Why I’m calling your contribution “slop”</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Some help for people who actually want to know why I abruptly closed their pull request.</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 12, 2026 11:58 AM UTC by
-            <a href="http://lukeplant.me.uk/blog/categories/python/atom/index.xml" class="link link-hover text-primary"
-              >Luke Plant</a
-            >
-          </div>
-          <a
-            href="https://lukeplant.me.uk/blog/posts/why-im-calling-your-contribution-slop/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html" class="hover:underline"
-              >20 Years of Pyrolog</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>On November 12, 2006 I did the <a class="reference external" href="https://github.com/cfbolz/pyrolog/commit/6653a22">first surviving commit</a> of my RPython based
-Prolog implementation <strong>Pyrolog</strong> into the PyPy repository. I had been working
-on it since spring 2006 already. In that year we were finishing up the first
-PyPy EU research project and I was finishing up my Bachelor studies at Uni
-Düsseldorf. Since it's now 20 years later I wanted to write a personal
-retrospective post on this project. Pyrolog never had any real users, but it
-still led to some interesting research and influenced a number of other RPython
-projects.</p>
-<nav class="contents" id="contents">
-<p class="topic-title"><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#top">Contents</a></p>
-<ul class="simple">
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#context" id="toc-entry-1">Context</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#the-first-year" id="toc-entry-2">2006/2007 The first year</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#jit-developments-on-the-pypy-side" id="toc-entry-3">2008/2009 JIT developments on the PyPy side</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#new-pyrolog-architecture-more-continuations" id="toc-entry-4">2009-2010 New Pyrolog Architecture: More Continuations</a></p>
-<ul>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#jit-support" id="toc-entry-5">JIT support</a></p></li>
-</ul>
-</li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#widening-prolog-support" id="toc-entry-6">2011/2012 Widening Prolog support</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#compressed-terms" id="toc-entry-7">2012/2013 Compressed Terms</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#unipycation" id="toc-entry-8">2013 Unipycation</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#pycket" id="toc-entry-9">2013 Pycket</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rpython-implementation-of-effekt" id="toc-entry-10">2022-2024 RPython implementation of Effekt</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#git-conversion" id="toc-entry-11">2026 Git Conversion</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#conclusion" id="toc-entry-12">Conclusion</a></p></li>
-<li><p><a class="reference internal" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bibliography" id="toc-entry-13">Bibliography</a></p></li>
-</ul>
-</nav>
-<section id="context">
-<h2>Context</h2>
-<p>As part of the EU project we had promised lots of things, including
-implementing some constraint programming in PyPy. For this strand of the work I
-learned Prolog by reading Clocksin and Mellish's Programming Prolog <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#cm2003" id="citation-reference-1">[CM2003]</a>
-and later the Art of Prolog <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#ss1994" id="citation-reference-2">[SS1994]</a>.</p>
-<p>In March 2006, the PyPy project partner <a class="reference external" href="https://www.logilab.fr/">Logilab</a> organized a sprint in UCLouvain
-in Louvain-la-Neuve (Belgium), with <a class="reference external" href="https://webperso.info.ucl.ac.be/~pvr/">Peter van Roy</a> and some of the researchers
-working on <a class="reference external" href="https://www.gecode.org/">Gecode</a>. The plan was to add some kind of unification and constraint
-solving to PyPy. The Logilab people were quite inspired by the Van Roy/Haridi
-book <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#vh2004" id="citation-reference-3">[VH2004]</a> and I later studied his Prolog implementation survey paper
-<a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#vanroy1994" id="citation-reference-4">[VanRoy1994]</a>.</p>
-<p>In 2006 I also attended my advisor <a class="reference external" href="https://www.cs.hhu.de/en/research-groups/software-engineering-and-programming-languages/our-team/team/michael-leuschel/">Michael Leuschel's</a> Prolog lectures in
-Düsseldorf. During that I started working on a Prolog interpreter in RPython,
-later called Pyrolog. Much of the early commit history is lost unfortunately,
-it didn't make the <a class="reference external" href="https://pypy.org/posts/2010/12/pypy-migrates-to-mercurial-3308736161543832134.html">Subversion-&gt;Mercurial</a> jump correctly and I don't know
-where the codespeak archives are now.</p>
-</section>
-<section id="the-first-year">
-<h2>2006/2007 The first year</h2>
-<p>Pyrolog's first incarnation had a fairly straightforward implementation of
-unification in object-oriented RPython code. Logical variables stored an index,
-with their bindings stored in a global array at that index.</p>
-<figure>
-<img alt="Memory layout of the interpreter" src="https://www.pypy.org/images/2026-pyrolog-memory-orig.svg" style="width: 90%;" />
-<figcaption>
-<p>Pyrolog Memory Layout from <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bolz2007" id="citation-reference-5">[Bolz2007]</a></p>
-</figcaption>
-</figure>
-<p>That version represented choice points by having exception handlers on the
-interpreter level, and backtracking via throwing exceptions, catching them
-further up. It used a continuation-based architecture for storing the calls
-left to do. Those success continuations were stored on the heap and
-continuously allocated and consumed. This approach was taken from Paul Tarau's
-BinProlog (<a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#tb1990" id="citation-reference-6">[TB1990]</a>, <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#tarau1992" id="citation-reference-7">[Tarau1992]</a>) and also based on some other Prolog papers
-<a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#lindgren1994" id="citation-reference-8">[Lindgren1994]</a> <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#neumerkel1995" id="citation-reference-9">[Neumerkel1995]</a>.</p>
-<p>To deal with deep recursion that Prolog programs typically do, that version of
-Pyrolog relied on RPython's <em>stackless transformation</em> <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#br2007d071" id="citation-reference-10">[BR2007D071]</a>, which
-would unwind the host stack (i.e. the C stack) and store its information on the
-host heap if host stack overflow was getting close. When storing C stack frames
-on the heap in this way, we also did some amount of tail call optimization. We
-were super into this idea at the time. However, it turned out not to be too
-practical, making the binary twice as large and slower, so eventually we
-removed it again.</p>
-<p>I also experimented with using the first RPython JIT on that version of
-Pyrolog. That JIT was a partial-evaluation-based method JIT and managed to
-speed up some small Python programs. I don't think it did very much for Pyrolog
-though.</p>
-<p>The performance of that version of Pyrolog was quite disappointing. In my B.Sc.
-thesis <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bolz2007" id="citation-reference-11">[Bolz2007]</a> I did some measurements against <a class="reference external" href="https://www.swi-prolog.org/">SWI</a> and <a class="reference external" href="https://sicstus.sics.se/">Sicstus Prolog</a>.
-Sicstus was often an order of magnitude faster than Pyrolog at this point.</p>
-<p>In the thesis I also implemented a way to call into Prolog from Python code and
-had a case study where I implemented a Tic-Tac-Toe GUI in Python, with the game
-logic in Prolog.</p>
-<p>Shortly after finishing my thesis, I <a class="reference external" href="https://github.com/cfbolz/pyrolog/commit/04307d2">changed the variable representation</a>:
-instead of indexing into a global binding array, each variable object stored
-its own binding. The exception-based backtracking architecture stayed in place
-for another two years.</p>
-</section>
-<section id="jit-developments-on-the-pypy-side">
-<h2>2008/2009 JIT developments on the PyPy side</h2>
-<p>After the EU project finished we started working on various new architectural
-ideas for the RPython meta-JIT. Armin Rigo, me and some others wrote two new
-prototypes. We weren't happy with them, so in 2008 Armin and I started
-experimenting with a prototype for a new trace-based JIT <a class="reference external" href="https://pypy.org/posts/2008/06/hi-all-some-news-from-jit-front-7534695765973581706.html">written in Prolog</a>. We
-used Prolog because its pattern matching and ease of meta-programming allowed
-us to experiment more easily with different designs.</p>
-<p>Towards the end of 2008 and
-throughout 2009 Armin, Maciej Fijałkowski, me and others started porting the
-design back to RPython and called it <a class="reference external" href="https://github.com/pypy/pypy/commit/bbb1996550b">pyjitpl5</a> (the "pl" in the name stands for
-"Prolog"). This is still the base of the current PyPy meta-JIT compiler and
-became the subject of the second (smaller) PyPy EU project in the <a class="reference external" href="https://pypy.org/posts/2010/12/oh-and-btw-pypy-gets-funding-through.html">Eurostars</a>
-program.</p>
-<p>We eventually published a paper about the Prolog version of the JIT <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#blr2010" id="citation-reference-12">[BLR2010]</a>
-at LOPSTR 2009.</p>
-</section>
-<section id="new-pyrolog-architecture-more-continuations">
-<h2>2009-2010 New Pyrolog Architecture: More Continuations</h2>
-<p>After working mostly on PyPy and the new JIT in 2008 and 2009 I started working
-on Pyrolog again over the 2009 Christmas break. Since the stackless
-transformation wasn't compatible with the new JIT I had to switch to a
-different architecture, still used today. The first version of the Pyrolog
-architecture had already stored success continuations on the heap. The goal of this
-refactoring was to also store the <em>failure continuations</em> as <a class="reference external" href="https://github.com/cfbolz/pyrolog/commit/fc1a4f9">reified RPython
-objects</a>.</p>
-<div class="code"><pre class="code python"><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-1" id="rest_code_deee6085586249c1a01f682d695abfe8-1" name="rest_code_deee6085586249c1a01f682d695abfe8-1"></a><span class="c1"># the simplified main interpreter loop</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-2" id="rest_code_deee6085586249c1a01f682d695abfe8-2" name="rest_code_deee6085586249c1a01f682d695abfe8-2"></a>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-3" id="rest_code_deee6085586249c1a01f682d695abfe8-3" name="rest_code_deee6085586249c1a01f682d695abfe8-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">interpret</span><span class="p">(</span><span class="n">sc</span><span class="p">,</span> <span class="n">fc</span><span class="p">,</span> <span class="n">trail</span><span class="p">):</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-4" id="rest_code_deee6085586249c1a01f682d695abfe8-4" name="rest_code_deee6085586249c1a01f682d695abfe8-4"></a>    <span class="k">while</span> <span class="ow">not</span> <span class="n">sc</span><span class="o">.</span><span class="n">is_done</span><span class="p">():</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-5" id="rest_code_deee6085586249c1a01f682d695abfe8-5" name="rest_code_deee6085586249c1a01f682d695abfe8-5"></a>        <span class="k">try</span><span class="p">:</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-6" id="rest_code_deee6085586249c1a01f682d695abfe8-6" name="rest_code_deee6085586249c1a01f682d695abfe8-6"></a>            <span class="n">sc</span><span class="p">,</span> <span class="n">fc</span><span class="p">,</span> <span class="n">trail</span> <span class="o">=</span> <span class="n">sc</span><span class="o">.</span><span class="n">activate</span><span class="p">(</span><span class="n">fc</span><span class="p">,</span> <span class="n">trail</span><span class="p">)</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-7" id="rest_code_deee6085586249c1a01f682d695abfe8-7" name="rest_code_deee6085586249c1a01f682d695abfe8-7"></a>        <span class="k">except</span> <span class="n">UnificationFailed</span><span class="p">:</span>
-<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#rest_code_deee6085586249c1a01f682d695abfe8-8" id="rest_code_deee6085586249c1a01f682d695abfe8-8" name="rest_code_deee6085586249c1a01f682d695abfe8-8"></a>            <span class="n">sc</span><span class="p">,</span> <span class="n">fc</span><span class="p">,</span> <span class="n">trail</span> <span class="o">=</span> <span class="n">fc</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">trail</span><span class="p">)</span>
-</pre></div>
-<p>This had the effect that the host stack use is completely flat when
-interpreting Prolog calls. The state needed to continue with Prolog execution is always
-stored in continuation objects on the heap. The interpreter is therefore
-dealing with two continuations, one activated upon success, and one on failure.</p>
-<p>Additionally, there is a (segmented) trail object which stores the variable
-bindings that need to be undone when backtracking. Failure continuations have a
-reference to the part of the trail they need to backtrack to, when activated.</p>
-<p>The downside of this approach is that the interpreter continuously has to
-allocate heap data for all the success and failure continuations. This puts a
-lot of pressure on the RPython GC. Also, term unification still uses the host
-stack, so unifying very deep terms can still be a problem and lead to
-implementation-level recursion errors.</p>
-<section id="jit-support">
-<h3>JIT support</h3>
-<p>The real goal of the refactoring was to make the interpreter more JIT-friendly.
-Since the interpreter doesn't use recursion for Prolog calls any more, the loops at the Prolog
-level (expressed as recursion) can be traced by the JIT. All the continuous
-allocations of continuations can be optimized by the allocation removal of the
-RPython JIT. If all this works correctly, the performance of Pyrolog becomes
-very good, often beating Sicstus by a significant factor on suitable
-microbenchmarks.</p>
-<figure>
-<img alt="/images/2026-pyrolog-vmgen.svg" src="https://www.pypy.org/images/2026-pyrolog-vmgen.svg" style="width: 50%;" />
-<figcaption>
-<p>Pyrolog VM Generation vs. Runtime from <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bls2010" id="citation-reference-13">[BLS2010]</a></p>
-</figcaption>
-</figure>
-<p>Unfortunately this is mainly the case for code with very predictable control
-flow, ideally with nice loops. Since the main appeal of Prolog is to do
-backtracking search, control flow is typically not very predictable for
-interesting more Prolog-like programs. As soon as the control flow becomes too
-complicated and unpredictable, the continuations survive beyond the region that
-the JIT optimizes and have to be allocated on the heap again. Therefore Pyrolog has
-quite extreme performance cliffs.</p>
-<p>We wrote a paper about this version of Pyrolog for PPDP 2010 <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bls2010" id="citation-reference-14">[BLS2010]</a> (together with
-Michael Leuschel and my later colleague David Schneider). That conference
-was super interesting and important for me. I met Paul Tarau (who invented
-BinProlog, one of the inspirations of Pyrolog. He later gave an excellent <a class="reference external" href="https://www.youtube.com/watch?v=SRYAMt8iQSw">Prolog
-talk</a> at the virtual machine summer school in 2016), Olivier Danvy (whose
-paper <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bd2004" id="citation-reference-15">[BD2004]</a> I should have cited. Genuinely one of the nicest people),
-Kenichi Asai (who had worked on partial evaluation and reflection) and several
-others. At that point during my PhD I was feeling relatively demotivated, and
-my chats with these researchers were incredibly encouraging.</p>
-<figure>
-<img alt="https://www3.risc.jku.at/conferences/ppdp2010/photos/img_8487.jpg" src="https://www3.risc.jku.at/conferences/ppdp2010/photos/img_8487.jpg" />
-<figcaption>
-<p><a class="reference external" href="https://www3.risc.jku.at/conferences/ppdp2010/photos/index.html">Group photo at PPDP 2010</a></p>
-</figcaption>
-</figure>
-<p>On the bus trip to Gmunden, where the conference dinner took place, somebody
-explained how to implement unification of cyclic terms (i.e. rational trees) to
-me. Unfortunately I am not quite sure who it was any more, I think it might
-have been Thierry Martinez. This led to me <a class="reference external" href="https://github.com/cfbolz/pyrolog/commit/8d51938">implementing support for cyclic
-term unification</a>. I still like that trick a lot and tried to explain it to
-<a class="reference external" href="https://www.philipzucker.com/">Phil Zucker</a> earlier this year. I hope to blog about it eventually. For a fun
-use case see my blog post on <a class="reference external" href="https://cfbolz.de/posts/dfa-minimization-using-rational-trees-in-prolog/">rational tree unification for dfa minimization</a>.</p>
-</section>
-</section>
-<section id="widening-prolog-support">
-<h2>2011/2012 Widening Prolog support</h2>
-<p>During 2011 and 2012 I supervised several Bachelor/Master theses that worked on
-adding features to Pyrolog. In the process we added support for Prolog modules,
-<a class="reference external" href="https://www.swi-prolog.org/pldoc/man?section=DCG">DCGs</a>, <a class="reference external" href="https://www.swi-prolog.org/pldoc/man?section=attvar">attributed variables</a>, <code class="docutils literal">freeze</code> and <code class="docutils literal">when</code>. All these were done by my
-excellent students Sven Hager and René Bartelmus. This left the fundamental
-execution model intact (with some small additions). I also spent some time
-improving the error messages of Pyrolog to for example show backtraces on
-Prolog exceptions.</p>
-<p>Pyrolog also served as an <a class="reference external" href="https://www.pypy.org/posts/2011/01/jit-backend-for-arm-processors-5994810755839586463.html">early test case</a> for David Schneider's ARM JIT
-backend. In January 2011, he could already run Pyrolog microbenchmarks with the
-JIT on a BeagleBoard, while the backend still needed debugging before running
-more complex Python benchmarks.</p>
-<p>In 2012 I mostly wrote my PhD thesis <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bolz2012" id="citation-reference-16">[Bolz2012]</a>. It contains a chapter on Pyrolog based
-on the PPDP 2010 paper. That chapter argues that the fact that Pyrolog works
-relatively well demonstrates that the RPython meta-JIT can be used for quite a
-wide variety of languages.</p>
-<p>There was also another chapter that compared how a meta-tracing JIT works with
-more classical partial evaluation approaches. The code of that was again
-written in Prolog and <a class="reference external" href="https://www.pypy.org/posts/2012/01/simple-tracer-for-flow-graph-language-6930951890987229484.html">originally</a> <a class="reference external" href="https://www.pypy.org/posts/2012/02/optimizing-traces-of-flow-graph-4169388883059419385.html">presented</a> <a class="reference external" href="https://www.pypy.org/posts/2012/02/larger-example-for-flow-graph-language-6139699450091061040.html">here on the blog</a>.</p>
-<p>At this point I left Düsseldorf. In the winter semester 2012/13 I spent half a
-year in Berlin at <a class="reference external" href="https://hpi.de/">Hasso-Plattner-Institute</a> with my PhD co-advisor <a class="reference external" href="https://hirschfeld.org/">Robert
-Hirschfeld</a> as a postdoc. In 2013 I started working with <a class="reference external" href="https://tratt.net/laurie/">Laurie Tratt</a> at
-King's College.</p>
-<p>At this point the main Pyrolog story kind of ends. There were only some small
-improvements happening in the succeeding years. However, Pyrolog ideas led to
-followup research in other projects, and I want to discuss some of them.</p>
-</section>
-<section id="compressed-terms">
-<h2>2012/2013 Compressed Terms</h2>
-<p>One experiment that I had tried to get working in Pyrolog in 2010 and 2011, but
-ended up never merging, was compressed terms. The idea comes from the
-observation that certain patterns of terms occur repeatedly. For example an
-association list has terms of the form <code class="docutils literal">[A/B|C]</code> repeated. Instead of
-allocating separate list and pair objects for every entry, the plan was to
-share a description of that structure, the "shape", and store each entry's keys
-and values in a flat storage data structure. This would make every entry have
-less indirection and use fewer words of memory.</p>
-<p>However, I had never managed to get that working in Prolog, because variable
-bindings can create these patterns after the fact. A field that initially
-contained an unbound variable could later refer to a whole structured term, so
-the opportunities for compression changed after construction, and again on
-backtracking.</p>
-<p>When I was at HPI for six months in winter 2012/2013 I worked with Tobias Pape to
-implement the same compression idea for a simpler functional language called
-lamb, later <a class="reference external" href="https://github.com/shiplift/theseus/">Theseus</a>. Tobias pushed this approach much further in the following years
-<a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#pbh2015" id="citation-reference-17">[PBH2015]</a>, <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#pbh2017" id="citation-reference-18">[PBH2017]</a>. My hope was to eventually understand the problem well
-enough to be able to port it back to Pyrolog. But that part never happened. We
-did eventually try those ideas in Pycket though.</p>
-</section>
-<section id="unipycation">
-<h2>2013 Unipycation</h2>
-<p>In 2013 I started working in London. The goal of our research project there was
-"language composition". Edd Barrett, Laurie Tratt and I implemented combined
-RPython implementations of PyPy plus another language, with a way to integrate
-the two involved languages. The first pair we tried was combining PyPy and
-Pyrolog in a project called Unipycation <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#bbt2013" id="citation-reference-19">[BBT2013]</a>. The project made it
-possible to call into Prolog from Python and vice versa. The RPython meta-JIT
-can optimize across this language boundary and even perform cross-language
-inlining. Unfortunately we never found super compelling use-cases for this
-combination.</p>
-</section>
-<section id="pycket">
-<h2>2013 Pycket</h2>
-<p>Also in 2013 I started working on <a class="reference external" href="https://github.com/pycket/pycket">Pycket</a>, an RPython implementation of Racket,
-together with <a class="reference external" href="https://samth.github.io/">Sam Tobin-Hochstadt</a> and <a class="reference external" href="https://luddy.iu.edu/people/siek-jeremy.html">Jeremy Siek</a>. Later Tobias Pape and
-Spenser Bauman also joined. The Pycket architecture was indirectly inspired by
-the Pyrolog continuation approach. We implemented the CEK machine relatively
-directly in RPython. This also used a flat host stack and it made implementing
-things like <code class="docutils literal">call/cc</code> relatively straightforward <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#pycket2015" id="citation-reference-20">[Pycket2015]</a>.</p>
-<p>One of the great new ideas we adopted in Pycket was "false loop filtering",
-originally from IBM Research <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#hwisn2011" id="citation-reference-21">[HWISN2011]</a>. This takes calling context into
-account when tracing function calls and prevents the tracing JIT from
-recognizing "false loops", which would never run for more than one iteration. I
-always wanted to port this idea back to Pyrolog and implemented a prototype,
-but never really polished it enough to be able to merge it.</p>
-<p>Another implementation technique in Pycket was to make continuation objects
-much smaller, to make the case of them escaping to the heap less bad. This
-approach <em>did</em> <a class="reference external" href="https://github.com/cfbolz/pyrolog/commit/59fb825">make it back to Pyrolog</a>.</p>
-</section>
-<section id="rpython-implementation-of-effekt">
-<h2>2022-2024 RPython implementation of Effekt</h2>
-<p>I left King's College in 2016 and have been back at Uni Düsseldorf (half-time)
-since 2017. In 2022 I started working with <a class="reference external" href="https://pl.cs.uni-tuebingen.de/team/gaissert/">Marcial Gaißert</a> and <a class="reference external" href="https://b-studios.de/about">Jonathan
-Brachthäuser</a> on an RPython implementation of <a class="reference external" href="https://effekt-lang.org/">Effekt</a> and related languages.
-This was an implementation of a JIT for <a class="reference external" href="https://effekt-lang.org/docs/concepts/effect-handlers">effect handlers</a> in RPython <a class="citation-reference" href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#gbb2025" id="citation-reference-22">[GBB2025]</a>.
-Again, it uses the approach of having reified stack frames/continuations which
-can then be manipulated by the interpreter, adding effect handlers on top of it.</p>
-</section>
-<section id="git-conversion">
-<h2>2026 Git Conversion</h2>
-<p>This fall, I got an email by a researcher about Pyrolog and realized that it
-was 20 years old this year. Subsequently I merged various strands of the
-surviving mercurial history into a new <a class="reference external" href="https://github.com/cfbolz/pyrolog">Github repo</a>, fixed some bugs and
-implemented some convenience features.</p>
-<figure>
-<img alt="/images/2026-pyrolog-screenshot.png" src="https://www.pypy.org/images/2026-pyrolog-screenshot.png" style="width: 80%;" />
-<figcaption>
-<p>Screenshot of Pyrolog</p>
-</figcaption>
-</figure>
-</section>
-<section id="conclusion">
-<h2>Conclusion</h2>
-<figure>
-<img alt="/images/2026-pyrolog-activity-by-month-authors.svg" src="https://www.pypy.org/images/2026-pyrolog-activity-by-month-authors.svg" style="width: 100%;" />
-<figcaption>
-<p>commits per month on the main branch, by author</p>
-</figcaption>
-</figure>
-<p>Pyrolog has always been a much more researchy project than PyPy itself. While
-PyPy tries to be an open source project and "product", Pyrolog never had any
-users and even I never used it for anything beyond small demos, some
-research prototypes, and benchmarking. While some quite interesting research
-came out of Pyrolog, I think having some real applications running on top of it
-would have given me a much more concrete goal to improve it towards.</p>
-<p>Implementation wise, Pyrolog inherited some of the problems of PyPy. In PyPy we
-were quite strongly focused on peak performance in the first few years, leading
-to performance cliffs. Pyrolog also had those in even stronger form, due to the
-constant allocations of the interpreter.</p>
-<p>Some very interesting interaction between Pyrolog, various Prolog JIT
-prototypes and the PyPy/RPython meta-JIT emerged. Pyrolog forced the RPython
-JIT to support quite different execution models which made it applicable to
-other languages than just object-oriented imperative ones.</p>
-<p>I still have no concrete use case for Pyrolog so it's kind of unlikely that I
-will work much more on it right now. But my development on this project was
-always quite bursty, so I am bound to return to it at some point in the future.</p>
-<p>I would like to end with thanking all the contributors, my other collaborators
-and the long line of Prolog researchers that inspired and encouraged me.</p>
-</section>
-<section id="bibliography">
-<h2>Bibliography</h2>
-<div class="citation-list">
-<div class="citation" id="tb1990">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-6">TB1990</a><span class="fn-bracket">]</span></span>
-<p>P. Tarau, M. Boyer.
-<em>Elementary logic programs</em>. PLILP 1990, LNCS 456, pp. 159–173.
-<a class="reference external" href="https://doi.org/10.1007/BFb0024183">DOI</a>.</p>
-</div>
-<div class="citation" id="tarau1992">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-7">Tarau1992</a><span class="fn-bracket">]</span></span>
-<p>Paul Tarau.
-<em>BinProlog: a continuation passing style Prolog engine</em>.
-PLILP 1992, LNCS 631, pp. 479–480. Poster.</p>
-</div>
-<div class="citation" id="ss1994">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-2">SS1994</a><span class="fn-bracket">]</span></span>
-<p>Leon S. Sterling, Ehud Y. Shapiro.
-<em>The Art of Prolog: Advanced Programming Techniques</em>.
-2nd edition, MIT Press, 1994.
-<a class="reference external" href="https://mitpress.mit.edu/9780262691635/the-art-of-prolog/">Publisher page</a>.</p>
-</div>
-<div class="citation" id="lindgren1994">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-8">Lindgren1994</a><span class="fn-bracket">]</span></span>
-<p>Thomas Lindgren.
-<em>A Continuation-Passing Style for Prolog</em>.
-International Logic Programming Symposium, 1994, pp. 603–617.</p>
-</div>
-<div class="citation" id="vanroy1994">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-4">VanRoy1994</a><span class="fn-bracket">]</span></span>
-<p>Peter Van Roy.
-<em>1983–1993: The Wonder Years of Sequential Prolog Implementation</em>.
-Journal of Logic Programming 19–20, 1994, pp. 385–441.
-<a class="reference external" href="https://doi.org/10.1016/0743-1066(94)90031-0">DOI</a>;
-<a class="reference external" href="https://webperso.info.ucl.ac.be/~pvr/PRL-TR-36.pdf">author-hosted technical report PDF</a>
-(DEC Paris Research Laboratory report 36, December 1993).</p>
-</div>
-<div class="citation" id="neumerkel1995">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-9">Neumerkel1995</a><span class="fn-bracket">]</span></span>
-<p>Ulrich Neumerkel.
-<em>Continuation Prolog: A new intermediary language for WAM and BinWAM
-code generation</em>. Post-ILPS 1995 Workshop on Implementation of Logic
-Programming Languages, 1995.
-<a class="reference external" href="https://www.complang.tuwien.ac.at/ulrich/papers/PDF/contp95.pdf">PDF</a>.</p>
-</div>
-<div class="citation" id="cm2003">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-1">CM2003</a><span class="fn-bracket">]</span></span>
-<p>William F. Clocksin, Christopher S. Mellish.
-<em>Programming in Prolog: Using the ISO Standard</em>.
-5th edition, Springer, 2003.
-<a class="reference external" href="https://doi.org/10.1007/978-3-642-55481-0">DOI</a>.</p>
-</div>
-<div class="citation" id="vh2004">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-3">VH2004</a><span class="fn-bracket">]</span></span>
-<p>Peter Van Roy, Seif Haridi.
-<em>Concepts, Techniques, and Models of Computer Programming</em>.
-MIT Press, 2004. ISBN 9780262220699.
-<a class="reference external" href="https://mitpress.mit.edu/9780262220699/concepts-techniques-and-models-of-computer-programming/">Publisher page</a>;
-<a class="reference external" href="https://webperso.info.ucl.ac.be/~pvr/book.html">author's book page</a>.</p>
-</div>
-<div class="citation" id="bd2004">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-15">BD2004</a><span class="fn-bracket">]</span></span>
-<p>Dariusz Biernacki, Olivier Danvy.
-<em>From Interpreter to Logic Engine by Defunctionalization</em>.
-LOPSTR 2003, revised selected papers, published 2004, pp. 143–159.
-<a class="reference external" href="https://doi.org/10.1007/978-3-540-25938-1_13">DOI</a>,
-<a class="reference external" href="https://ii.uni.wroc.pl/~dabi/publications/LOPSTR03/biernacki-danvy-lopstr03.pdf">PDF</a>.</p>
-</div>
-<div class="citation" id="br2007d071">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-10">BR2007D071</a><span class="fn-bracket">]</span></span>
-<p>CF Bolz, Armin Rigo.
-<em>Support for massive parallelism, optimisation results, practical
-usages and approaches for translation aspects</em>.
-PyPy Consortium, EU deliverable D07.1, 28 February 2007.
-Listed by PyPy as <em>Massive Parallelism and Translation Aspects</em>.
-<a class="reference external" href="https://doc.pypy.org/index-report.html">Official report index</a>;
-<a class="reference external" href="https://foss.heptapod.net/pypy/extradoc/-/blob/branch/extradoc/eu-report/D07.1_Massive_Parallelism_and_Translation_Aspects-2007-02-28.pdf">report PDF</a>.</p>
-</div>
-<div class="citation" id="bolz2007">
-<span class="label"><span class="fn-bracket">[</span>Bolz2007<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-5">1</a>,<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-11">2</a>)</span>
-<p>CF Bolz.
-<em>A Prolog Interpreter in Python</em>. Bachelor thesis,
-Heinrich Heine University Düsseldorf, 2007.
-<a class="reference external" href="https://cfbolz.de/Bolz2007-Bachelorarbeit.pdf">PDF</a>.</p>
-</div>
-<div class="citation" id="blr2010">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-12">BLR2010</a><span class="fn-bracket">]</span></span>
-<p>CF Bolz, Michael Leuschel, Armin Rigo.
-<em>Towards Just-In-Time Partial Evaluation of Prolog</em>.
-LOPSTR 2009, revised selected papers, LNCS 6037, 2010, pp. 158–172.
-<a class="reference external" href="https://doi.org/10.1007/978-3-642-12592-8_12">DOI</a>;
-<a class="reference external" href="https://stups.hhu-hosting.de/downloads/pdf/BoLeRi09_235.pdf">author manuscript</a>.</p>
-</div>
-<div class="citation" id="bls2010">
-<span class="label"><span class="fn-bracket">[</span>BLS2010<span class="fn-bracket">]</span></span>
-<span class="backrefs">(<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-13">1</a>,<a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-14">2</a>)</span>
-<p>CF Bolz, Michael Leuschel, David Schneider.
-<em>Towards a Jitting VM for Prolog Execution</em>. PPDP 2010, pp. 99–108.
-<a class="reference external" href="https://doi.org/10.1145/1836089.1836102">DOI</a>;
-<a class="reference external" href="https://stups.hhu-hosting.de/downloads/pdf/BoLeSch2010.pdf">author manuscript</a>.</p>
-</div>
-<div class="citation" id="hwisn2011">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-21">HWISN2011</a><span class="fn-bracket">]</span></span>
-<p>Hiroshige Hayashizaki, Peng Wu, Hiroshi Inoue,
-Mauricio J. Serrano, Toshio Nakatani.
-<em>Improving the Performance of Trace-based Systems by False Loop Filtering</em>.
-ASPLOS XVI, 2011, pp. 405–418.
-<a class="reference external" href="https://doi.org/10.1145/1950365.1950412">DOI</a>;
-<a class="reference external" href="https://research.ibm.com/publications/improving-the-performance-of-trace-based-systems-by-false-loop-filtering">IBM Research publication page</a>.</p>
-</div>
-<div class="citation" id="bolz2012">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-16">Bolz2012</a><span class="fn-bracket">]</span></span>
-<p>CF Bolz.
-<em>Meta-Tracing Just-in-Time Compilation for RPython</em>.
-PhD thesis, Heinrich-Heine-Universität Düsseldorf, September 2012.
-<a class="reference external" href="https://cfbolz.de/phdthesis/">Author's thesis page</a>;
-<a class="reference external" href="https://cfbolz.de/stuff/cfbolz-meta-tracing.pdf">PDF</a>;
-<a class="reference external" href="https://docserv.uni-duesseldorf.de/servlets/DocumentServlet?id=30464">university repository</a>.</p>
-</div>
-<div class="citation" id="bbt2013">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-19">BBT2013</a><span class="fn-bracket">]</span></span>
-<p>Edd Barrett, CF Bolz, Laurence Tratt.
-<em>Unipycation: A Case Study in Cross-Language Tracing</em>.
-VMIL 2013, pp. 31–40.
-<a class="reference external" href="https://doi.org/10.1145/2542142.2542146">DOI</a>;
-<a class="reference external" href="https://tratt.net/laurie/research/pubs/papers/barrett_bolz_tratt__unipycation_a_study_in_cross_language_tracing.pdf">author manuscript</a>.</p>
-</div>
-<div class="citation" id="pycket2015">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-20">Pycket2015</a><span class="fn-bracket">]</span></span>
-<p>Spenser Bauman, CF Bolz, Robert Hirschfeld,
-Vasily Kirilichev, Tobias Pape, Jeremy G. Siek, Sam Tobin-Hochstadt.
-<em>Pycket: A Tracing JIT for a Functional Language</em>.
-ICFP 2015, pp. 22–34.
-<a class="reference external" href="https://doi.org/10.1145/2784731.2784740">DOI</a>;
-<a class="reference external" href="https://soft-dev.org/pubs/pdf/bauman_bolz_hirschfeld_kirilichev_pape_siek_tobin_hochstadt__pycket_a_tracing_jit_for_a_functional_language.pdf">author manuscript</a>.</p>
-</div>
-<div class="citation" id="pbh2015">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-17">PBH2015</a><span class="fn-bracket">]</span></span>
-<p>Tobias Pape, CF Bolz, Robert Hirschfeld.
-<em>Adaptive Just-in-time Value Class Optimization: Transparent Data
-Structure Inlining for Fast Execution</em>. SAC 2015.
-<a class="reference external" href="https://doi.org/10.1145/2695664.2695837">DOI</a>;
-<a class="reference external" href="https://www.hirschfeld.org/writings/media/PapeBolzHirschfeld_2015_AdaptiveJustInTimeValueClassOptimization_AcmDL.pdf">PDF</a>.</p>
-</div>
-<div class="citation" id="pbh2017">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-18">PBH2017</a><span class="fn-bracket">]</span></span>
-<p>Tobias Pape, CF Bolz, Robert Hirschfeld.
-<em>Adaptive just-in-time value class optimization for lowering memory
-consumption and improving execution time performance</em>.
-Science of Computer Programming 140, 2017, pp. 17–29.
-Published online in 2016.
-<a class="reference external" href="https://doi.org/10.1016/j.scico.2016.08.003">DOI</a>;
-<a class="reference external" href="https://www.hirschfeld.org/writings/media/PapeBolzHirschfeld_2017_AdaptiveJustInTimeValueClassOptimizationForLoweringMemoryConsumptionAndImprovingExecutionTimePerformance_Elsevier.pdf">PDF</a>.</p>
-</div>
-<div class="citation" id="gbb2025">
-<span class="label"><span class="fn-bracket">[</span><a href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html#citation-reference-22">GBB2025</a><span class="fn-bracket">]</span></span>
-<p>Marcial Gaißert, CF Bolz-Tereick,
-Jonathan Immanuel Brachthäuser.
-<em>Tracing Just-in-Time Compilation for Effects and Handlers</em>.
-Proceedings of the ACM on Programming Languages 9 (OOPSLA2),
-Article 307, October 2025.
-<a class="reference external" href="https://doi.org/10.1145/3763085">DOI</a>;
-<a class="reference external" href="https://pl.cs.uni-tuebingen.de/publications/gaissert2025tracing/">author publication page</a>;
-<a class="reference external" href="https://pl.cs.uni-tuebingen.de/publications/gaissert2025tracing.pdf">technical report</a>.</p>
-</div>
-</div>
-</section>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 12, 2026 08:16 AM UTC by
-            <a href="https://www.pypy.org/rss.xml" class="link link-hover text-primary"
-              >PyPy</a
-            >
-          </div>
-          <a
-            href="https://www.pypy.org/posts/2026/11/20-years-of-pyrolog.html"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://discuss.tryton.org/t/release-0-3-0-of-tryton-filestore-cellar/9467" class="hover:underline"
-              >Release 0.3.0 of tryton-filestore-cellar</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We are proud to announce the release of <a href="https://pypi.org/project/tryton-filestore-cellar/">tryton-filestore-cellar</a> version 0.3.0.</p>
-<p>tryton-filestore-cellar is Tryton’s filestore implementation based on the <a href="https://www.clever-cloud.com/doc/deploy/addon/cellar/">Cellar</a> storage service.</p>
-<p>In addition to bug fixes, this release contains the following improvements:</p>
-<ul>
-<li>Implement delete</li>
-<li>Upgrade dependency to boto3</li>
-</ul>
-<p>The package is available at <a class="inline-onebox" href="https://pypi.org/project/tryton-filestore-cellar/0.3.0/">tryton-filestore-cellar · PyPI</a></p>
-            <p><small>1 post - 1 participant</small></p>
-            <p><a href="https://discuss.tryton.org/t/release-0-3-0-of-tryton-filestore-cellar/9467">Read full topic</a></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 12, 2026 07:00 AM UTC by
-            <a href="http://www.tryton.org/rss.xml" class="link link-hover text-primary"
-              >Tryton News</a
-            >
-          </div>
-          <a
-            href="https://discuss.tryton.org/t/release-0-3-0-of-tryton-filestore-cellar/9467"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/python-httpx/" class="hover:underline"
-              >Python HTTPX: Making HTTP Requests With HTTPX2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to use Python HTTPX (now HTTPX2) to make HTTP requests, send async calls, set safe timeouts, stream large downloads, and enable HTTP/2.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/python-httpx/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-httpx/" class="hover:underline"
-              >Quiz: Python HTTPX: Making HTTP Requests With HTTPX2</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Test your knowledge of Python HTTPX2 by reusing clients, sending async requests, setting timeouts, streaming responses, and enabling HTTP/2.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/python-httpx/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.pythonguis.com/faq/dialogs-question-accept-cancel/" class="hover:underline"
-              >Keeping Your Main Window Open After Closing a Dialog in PyQt6 — Why your app closes when you dismiss a dialog, and how to fix it</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            I'm working with dialogs in PyQt6, and when I press either Accept or Cancel, the entire application closes. How can I prevent this?
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2026 06:00 AM UTC by
-            <a href="https://www.pythonguis.com/feeds/all.atom.xml" class="link link-hover text-primary"
-              >Python GUIs</a
-            >
-          </div>
-          <a
-            href="https://www.pythonguis.com/faq/dialogs-question-accept-cancel/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/creating-for-yourself?utm_campaign=rss" class="hover:underline"
-              >Creating for yourself</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Today marks the 7th anniversary of starting this blog. If you've been following along for a while: <em>thank you!</em> 😊</p>
-
-<p>After observing <a href="https://sethmlarson.dev/observing-volunteer-amnesty-day">Volunteer Responsibility Amnesty Day</a> in 2025
-and stopping most of my volunteer OSS contributions, I really leaned hard into
-using my creative leisure time "for me". This has helped protect
-my flame from burn-out and focus on areas I'm excited about, like writing,
-video-games (retro, modding, ...developing? 👀), and keeping my volunteer OSS focus on
-mostly a single project: <a href="https://github.com/sethmlarson/truststore/">truststore</a>. This year was the first time <a href="https://github.com/urllib3/urllib3/graphs/contributors?from=1%2F1%2F2016&amp;to=11%2F7%2F2026">since 2016</a>
-that I was uninvolved in the latest release of urllib3, which felt both deeply rewarding and
-strange as I read the <a href="https://github.com/urllib3/urllib3/releases/tag/2.8.0">v2.8.0 release notes</a>.</p>
-
-<!-- more -->
-
-<h2>Writing</h2>
-
-<p>This year I <a href="https://mastodon.social/@sethmlarson/117554489864114380">published 54 articles to my blog</a>, an average of once per week across a year.
-This wasn't a specific goal I had in mind, looking through the past year of articles has me
-thinking "<em>oh, that was this year??</em>". Writing continued to be a focus of my role at the PSF, too, where I <a href="https://blog.python.org/authors/seth-larson/">wrote 14 articles</a>
-for <a href="https://blog.python.org/authors/seth-larson/">Python Insider</a>,
-<a href="https://pyfound.blogspot.com">5 for the PSF blog</a>, and <a href="https://blog.pypi.org/author/sethmlarson/">2 for the Python Package Index blog</a> (<em>that's a lot of yapping!</em>)</p>
-
-<p>The piece I'm most proud of from this year is “<a href="https://sethmlarson.dev/food-jpegs-in-super-smash-bros-and-kirby-air-riders">Food JPEGs in Super Smash Bros. and Kirby Air Riders</a>”.
-This took <em>tons</em> of research, buying the Japanese Kirby Air Ride, <a href="https://sethmlarson.dev/cutting-spritesheets-like-cookies-with-python-and-pillow">writing some custom software</a>,
-and I think this work really showed through in the end. This was my most-visited article of the year (mostly from the <a href="https://news.ycombinator.com/item?id=46516807">Hacker News front page</a>).</p>
-
-<p>My under-dog favorite is “<a href="https://sethmlarson.dev/animal-crossing-calendar">Adding Animal Crossing events to your digital calendar</a>” where
-I got to deep-dive into how Animal Crossing events work, differences between regions and games, the Animal Crossing
-decompilation project, and bought a physical Animal Crossing calendar too. I
-learned about the ICS calendar format and which features are supported across
-different platforms like iOS and Android.</p>
-
-<h2>Software</h2>
-
-<p>I took a much more fast-and-loose approach to sharing software I've worked on this year, opting to use
-this blog and Gists instead of each project needing a forge, issue tracker,
-and to be published to PyPI. I found that this approach let me
-spend more time on what actually mattered to me: being able to tell the
-story!</p>
-
-<ul>
-<li><a href="https://sethmlarson.dev/lan-party-calculator-for-mario-kart-kirby-air-riders-and-f-zero">LAN Party calculator for Mario Kart, Kirby Air Riders, F-Zero</a> (<a href="https://gist.github.com/sethmlarson/8ab1b0c7524ac2c642d56cd56c1bbb72">Source</a>)</li>
-<li><a href="https://sethmlarson.dev/animal-crossing-calendar">Adding Animal Crossing events to your digital calendar</a> (<a href="https://github.com/sethmlarson/animal-crossing-calendar/">Source</a>)</li>
-<li><a href="https://sethmlarson.dev/sms-bcc">Blind Carbon Copy (BCC) for SMS</a> (<a href="https://gist.github.com/sethmlarson/57002c2304eb5ce1f78f964721a7cc7e">Source</a>)</li>
-<li><a href="https://sethmlarson.dev/cutting-spritesheets-like-cookies-with-python-and-pillow">sugarcookie: a sprite-sheet cutting tool</a> (<a href="https://gist.github.com/sethmlarson/92dabc8420b0d2e2e6e8c688269fe5fd">Source</a>)</li>
-</ul>
-
-<p>I continued building tools allowing you to extract and archive ROMs from legally owned
-physical copies of games:</p>
-
-<ul>
-<li><a href="https://sethmlarson.dev/dumping-nintendo-ereader-card-roms">Nintendo e-Reader cards</a></li>
-<li><a href="https://sethmlarson.dev/extracting-billy-hatcher-joycarry-game-roms-with-python">GC-to-GBA Joyboot</a>, such as Billy Hatcher "Joycarry" games</li>
-<li><a href="https://sethmlarson.dev/extracting-n64-roms-from-wind-waker-bonus-disk">Ocarina of Time: Master Quest Bonus Disc</a></li>
-<li><a href="https://sethmlarson.dev/mgba-to-dolphin-not-working-you-need-a-gba-bios">GBA BIOS</a></li>
-</ul>
-
-<p>Finally, I created tools that track my play activity across all the platforms I care
-about. Can't improve what you don't measure, this data comes up in the next section:</p>
-
-<ul>
-<li><a href="https://sethmlarson.dev/nintendo-switch-play-activity-ocr">Nintendo Play Activity (OCR)</a> (<a href="https://github.com/sethmlarson/nintendo-play-activity-ocr">Source</a>)</li>
-<li><a href="https://github.com/sethmlarson/retroachievements-play-activity">Retroachievements Play Activity</a> (<a href="https://github.com/sethmlarson/retroachievements-play-activity">Source</a>)</li>
-<li><a href="https://github.com/sethmlarson/gamecube-play-activity-memcardgc">GameCube Play Activity (Memcard Pro GC)</a> (<a href="https://github.com/sethmlarson/gamecube-play-activity-memcardgc">Source</a>)</li>
-</ul>
-
-<h2>Gaming</h2>
-
-<p>Ever since 2023 I've been “in my feels” about gaming. I considered myself
-a gamer, but I wasn't <em>actually playing games</em>. I set a goal to get back into
-the hobby more seriously, and figure out how I can integrate play back
-into my week. 2025 was successful already, and 2026 was even more so.</p>
-
-<p>I ended up really experimenting this year by writing about
-a slice of my experience for four of the games I completed. I don't
-think I'll want to write about every game I play, but
-thinking deeply about my feelings
-while playing the game and <em>especially</em> the time between play sessions
-has been an interesting lens to look through. <em>Maybe more to come here?</em></p>
-
-<ul>
-<li><a href="https://sethmlarson.dev/links-awakening">“The Legend of Zelda: Link’s Awakening” respects your time</a></li>
-<li><a href="https://sethmlarson.dev/the-frog-for-whom-the-bell-tolls">The Frog for Whom the Bell Tolls</a></li>
-<li><a href="https://sethmlarson.dev/bowsers-fury">Bowser’s Fury outshines Sunshine, SA2B, and Billy Hatcher</a></li>
-<li><a href="https://sethmlarson.dev/mario-kart-world-and-seamless-media">Mario Kart World and “seamless” media</a></li>
-</ul>
-
-<p>These are all the games that are "completable" that I started and mostly finished this year:</p>
-
-<table>
-<thead>
-<tr>
-  <th>Started</th>
-  <th>Game</th>
-  <th>Play Duration</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td>2026-01-01</td>
-  <td>The Legend of Zelda: Link's Awakening</td>
-  <td>12 hours</td>
-</tr>
-<tr>
-  <td>2026-03-17</td>
-  <td>The Legend of Zelda: Oracle of Seasons <strong>(DNF)</strong></td>
-  <td>6.5 hours</td>
-</tr>
-<tr>
-  <td>2026-03-31</td>
-  <td>Kaeru no Tame ni Kane wa Naru</td>
-  <td>5 hours</td>
-</tr>
-<tr>
-  <td>2026-04-13</td>
-  <td>Sonic Mania</td>
-  <td>3.5 hours</td>
-</tr>
-<tr>
-  <td>2026-05-03</td>
-  <td>Super Mario 3D World + Bowser's Fury</td>
-  <td>17 hours</td>
-</tr>
-<tr>
-  <td>2026-05-28</td>
-  <td>Mina the Hollower <strong>(DNF)</strong></td>
-  <td>5 hours</td>
-</tr>
-<tr>
-  <td>2026-08-16</td>
-  <td>Big Walk</td>
-  <td>6.75 hours</td>
-</tr>
-<tr>
-  <td>2026-09-11</td>
-  <td>Paper Mario: The Origami King</td>
-  <td>20.5 hours</td>
-</tr>
-<tr>
-  <td>2026-11-04</td>
-  <td>The Legend of Zelda: Ocarina of Time <strong>(WIP!)</strong></td>
-  <td>6.75 hours</td>
-</tr>
-<tr>
-  <td>Total</td>
-  <td></td>
-  <td>~83 hours</td>
-</tr>
-</tbody>
-</table>
-
-<p>Using the three play activity tracking projects I have data about
-play activity from the Nintendo Switch, GameCube, and the Delta emulator.
-This data showed I played <strong>83</strong> hours of games this year compared to <a href="https://sethmlarson.dev/nintendo-gamecube-and-switch-wrapped-2025">78
-in 2025</a>.</p>
-
-<p>I'm ending this year playing “Ocarina of Time” for the first time and <em>oh my is
-this game incredible!</em> I cannot stop thinking about it having immersed myself
-completely in the design, discussion, and themes prior to starting.
-I'm part-way through the Forest Temple and all I can think is that there
-are 4 more temples to complete, <em>what a game!</em></p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 11, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/creating-for-yourself?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://pycoders.com/issues/760" class="hover:underline"
-              >Issue #760: Type Checkers, Claude Code Hooks, MarkItDown, and More (2026-11-10)</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p> <span>#760 – NOVEMBER 10, 2026</span><br /> <span><a href="https://pycoders.com/issues/760/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17364/feed" target="_blank">How a Python Type Checker Decides a Variable Is Unused</a></h3> <p style="margin-bottom: 0;"> A variable is unused only if no read resolves to its binding and in Python that read can sit inside a nested function or comprehension. This post walks through how ty, Astral’s Python type checker, finds local bindings nobody reads.<br /> <span><a href="https://pycoders.com/link/17364/feed" target="_blank">DENYSZHAK.COM</a> • Shared by <a href="https://pycoders.com/link/17351/feed" target="_blank">Denys Zhak</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17352/feed" target="_blank">How to Automate Your Workflow With Claude Code Hooks</a></h3> <p style="margin-bottom: 0;"> Learn how to use Claude Code hooks that auto-format your Python code after every edit, enforce your chosen tools, and ping you when a task finishes.<br /> <span><a href="https://pycoders.com/link/17352/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17385/feed" target="_blank">Why Your Python Agent Returns Outdated Memories</a></h3> <a href="https://pycoders.com/link/17385/feed" target="_blank"><img alt="alt" src="https://cdn.pycoders.com/65d3203f283df33b2b383dfa33aeeebe" style="float: right; margin-left: 16px; margin-top: 7px; width: 17%;" /></a> <p style="margin-bottom: 0;"> A user changes a preference, but vector search still surfaces the old one alongside the new. Link the new memory to the one it replaces and mark the old one historical, so your agent retrieves what’s current and keeps the history. <a href="https://pycoders.com/link/17385/feed" target="_blank">Explore the walkthrough and runnable notebook.</a><br /> <span><a href="https://pycoders.com/link/17385/feed" target="_blank">ORACLE</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17368/feed" target="_blank">Converting Documents to Markdown With MarkItDown</a></h3> <p style="margin-bottom: 0;"> Learn how to use MarkItDown to convert Excel files, PDFs, and images into clean Markdown that&rsquo;s ready for LLMs and AI workflows.<br /> <span><a href="https://pycoders.com/link/17368/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">course</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17374/feed" target="_blank">Quiz: Converting Documents to Markdown With MarkItDown</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17374/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17357/feed" target="_blank">Django Security Releases Issued: 6.1.3, 6.0.10, and 5.2.19</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17357/feed" target="_blank">DJANGO SOFTWARE FOUNDATION</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17386/feed" target="_blank">Agentic Coding With Codex CLI: A Live Course for Python Developers</a></h3> <p style="margin-bottom: 0;"> If you pay for ChatGPT Plus, you already have Codex CLI, an agent that runs in your terminal, edits your files, and runs your tests. Over two live half-days on November 14–15, you&rsquo;ll use it to build a Python CLI app from an empty directory to GitHub, write an AGENTS.md file so it follows your project&rsquo;s rules, and practice debugging the code it writes. You keep the recordings. <a href="https://pycoders.com/link/17386/feed" target="_blank">Registration closes Friday, November 13 →</a><br /> <span><a href="https://pycoders.com/link/17386/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <h2>Discussions</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17373/feed" target="_blank">Pull Request Limits for CPython Repo</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17373/feed" target="_blank">PYTHON.ORG</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17360/feed" target="_blank">Soft Delete in Django Without Making a Mess</a></h3> <p style="margin-bottom: 0;"> Soft delete sounds simple: add a <code>deleted_at</code> field and stop calling <code>DELETE</code>. The trouble starts a little later, when deleted rows still show up in queries. This tutorial shows a soft-delete setup that handles those cases without hiding too much magic in the model layer.<br /> <span><a href="https://pycoders.com/link/17360/feed" target="_blank">STEIN HELSET</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17370/feed" target="_blank">Hello Python 3.15, Goodbye 3.10, and Now I Can Use 3.11</a></h3> <p style="margin-bottom: 0;"> Simon covers the latest features in Python 3.15. If you&rsquo;ve seen that already, the second half of the article is also worth reading: now that 3.10 is end-of-life, what Python 3.11 features can you use everywhere?<br /> <span><a href="https://pycoders.com/link/17370/feed" target="_blank">SIMON WILLISON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17377/feed" target="_blank">Parsing JSON at Tens of Gigabytes Per Second</a></h3> <p style="margin-bottom: 0;"> This article talks about <code>fastsimdjson</code>, a drop-in replacement for the <code>json</code> module in the standard library. It has been optimized for speed, demonstrated by reading large amounts of JSON GitHub commit data.<br /> <span><a href="https://pycoders.com/link/17377/feed" target="_blank">DANIEL LEMIRE</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17358/feed" target="_blank">Why Python Devs Should Know About the ABI</a></h3> <p style="margin-bottom: 0;"> Why should every Python developer know about the CPython ABI? This week on the show, we speak with Nathan Goldbaum about free-threaded Python and the changes to the Python Application Binary Interface.<br /> <span><a href="https://pycoders.com/link/17358/feed" target="_blank">REAL PYTHON</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px;">podcast</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17372/feed" target="_blank">Building a Lift Scheduling Algorithm in Python</a></h3> <p style="margin-bottom: 0;"> This article walks you through the logic needed to code a scheduling algorithm for elevators, starting with a single car to a more complex multi-car system.<br /> <span><a href="https://pycoders.com/link/17372/feed" target="_blank">PIETER CLAERHOUT</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17362/feed" target="_blank">Histogram Plotting: NumPy, Matplotlib, pandas &amp; Seaborn</a></h3> <p style="margin-bottom: 0;"> In this tutorial, you&rsquo;ll be equipped to make production-quality, presentation-ready Python histogram plots with a range of choices and features.<br /> <span><a href="https://pycoders.com/link/17362/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17366/feed" target="_blank">Python Exceptions: An Introduction</a></h3> <p style="margin-bottom: 0;"> Learn what Python exceptions are, how to raise them, how to handle them with try, except, else, and finally, and how to create custom ones.<br /> <span><a href="https://pycoders.com/link/17366/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17378/feed" target="_blank">Python Program Lexical Structure</a></h3> <p style="margin-bottom: 0;"> Dig into the Python program structure: the syntactic elements that make up statements, and how statements group into larger blocks.<br /> <span><a href="https://pycoders.com/link/17378/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17356/feed" target="_blank">Announcing New Security Developer at the PSF</a></h3> <p style="margin-bottom: 0;"> The Python Software Foundation welcomes Brett Smith as an additional security developer.<br /> <span><a href="https://pycoders.com/link/17356/feed" target="_blank">PYTHON SOFTWARE FOUNDATION</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17382/feed" target="_blank">Python&rsquo;s Binary Wheels and Supply Chain Attacks</a></h3> <p style="margin-bottom: 0;"> Why precompiled Python wheels are a weak spot in the supply chain security.<br /> <span><a href="https://pycoders.com/link/17382/feed" target="_blank">ARTEM GOLUBIN</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17359/feed" target="_blank">pgcli: Postgres CLI With Autocomple &amp; Syntax Highlighting</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17359/feed" target="_blank">GITHUB.COM/DBCLI</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17363/feed" target="_blank">django-mcpz: Easy Peasy MCP Servers in Django</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17363/feed" target="_blank">GITHUB.COM/ADAMCHAINZ</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17353/feed" target="_blank">Ghostman: Postman Alternative Built in Python With Textual</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17353/feed" target="_blank">GITHUB.COM/4YK5</a> • Shared by <a href="https://pycoders.com/link/17365/feed" target="_blank">4yk5</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17375/feed" target="_blank">VizTracer: Visualize Code Debugging/Profiling/Logging</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17375/feed" target="_blank">GITHUB.COM/GAOGAOTIANTIAN</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17354/feed" target="_blank">django-ses: Django Backend for Amazon&rsquo;s Simple Email Service</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17354/feed" target="_blank">GITHUB.COM/DJANGO-SES</a></span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17361/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> November 11, 2026<br /> <span><a href="https://pycoders.com/link/17361/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17355/feed" target="_blank">Python Help</a></h3> <p style="margin-bottom: 0;"> November 12, 2026<br /> <span><a href="https://pycoders.com/link/17355/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17369/feed" target="_blank">Python Leiden User Group</a></h3> <p style="margin-bottom: 0;"> November 12, 2026<br /> <span><a href="https://pycoders.com/link/17369/feed" target="_blank">PYTHONLEIDEN.NL</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17371/feed" target="_blank">Python Atlanta</a></h3> <p style="margin-bottom: 0;"> November 13, 2026<br /> <span><a href="https://pycoders.com/link/17371/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17381/feed" target="_blank">PyCon Chile 2026</a></h3> <p style="margin-bottom: 0;"> November 14 to November 16, 2026<br /> <span><a href="https://pycoders.com/link/17381/feed" target="_blank">PYCON.CL</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17379/feed" target="_blank">PyCon Hong Kong 2026</a></h3> <p style="margin-bottom: 0;"> November 14 to November 16, 2026<br /> <span><a href="https://pycoders.com/link/17379/feed" target="_blank">PYCON.HK</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17376/feed" target="_blank">Wagtail Space 2026</a></h3> <p style="margin-bottom: 0;"> November 18 to November 21, 2026<br /> <span><a href="https://pycoders.com/link/17376/feed" target="_blank">WAGTAIL.ORG</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17380/feed" target="_blank">PyCon Wroclaw 2026</a></h3> <p style="margin-bottom: 0;"> November 20 to November 21, 2026<br /> <span><a href="https://pycoders.com/link/17380/feed" target="_blank">PYCONWROCLAW.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17367/feed" target="_blank">PyCon Ireland 2026</a></h3> <p style="margin-bottom: 0;"> November 21 to November 22, 2026<br /> <span><a href="https://pycoders.com/link/17367/feed" target="_blank">PYCON.IE</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #760.<br /><a href="https://pycoders.com/issues/760/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/760/open/feed" width="1" /> 
-        <hr />
-        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 10, 2026 07:30 PM UTC by
-            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
-              >PyCoder’s Weekly</a
-            >
-          </div>
-          <a
-            href="https://pycoders.com/issues/760"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1719,12 +1229,12 @@ are 4 more temples to complete, <em>what a game!</em></p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8291</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8286</a></li>
+    <li><a>Unique Feeds: 370</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="http://www.talkpythontome.com/episodes/rss">Talk Python to Me (568)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (504)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (217)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (203)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (568)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (505)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
