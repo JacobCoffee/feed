@@ -53,6 +53,47 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://blog.pythonlibrary.org/2026/11/06/12823/" class="hover:underline"
+              >An Intro to Python Logging Handlers (Video)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Learn about Python&#8217;s log handlers, part of the built-in logging module, in this video. This video is a part of my Python Logging Video Course. Check it out today!</p>
+<p>The post <a href="https://blog.pythonlibrary.org/2026/11/06/12823/">An Intro to Python Logging Handlers (Video)</a> appeared first on <a href="https://blog.pythonlibrary.org">Mouse Vs Python</a>.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 06, 2026 07:08 PM UTC by
+            <a href="http://www.blog.pythonlibrary.org/feed/" class="link link-hover text-primary"
+              >Mike Driscoll</a
+            >
+          </div>
+          <a
+            href="https://blog.pythonlibrary.org/2026/11/06/12823/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://discuss.tryton.org/t/security-release-for-issue-15206/9461" class="hover:underline"
               >Security Release for issue 15206</a
             >
@@ -881,7 +922,198 @@ The function's return value is significant, unlike most functions that simply re
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            How can I change the color of a QProgressBar delegate in a QTableView when a process starts or stops? I'm using a delegate to show an indeterminate progress bar (with <code>setRange(0, 0)</code>), and I want it to be green when running and red when stopped, but replacing the delegate doesn't seem to redraw the color.
+            <blockquote>
+<p>How can I change the color of a QProgressBar delegate in a QTableView when a process starts or stops? I'm using a delegate to show an indeterminate progress bar (with <code>setRange(0, 0)</code>), and I want it to be green when running and red when stopped, but replacing the delegate doesn't seem to redraw the color.</p>
+</blockquote>
+<p>The issue here comes from how delegates and persistent editors interact. When you call <code>openPersistentEditor</code>, Qt creates the editor widget and keeps it alive. Replacing the delegate on a row doesn't automatically close and recreate those existing editors &mdash; so even though you're assigning a new <code>ProgressBarDelegate</code> with a different color, the old progress bar widget is still sitting there unchanged.</p>
+<p>The solution is to store the color information in the <em>model data</em> and have a single delegate read that color when it creates or updates the editor. This way, when the data changes, the delegate can update the editor's stylesheet accordingly.</p>
+<p>Let's walk through how to set this up properly.</p>
+<h2 id="store-state-in-the-model-not-the-delegate">Store state in the model, not the delegate</h2>
+<p>Rather than creating a new delegate every time a button is clicked, store the running/stopped state in the model itself. You can use a custom <code>Qt.ItemDataRole</code> (or just <code>Qt.UserRole</code>) to hold the color or state for each row. The delegate then reads this value when painting or configuring the editor.</p>
+<p>This keeps your architecture clean: the model holds the data, and the delegate is responsible only for presentation.</p>
+<h2 id="use-seteditordata-to-update-the-progress-bar">Use <code>setEditorData</code> to update the progress bar</h2>
+<p>The <code>setEditorData</code> method on your delegate is called whenever the model data changes for an index that has a persistent editor. This is where you update the progress bar's stylesheet based on the current state.</p>
+<p>Here's how to write a <code>ProgressBarDelegate</code> that reads a color from the model:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class ProgressBarDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() == 2:
+            if (
+                isinstance(self.parent(), QtWidgets.QAbstractItemView)
+                and self.parent().model() is index.model()
+            ):
+                self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        editor = QtWidgets.QProgressBar(parent)
+        editor.setRange(0, 0)
+        editor.setTextVisible(False)
+        return editor
+
+    def setEditorData(self, editor, index):
+        color = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if color:
+            editor.setStyleSheet(
+                f"QProgressBar::chunk {{background-color: {color}; "
+                f"width: 20px; margin: 0.5px;}}"
+            )
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+</code></pre>
+</div>
+<p>The delegate no longer stores any color itself. Instead, <code>setEditorData</code> looks up the color from <code>Qt.UserRole</code> on the model index and applies it to the stylesheet. Every time you call <code>setData</code> on the model with <code>Qt.UserRole</code>, Qt will automatically call <code>setEditorData</code> on the persistent editor for that index.</p>
+<h2 id="update-the-model-when-the-button-is-clicked">Update the model when the button is clicked</h2>
+<p>In your button click handler, instead of creating a new delegate, just update the model data:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def on_button_clicked(self, index):
+    model = self.table_view.model()
+    progress_index = model.index(index.row(), 2)
+
+    current_state = progress_index.data(QtCore.Qt.ItemDataRole.DisplayRole)
+
+    if current_state is None or current_state == 0:
+        model.setData(progress_index, "green", QtCore.Qt.ItemDataRole.UserRole)
+        model.setData(progress_index, 1, QtCore.Qt.ItemDataRole.DisplayRole)
+    else:
+        model.setData(progress_index, "red", QtCore.Qt.ItemDataRole.UserRole)
+        model.setData(progress_index, 0, QtCore.Qt.ItemDataRole.DisplayRole)
+</code></pre>
+</div>
+<p>The <code>DisplayRole</code> tracks the state (1 for running, 0 for stopped), and <code>UserRole</code> holds the color string. When <code>setData</code> is called, the model emits <code>dataChanged</code>, which triggers <code>setEditorData</code> on the persistent editor &mdash; and the progress bar updates its color.</p>
+<h2 id="complete-working-example">Complete working example</h2>
+<p>Here's the full example putting everything together. The <a href="https://www.pythonguis.com/tutorials/pyside6-qtableview-modelviews-numpy-pandas/">QTableView</a> shows a list of paths, each with a Start/Stop button and an indeterminate progress bar. Clicking the button toggles the progress bar between green and red using a single <a href="https://www.pythonguis.com/tutorials/pyside6-modelview-architecture/">delegate</a> that reads color from the model.</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PySide6 import QtCore, QtGui, QtWidgets
+
+
+class ProgressBarDelegate(QtWidgets.QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() == 2:
+            if (
+                isinstance(self.parent(), QtWidgets.QAbstractItemView)
+                and self.parent().model() is index.model()
+            ):
+                self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        editor = QtWidgets.QProgressBar(parent)
+        editor.setRange(0, 0)
+        editor.setTextVisible(False)
+        return editor
+
+    def setEditorData(self, editor, index):
+        color = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if color:
+            editor.setStyleSheet(
+                f"QProgressBar::chunk {{background-color: {color}; "
+                f"width: 20px; margin: 0.5px;}}"
+            )
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+
+
+class PushButtonDelegate(QtWidgets.QStyledItemDelegate):
+    clicked = QtCore.Signal(QtCore.QModelIndex)
+
+    def paint(self, painter, option, index):
+        if (
+            isinstance(self.parent(), QtWidgets.QAbstractItemView)
+            and self.parent().model() is index.model()
+        ):
+            self.parent().openPersistentEditor(index)
+        QtWidgets.QStyledItemDelegate.paint(self, painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        button = QtWidgets.QPushButton(parent)
+        button.clicked.connect(lambda *args, ix=index: self.clicked.emit(ix))
+        return button
+
+    def setEditorData(self, editor, index):
+        editor.setText("Start/Stop")
+
+    def updateEditorGeometry(self, editor, option, index):
+        editor.setGeometry(option.rect)
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(600, 300)
+
+        self.table_view = QtWidgets.QTableView()
+        layout = QtWidgets.QHBoxLayout()
+        layout.addWidget(self.table_view)
+        cw = QtWidgets.QWidget()
+        cw.setLayout(layout)
+        self.setCentralWidget(cw)
+
+        self.init_model()
+
+        self.button_delegate.clicked.connect(self.on_button_clicked)
+
+    def init_model(self):
+        headers = ["Path", "Control", "Progress"]
+
+        self.button_delegate = PushButtonDelegate(self.table_view)
+        self.progress_delegate = ProgressBarDelegate(self.table_view)
+
+        self.model = QtGui.QStandardItemModel()
+        self.model.setHorizontalHeaderLabels(headers)
+
+        for row in range(5):
+            self.model.setItem(
+                row, 0, QtGui.QStandardItem(f"some_path{row}")
+            )
+            self.model.setItem(row, 1, QtGui.QStandardItem())
+            self.model.setItem(row, 2, QtGui.QStandardItem())
+
+        self.table_view.setModel(self.model)
+        self.table_view.setItemDelegateForColumn(1, self.button_delegate)
+        self.table_view.setItemDelegateForColumn(2, self.progress_delegate)
+        self.table_view.resizeColumnsToContents()
+        self.table_view.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+
+    def on_button_clicked(self, index):
+        model = self.table_view.model()
+        progress_index = model.index(index.row(), 2)
+
+        current_state = progress_index.data(QtCore.Qt.ItemDataRole.DisplayRole)
+
+        if current_state is None or current_state == 0:
+            model.setData(
+                progress_index, "green", QtCore.Qt.ItemDataRole.UserRole
+            )
+            model.setData(
+                progress_index, 1, QtCore.Qt.ItemDataRole.DisplayRole
+            )
+        else:
+            model.setData(
+                progress_index, "red", QtCore.Qt.ItemDataRole.UserRole
+            )
+            model.setData(
+                progress_index, 0, QtCore.Qt.ItemDataRole.DisplayRole
+            )
+
+
+if __name__ == "__main__":
+    app = QtWidgets.QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+</code></pre>
+</div>
+<p>When you run this, each row has a "Start/Stop" button. Clicking it the first time turns the progress bar green (running). Clicking again turns it red (stopped). Each subsequent click toggles between the two states.</p>
           </p>
         </div>
 
@@ -1696,174 +1928,6 @@ programs and the educators among you, i hope you are doing the same! We must per
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://sethmlarson.dev/extracting-billy-hatcher-joycarry-game-roms-with-python?utm_campaign=rss" class="hover:underline"
-              >Extracting Billy Hatcher “Joycarry Game” ROMs with Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>Billy Hatcher and the Giant Egg contains a feature called “<a href="https://www.youtube.com/watch?v=buM3nXVG9zQ">Joycarry Games</a>” similar to
-Animal Crossing’s NES game <a href="https://sethmlarson.dev/extracting-nes-and-famicom-roms-from-animal-crossing#what-if-i-only-have-a-game-boy-advance">“Advance Play” feature</a>. I wanted
-to extract the ROMs for these mini-games <a href="https://sethmlarson.dev/extracting-nes-and-famicom-roms-from-animal-crossing">just like I did
-for Animal Crossing</a>.
-Doing so wasn’t as straightforward; the ROMs aren’t available directly
-in the disc filesystem like they are in Animal Crossing. To extract the ROMs I ported an
-existing Rust program to Python (“<em>rewrite-it-in-Python</em>”, anyone?) that receives and saves the ROMs from
-the game running in <a href="https://dolphin-emu.org/blog/2021/07/21/integrated-gba/">Dolphin using the GBA TCP</a> and Joyboot
-protocols.</p>
-
-<!-- more -->
-
-<p>These games are simple, and I only really played one as a kid: Puyo Pop. The game
-is similar to “<a href="https://en.wikipedia.org/wiki/Dr._Robotnik%27s_Mean_Bean_Machine">Dr. Robotnik’s Mean Bean Machine</a>”, which was a <a href="https://sethmlarson.dev/extracting-genesis-and-game-gear-roms-from-sega-gamecube-collections">favorite of mine</a>.
-This was the only way I could take that game “on-the-go”, often downloading the game to my
-GBA before road trips to see my grandparents.</p>
-
-<p style="text-align: center;">
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba-joyboot-client/billy-hatcher-ja.png" style="border: 2px black solid;" />
-<br />
-<em><small>Joycarry Game menu in Billy Hatcher with “ChuChu Rocket! Challenge” selected</small></em>
-</p>
-
-<p>The Python program is a port of <a href="https://github.com/Icedude907/gba-joyboot-client">this MIT licensed Rust program</a> by
-Icedude907 with added functionality to
-save the EWRAM data after the ROM has been transmitted to the program
-via GBA TCP. I’ve distributed this program <a href="https://gist.github.com/sethmlarson/db751b59722f3b201da63097f086c3f6">via a GitHub Gist</a>.</p>
-
-<p>Using the program requires the Dolphin emulator and dumping the ROM
-of the Billy Hatcher GameCube disc you intend to download Joyboot ROMs from.
-In the case of Billy Hatcher you also need to have unlocked the
-<a href="https://billyhatcher.fandom.com/wiki/GBA">five different eggs</a> hidden in
-levels. The fastest way to get around this is
-to <a href="https://gc-saves.com/container/15">download a 100% save file</a> for your game’s region
-and place the file into Dolphin’s save file folder.</p>
-
-<p>To extract the ROMs, launch Dolphin and set the controller in port 4 to be “GBA (TCP)”; Billy Hatcher
-in particular only works if the GC-to-GBA link cable is plugged
-into port 4. Start Dolphin playing Billy Hatcher, navigate to the
-world map, and then select “Joycarry Game”. From here you can select
-each game to be downloaded to our “GBA”, and the program should
-display information about receiving the ROM data.</p>
-
-<h2>Language setting and Joycarry ROMs</h2>
-
-<p>Something I did not know was that two of the five Joycarry ROMs,
-“<a href="https://billyhatcher.fandom.com/wiki/GBA#Chu_Chu_Rocket!_Challenge">ChuChu Rocket! Challenge</a>”
-and “<a href="https://billyhatcher.fandom.com/wiki/GBA#Puyo_Pop">Puyo Pop</a>”, have translations for both English and Japanese. Which Joyboot
-ROM translation is sent to you depends on the game region
-and which language is selected in the menu.</p>
-
-<div class="row">
-<div class="col-6">
-<p style="text-align: center;">
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba-joyboot-client/chuchu-en.png" style="border: 2px black solid;" />
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba-joyboot-client/chuchu-ja.png" style="border: 2px black solid;" />
-<br />
-<small><em>“ChuChu Rocket! Challenge”</em></small>
-</p>
-</div>
-<div class="col-6">
-<p style="text-align: center;">
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba-joyboot-client/puyo-pop-en.png" style="border: 2px black solid;" />
-<img src="https://storage.googleapis.com/sethmlarson-dev-static-assets/gba-joyboot-client/puyo-pop-ja.png" style="border: 2px black solid;" />
-<br />
-<small><em>“Puyo Pop”</em></small>
-</p>
-</div>
-</div>
-
-<p>The NTSC region (GEZE8P) of the
-game only supports English (no language selector in options)
-and only has English Joycarry ROMs. The NTSC-J region (GEGJ8P) supports Japanese
-and English, sending the corresponding Joycarry ROM depending on
-which language is selected. The PAL region (GEZP8P) supports English, French,
-German, Spanish, Italian, and ... <em>Japanese!</em> I checked each language,
-and the English Joycarry ROM is sent for all languages except Japanese.</p>
-
-<p>Here are the SHA256 checksums of each ROM by <a href="https://problemkaputt.de/gbatek-gba-cartridge-header.htm">game title</a> and language:</p>
-
-<table>
-<thead>
-<tr>
-  <th>ROM Title</th>
-  <th>Language</th>
-  <th>SHA256</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td><code>CHU2 AGB</code></td>
-  <td>EN</td>
-  <td><code>131258b587b4724ea06a5a0fbdce4d6ec05c8e63ef6b10a6000dfa8efd57c435</code></td>
-</tr>
-<tr>
-  <td><code>CHU2 AGB</code></td>
-  <td>JP</td>
-  <td><code>5adc33400eead9ce3d327377b7ce150a48e632abc2494370acb0b6ed61c1337a</code></td>
-</tr>
-<tr>
-  <td><code>NIGHTS</code></td>
-  <td>EN</td>
-  <td><code>944fadb8fac3abf8c7db38f837677be3d3a664c56e6c8eb58e9e1949a10ac5f9</code></td>
-</tr>
-<tr>
-  <td><code>BILLYHATCHER</code></td>
-  <td>EN</td>
-  <td><code>128afd1c40a65831bd013c2c91abdadd816155df2b1a5456a7af6d260d48108e</code></td>
-</tr>
-<tr>
-  <td><code>BILLYHATCHER</code></td>
-  <td>EN</td>
-  <td><code>2af4d14151981c2341c193cd2cc3d38e10dee1336ebedcd264f8e8bcb5e1f87e</code></td>
-</tr>
-<tr>
-  <td><code>MINNADE PUYO</code></td>
-  <td>EN</td>
-  <td><code>e769bd190bee6735a97cd239f587e3921108073a6f20ab20b8d62ba9c447cc12</code></td>
-</tr>
-<tr>
-  <td><code>MINNADE PUYO</code></td>
-  <td>JP</td>
-  <td><code>521f6a2a0876f2685205c0cfbfde934c14b8b3a6b5c173f4aa9fdfe93aed80a5</code></td>
-</tr>
-</tbody>
-</table>
-
-<p><em>Happy Halloween!</em> 🎃👻</p>
-<br /><hr /><p>Thanks for reading ♥ I would love to hear your thoughts! Contact me via <a href="https://mastodon.social/@sethmlarson">Mastodon</a>, <a href="https://bsky.app/profile/sethmlarson.dev">Bluesky</a>, or <a href="mailto:sethmichaellarson@gmail.com">email</a>. Browse the <a href="https://sethmlarson.dev/">blog archive</a>. Check out my <a href="https://sethmlarson.dev/blogroll">blogroll</a>.</p><hr /><br />
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on October 31, 2026 12:00 AM UTC by
-            <a href="https://sethmlarson.dev/feed" class="link link-hover text-primary"
-              >Seth Michael Larson</a
-            >
-          </div>
-          <a
-            href="https://sethmlarson.dev/extracting-billy-hatcher-joycarry-game-roms-with-python?utm_campaign=rss"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><a href="index2.html" class="btn">«</a><a href="index.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</a><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</button><a href="index4.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">4</a><a href="index5.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">5</a><a href="index4.html" class="btn">»</a></div></div>
 </div>
@@ -1875,7 +1939,7 @@ and the English Joycarry ROM is sent for all languages except Japanese.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8286</a></li>
+    <li><a>Total Entries: 8303</a></li>
     <li><a>Unique Feeds: 369</a></li>
     
 
