@@ -660,7 +660,251 @@ did this. Can actually complete, no “unfun” backtracking.</li>
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I'm running a long-running function in a separate thread using <code>QThreadPool</code> and a <code>QRunnable</code> worker. When I pass the function without arguments, it runs correctly in the background. But when I try to pass arguments, the GUI freezes until the function finishes. What am I doing wrong?
+            <blockquote>
+<p>I'm running a long-running function in a separate thread using <code>QThreadPool</code> and a <code>QRunnable</code> worker. When I pass the function without arguments, it runs correctly in the background. But when I try to pass arguments, the GUI freezes until the function finishes. What am I doing wrong?</p>
+</blockquote>
+<p>This is a very common stumbling block when working with threads in PyQt6, and the good news is that it has a simple fix. The problem comes down to the difference between <em>passing a function</em> and <em>calling a function</em> &mdash; two things that look similar in Python but behave very differently.</p>
+<h2 id="the-setup">The Setup</h2>
+<p>Let's say you have a basic app with a main window, a push button, and a status bar. When the button is pressed, you want to start a long-running task on a background thread. That task should emit a signal to update the status bar, then carry on with its work.</p>
+<p>Here's a minimal version of this pattern using <code>QThreadPool</code> and <code>QRunnable</code>, based on the approach covered in our <a href="https://www.pythonguis.com/tutorials/multithreading-pyqt6-applications-qthreadpool/">Multithreading PyQt6 applications with QThreadPool</a> tutorial:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton
+
+
+class WorkerSignals(QObject):
+    status = pyqtSignal(str)
+
+
+class Worker(QRunnable):
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    @pyqtSlot()
+    def run(self):
+        self.fn(*self.args, **self.kwargs)
+
+
+class Model(QObject):
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+
+    def do_this(self):
+        self.signals.status.emit("Working on it...")
+        time.sleep(5)  # Simulating a long-running task
+        self.signals.status.emit("Done!")
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+
+        self.model = Model()
+        self.model.signals.status.connect(self.update_status_bar)
+
+        button = QPushButton("Run Task")
+        button.pressed.connect(self.call_do_this)
+        self.setCentralWidget(button)
+
+        self.threadpool = QThreadPool()
+
+    def call_do_this(self):
+        worker = Worker(self.model.do_this)
+        self.threadpool.start(worker)
+
+    def update_status_bar(self, msg):
+        self.statusBar().showMessage(msg)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>This works perfectly. The function runs on a background thread, the status bar updates, and the GUI stays responsive.</p>
+<h2 id="where-things-go-wrong">Where Things Go Wrong</h2>
+<p>Now suppose <code>do_this</code> needs to accept a message as an argument. You might naturally try this:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def call_do_this(self):
+    worker = Worker(self.model.do_this("This is a message"))
+    self.threadpool.start(worker)
+</code></pre>
+</div>
+<p>Suddenly the GUI freezes for the entire duration of the task. The status bar doesn't update until everything is finished. What happened?</p>
+<h2 id="passing-a-function-vs-calling-a-function">Passing a Function vs. Calling a Function</h2>
+<p>Look closely at what's being passed to <code>Worker</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python"># This CALLS the function immediately and passes its return value
+Worker(self.model.do_this("This is a message"))
+
+# This PASSES the function itself, along with the argument separately
+Worker(self.model.do_this, "This is a message")
+</code></pre>
+</div>
+<p>When you write <code>self.model.do_this("This is a message")</code> with parentheses and arguments, Python executes that function <em>right then and there</em>, on the main thread. The function runs to completion &mdash; including the long-running part &mdash; and then its return value (which is <code>None</code>, since the function doesn't explicitly return anything) gets passed to <code>Worker</code>.</p>
+<p>So <code>Worker</code> receives <code>None</code> as its <code>fn</code> parameter. The actual work already happened on the main thread, blocking the GUI the whole time.</p>
+<p>When you write <code>self.model.do_this</code> without parentheses, you're passing a reference to the function itself. The <code>Worker</code> then calls it later, inside <code>run()</code>, which executes on a background thread. The arguments <code>"This is a message"</code> are passed separately and stored until <code>run()</code> is called.</p>
+<h2 id="the-fix">The Fix</h2>
+<p>Pass the function and its arguments as separate items to <code>Worker</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">def call_do_this(self):
+    worker = Worker(self.model.do_this, "This is a message")
+    self.threadpool.start(worker)
+</code></pre>
+</div>
+<p>The <code>Worker.__init__</code> method is set up to handle exactly this pattern using <code>*args</code> and <code>**kwargs</code>:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">class Worker(QRunnable):
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    @pyqtSlot()
+    def run(self):
+        self.fn(*self.args, **self.kwargs)
+</code></pre>
+</div>
+<p>The function reference is stored in <code>self.fn</code>, and any additional positional or keyword arguments are captured and stored in <code>self.args</code> and <code>self.kwargs</code>. When <code>run()</code> is called on the worker thread, it calls the function with those stored arguments.</p>
+<h2 id="complete-working-example">Complete Working Example</h2>
+<p>Here's a full working example that demonstrates passing arguments to a threaded function, with proper <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signal handling</a> for status updates:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+import time
+
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
+
+
+class WorkerSignals(QObject):
+    """Signals available from a running worker thread."""
+    status = pyqtSignal(str)
+    finished = pyqtSignal()
+
+
+class Worker(QRunnable):
+    """Worker thread using QRunnable to run a function in the background."""
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+
+    @pyqtSlot()
+    def run(self):
+        self.fn(*self.args, **self.kwargs)
+
+
+class Model(QObject):
+    """Holds the application logic."""
+
+    def __init__(self):
+        super().__init__()
+        self.signals = WorkerSignals()
+
+    def do_this(self, msg):
+        self.signals.status.emit(msg)
+        # Simulate a long-running task
+        for i in range(5):
+            time.sleep(1)
+            self.signals.status.emit(f"Processing step {i + 1} of 5...")
+        self.signals.status.emit("Task complete!")
+        self.signals.finished.emit()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Thread Arguments Example")
+
+        self.model = Model()
+        self.model.signals.status.connect(self.update_status_bar)
+        self.model.signals.finished.connect(self.task_finished)
+
+        self.label = QLabel("Press the button to start a background task.")
+
+        self.button = QPushButton("Run Task")
+        self.button.pressed.connect(self.call_do_this)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.label)
+        layout.addWidget(self.button)
+
+        container = QWidget()
+        container.setLayout(layout)
+        self.setCentralWidget(container)
+
+        self.threadpool = QThreadPool()
+
+    def call_do_this(self):
+        self.button.setEnabled(False)
+        # Pass the function and its argument separately
+        worker = Worker(self.model.do_this, "Starting task...")
+        self.threadpool.start(worker)
+
+    def update_status_bar(self, msg):
+        self.statusBar().showMessage(msg)
+        self.label.setText(msg)
+
+    def task_finished(self):
+        self.button.setEnabled(True)
+
+
+app = QApplication(sys.argv)
+window = MainWindow()
+window.show()
+app.exec()
+</code></pre>
+</div>
+<p>When you run this and click the button, you'll see the status bar and label update in real time as the background task progresses. The GUI stays responsive throughout because the work is happening on a separate thread.</p>
+<h2 id="quick-reference">Quick Reference</h2>
+<table>
+<thead>
+<tr>
+<th>What you write</th>
+<th>What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Worker(self.model.do_this)</code></td>
+<td>Passes the function &mdash; it runs on the worker thread</td>
+</tr>
+<tr>
+<td><code>Worker(self.model.do_this, "hello")</code></td>
+<td>Passes the function and an argument &mdash; both used on the worker thread</td>
+</tr>
+<tr>
+<td><code>Worker(self.model.do_this("hello"))</code></td>
+<td><em>Calls</em> the function immediately on the main thread, passes <code>None</code> to Worker - don't do this!</td>
+</tr>
+</tbody>
+</table>
+<p>The key thing to remember is to pass the function by name, and pass the arguments separately after it. This keeps the function from running until the worker thread is ready.</p>
+<p>If you're new to building PyQt6 applications and want to understand the fundamentals first, check out our guide to <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-your-first-window/">creating your first window with PyQt6</a>.</p>
           </p>
         </div>
 
@@ -3209,8 +3453,8 @@ view, and the whole thing is about 430 lines of Python and JavaScript.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8297</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8286</a></li>
+    <li><a>Unique Feeds: 369</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
