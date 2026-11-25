@@ -53,6 +53,285 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://lucumr.pocoo.org/2026/11/25/poisoning/" class="hover:underline"
+              >Abolish Lock Poisoning</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>Rust has a curious feature that I don&#8217;t think the language would land today,
+if it was not there for a long time: mutex poisoning.  When some Rust code
+panics while holding a <code>std::sync::Mutex</code>, the mutex is <em>poisoned</em>.  That means
+that any further call to <code>lock()</code> returns a <code>PoisonError</code>.  The motivation for
+this feature is that an object might have some internal invariants that need to
+be upheld and panicking in the wrong moment might invalidate reasonable at and leave an
+object behind in a broken state.</p>
+<p>Personally I absolutely hate this feature as it has bitten me so many times and
+I cannot once remember it helping me.  The libs team is
+<a href="https://github.com/rust-lang/rust/issues/149359">discussing</a> making the
+non-poisoning locks the default in the next edition but entirely expectedly it
+has caused quite a few people to jump to the defence of the feature.</p>
+<p>In this post I want to make my personal case why poisoned locks should either
+be entirely removed or be made the exception.</p>
+<p>Primarily this is because I have yet to come across code in the wild that
+handles a poisoned lock correctly.  On the other hand I have come across enough
+code that mishandles it and as a result behaves worse than a
+<a href="https://docs.rs/parking_lot">parking_lot</a> lock would which does not support
+poisoning.</p>
+<p><a href="https://news.ycombinator.com/item?id=46041342">Josh Triplett</a> put it quite
+strongly in a hackernews comment: &#8220;In the entire history of the standard
+library, we have never once seen a single report of anyone attempting to recover
+from poison.&#8221;</p>
+<p>When a panic happens with a lock held, there are two reasonable reactions: shut
+the process down, or carry on and ignore the flag.  With <code>panic = &quot;abort&quot;</code> you
+get the former and poisoning never comes up.  From all the evidence I have seen,
+with unwinding, the idiomatic <code>lock().unwrap()</code> picks the worst option of all.</p>
+<p>That&#8217;s because it neither stops the process nor lets it continue as it will turn
+every further lock into a panic with sometimes disastrous effects.  But that
+is not the only issue with the system today.  So here I want to share some of
+the issues and with some references to real world code of how people got bitten.</p>
+<h2>The Error Holds the Lock</h2>
+<p>One subtle aspect to the poisoning is that the <code>PoisonError</code> needs to hold the guard.
+That&#8217;s because in order to ignore the poison flag, you need to fetch the guard
+from the error object.  Holding on to the error means holding on to the lock!</p>
+<p>That can cause common code that does error wrapping / error conversions into a
+deadlock hazard.  The innocent looking <code>m.lock()?</code> in a function returning
+<code>Box&lt;dyn Error&gt;</code> or similar keeps the mutex locked for as long as the error
+lives (<a href="https://github.com/rust-lang/rust/issues/159930">#159930</a>).</p>
+<p>This can also happen with if let.  For instance in
+<a href="https://github.com/farion1231/cc-switch/commit/43077f5539235f0255642ec9aab558d29f3f1b33">cc-switch</a>
+you can see that they had a test hung because a <code>if let Ok(..) = lock() { .. } else { .. }</code> fallback locked the same mutex again while the unnamed
+<code>PoisonError</code> from the condition still owned the guard.
+<a href="https://github.com/David-Martel/PC-AI/pull/273/changes">PC-AI</a> had the same bug
+in a <code>match</code> arm.  Another case can be found in
+<a href="https://github.com/anatolykoptev/ox-embed-server/issues/152">ox-embed-server</a>.</p>
+<h2>Panic To Outage</h2>
+<p>Deviously poisoning does not fail fast and done wrong, it fails forever.  The
+original panic happens once, on one thread, often somewhere unrelated from future
+failures.  Every later <code>lock().unwrap()</code> on that lock now however panics as
+well, and because so much Rust code survives panics (thread pools, request
+handlers, tokio tasks, FFI boundaries), the process stays up and becomes
+useless:</p>
+<ul>
+<li>In RLS a failed cargo build panicked with <code>ENV_LOCK</code> held <a href="https://github.com/rust-lang/rls/pull/492">which made any
+subsequent runs impossible</a>.</li>
+<li>Mozilla&#8217;s
+<a href="https://github.com/mozilla/application-services/issues/4661">application-services</a>
+saw <code>PoisonError</code> <a href="https://github.com/mozilla/application-services/issues/4658">rise to rank
+5</a> in crash
+stats and <a href="https://github.com/mozilla/application-services/pull/4663">moved to
+parking_lot</a> after
+they concluded they did not benefit of poisoning handling.</li>
+<li>A <a href="https://github.com/neondatabase/neon/issues/2200">Neon safekeeper</a> on
+staging failed every timeline lookup after a panic with a global lock held,
+and the original panic could not even be found in the logs.</li>
+</ul>
+<p>While not live services, test suites show the same general issue.  One failing
+test poisons a shared static and every test after it fails with <code>PoisonError</code>.
+This problem showed up for
+<a href="https://github.com/rust-lang/cargo/pull/12264">cargo</a>,
+<a href="https://github.com/denoland/deno/pull/6567">deno</a>,
+<a href="https://github.com/pola-rs/polars/pull/26627">polars</a> and
+<a href="https://github.com/rust-lang/rust/issues/43155#issuecomment-315535095">rustc</a>
+itself.</p>
+<h2>Attempt At Recovery</h2>
+<p>If you recover with <code>into_inner()</code>, the flag stays set and every later access
+takes the recovery path again.  And remember that for the first nine years of
+Rust after the poisoning feature landed, you could not even clear it as
+<code>clear_poison</code> arrived only in 1.77.  Not clearing the flag means that potentially
+expensive side effects will happen from that point onwards:</p>
+<p><a href="https://github.com/jarida-io/goose-in-a-pond/commit/8c7e7fed06385d3dfd2958ba86ef0bb119d56688">goose-in-a-pond</a>
+rebuilt its decoder state on every transcription after a single panic,
+<a href="https://github.com/librefang/librefang/commit/5edca0bfcf856324a6fc3701bf441d87ec7c9cca">librefang</a>
+logged the same warning on every access, and a
+<a href="https://github.com/anatolykoptev/ox-embed-server/issues/94">pool</a> threw its
+model away on every return.</p>
+<h2>Nobody Relies on It, Not Even std</h2>
+<p>So who is handling poisonings?  I&#8217;m really not sure, definitely not the standard library.
+Every place where the standard library&#8217;s own code ignores it.  Standard I/O has done so since <a href="https://github.com/rust-lang/rust/commit/2e8e8ab5648">March
+2015</a>, two months before
+1.0, because &#8220;any poison must have been the result of user code which the lock
+isn&#8217;t protecting&#8221;.  A common issue with a lot of poisoning errors that never
+had anything to do with the mutex that was held.</p>
+<p>Same with the <a href="https://github.com/rust-lang/rust/commit/72e96604c01">panic output
+capture</a>, the <a href="https://github.com/rust-lang/rust/commit/2d2c9e44939">backtrace
+lock</a> and the <a href="https://github.com/rust-lang/rust/commit/9530ba0fe21">WASI
+environment lock</a>.  They
+all do the same and unsurprisingly there is an <a href="https://github.com/rust-lang/rust/pull/148689">open
+PR</a> to move std&#8217;s internal
+mutexes to <code>nonpoison</code>.</p>
+<p>And I would argue the ecosystem has largely come to the same conclusion.  Tokio&#8217;s own locks don&#8217;t poison.
+Internally it wraps the std one in an <a href="https://github.com/tokio-rs/tokio/blob/master/tokio/src/loom/std/mutex.rs">adapter that removes poison</a>.  When it landed Carl Lerche remarked &#8220;<a href="https://github.com/tokio-rs/tokio/pull/2814#discussion_r485760722">I rather pretend lock poisoning isn&#8217;t a
+thing</a>.&#8221;  In
+one case Eliza Weisman <a href="https://github.com/tokio-rs/tokio/pull/2828#discussion_r492350077">needed
+<code>into_inner</code></a>
+to unlink a waiter during drop, or &#8220;we&#8217;ll leave the list with a potentially
+dangling pointer&#8221;.  I want to point to this in particular because this is a case where poisoning stood in the way of memory safety which is commonly argued as a reason you want poisoning.</p>
+<p>Wasmtime, crossbeam-channel, tracing-subscriber always ignores lock poisoning.
+rust-analyzer <a href="https://github.com/rust-lang/rust-analyzer/pull/1359">switched to
+parking_lot</a> after
+cancellation poisoned its solver like RLS did before.  The parking_lot maintainer
+<a href="https://github.com/Amanieu/parking_lot/issues/324#issuecomment-1059616487">described it</a>
+as an anti-feature that hurts usability and reliability to which I strongly
+concur.</p>
+<h2>Why Only Mutex?</h2>
+<p>Another aspect here is why this is done on <code>Mutex</code> but not on <code>RefCell</code>.  Surely
+if the case for poisoning is that some code temporarily breaks an invariant, panics, and
+someone else observes the broken state, then this should apply to more cases.</p>
+<p>Take the usual example that argues in favor of poisoning and replace <code>Mutex</code>
+with <code>RefCell</code>, and you have <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=549fb7c9c0626a0ebd29bfa3a2e97ad4">exactly the same
+problem</a>.
+Threads are not needed at all and this is not hypothetical either as tokio
+catches every task panic.  Paired with a <code>LocalSet</code> the panic comes back as a
+<code>JoinError</code>, the next <code>borrow()</code> succeeds and <a href="https://play.rust-lang.org/?version=stable&amp;mode=debug&amp;edition=2024&amp;gist=925975f7d49c10c0d6821cfeb00e1f60">reads a null
+pointer</a>
+exactly like the mutex example from the issue.</p>
+<p>Given how much panic catching goes on in async code, much of which is <code>!Send</code>
+for performance reasons, I&#8217;m not even convinced that panics get caught more
+often in multi-threaded code yet nobody asks for <code>RefCell</code> to poison.</p>
+<p>The standard library isn&#8217;t consistent with itself either as <code>LazyLock</code> poisons
+for good, <code>OnceLock</code> never poisons, <code>Mutex</code> poisons but lets you recover.</p>
+<p>Also remember that poisoning only tracks panics and a more common early return
+has the same issue.  The <code>?</code> operator (as well as the <code>try!</code> macro before) that
+returns early from the middle of a critical section leaves the same broken
+invariant behind an unpoisoned lock.</p>
+<p>Note also that the coupling of poisoning of mutexes <a href="https://github.com/rust-lang/rust/issues/134645#issuecomment-3590942770">is
+historical</a>
+and an explicit <code>Poison&lt;T&gt;</code> type would allow you to opt into this for any
+interior mutability wrapper.</p>
+<h2>What I want</h2>
+<p>Personally I hope the rust team stabilizes <code>std::sync::nonpoison</code>, have
+<code>std::sync::Mutex</code> <a href="https://github.com/rust-lang/libs-team/issues/169">resolve to it by
+default</a>.  If someone wants
+poisoning add that separate <code>Poison&lt;T&gt;</code> wrapper then anyone who believes they
+need and can handle it, can opt into it for any type including <code>RefCell</code> or
+tokio threads.</p>
+<p>What I think would be the worst of all outcomes is the counter-proposal is to
+keep poisoning but have <code>lock()</code> panic instead of returning a <code>Result</code>.  That
+would only fix the held guard lock semantics, and to a smaller degree the
+ergonomics, but it makes the slow outage the only option.  That is what every
+<code>lock().unwrap()</code> does today, and the issues above should be plenty of evidence
+of this being a problematic behavior in light of the existence of <code>catch_unwind</code>.</p>
+<p>The post <a href="https://sunshowers.io/posts/on-poisoning/">In defense of lock
+poisoning</a> is the best argument for
+the other side and worth reading but I believe the evidence all points the other
+way, and most of what Oxide ships aborts on panic anyway which is also a
+reasonable behavior.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 25, 2026 12:00 AM UTC by
+            <a href="http://lucumr.pocoo.org/feed.atom" class="link link-hover text-primary"
+              >Armin Ronacher</a
+            >
+          </div>
+          <a
+            href="https://lucumr.pocoo.org/2026/11/25/poisoning/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://www.europython-society.org/list-of-eps-board-candidates-for-2026-2027/" class="hover:underline"
+              >List of EPS Board Candidates for 2026/2027</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>At this year&#x2019;s EuroPython Society General Assembly (GA), scheduled for <strong>Sunday, 29 November 2026, at 18:00 CET</strong>, we will elect a new Board of the EuroPython Society for the 2026/2027 term.</p><h1 id="list-of-board-candidates">List of Board Candidates</h1><p>In accordance with the EPS bylaws, the Board consists of one</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 24, 2026 10:51 PM UTC by
+            <a href="http://www.europython-society.org/rss" class="link link-hover text-primary"
+              >EuroPython Society</a
+            >
+          </div>
+          <a
+            href="https://www.europython-society.org/list-of-eps-board-candidates-for-2026-2027/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pycoders.com/issues/762" class="hover:underline"
+              >Issue #762: Refactoring With AI, Binary Search, Race Conditions, and More (2026-11-24)</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p> <span>#762 – NOVEMBER 24, 2026</span><br /> <span><a href="https://pycoders.com/issues/762/feed">View in Browser »</a></span> </p> <p><a href="https://pycoders.com"><img alt="The PyCoder&rsquo;s Weekly Logo" src="https://cdn.pycoders.com/37bdf31dc645f968ffb90196e5d38ff5" /></a></p> <hr /> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17438/feed" target="_blank">How to Refactor Python Code With an AI Agent</a></h3> <p style="margin-bottom: 0;"> Learn how to refactor Python code with AI safely: find code smells, check that tests pin the behavior, and let an agent apply one refactoring at a time.<br /> <span><a href="https://pycoders.com/link/17438/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17428/feed" target="_blank">How to Do a Binary Search in Python</a></h3> <p style="margin-bottom: 0;"> Use the bisect module to do a binary search in Python, then implement this classic algorithm yourself, both iteratively and recursively.<br /> <span><a href="https://pycoders.com/link/17428/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17447/feed" target="_blank">Build and Deploy Python Inside Snowflake</a></h3> <p style="margin-bottom: 0;"> Take Python workflows from development to deployment without leaving Snowflake. With the Posit Team Native App, develop, deploy, and govern with integrated AI assistance inside Snowflake’s security boundary. No data movement. No separate infrastructure. <a href="https://pycoders.com/link/17447/feed" target="_blank">Start your free 30-day trial.</a><br /> <span><a href="https://pycoders.com/link/17447/feed" target="_blank">POSIT</a></span> <span style="color: #AAAAAA; padding: 1px 4px; border: 1px solid #dddddd; margin-left: 4px; font-size: 0.8em; border-radius: 2px; background-color: #ffffe0;">sponsor</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17431/feed" target="_blank">Django Race Conditions: Unique Constraints</a></h3> <p style="margin-bottom: 0;"> The first in a series on Django race conditions: how to handle unique constraints in your forms so users don’t get a 500 response.<br /> <span><a href="https://pycoders.com/link/17431/feed" target="_blank">TIM SCHILLING</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17427/feed" target="_blank">Join in the PSF Year-End Fundraiser &amp; Membership Drive!</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17427/feed" target="_blank">PYTHON SOFTWARE FOUNDATION</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17445/feed" target="_blank">PyCon US 2027: Call for Proposals Now Open!</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17445/feed" target="_blank">PYCON.BLOGSPOT.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17430/feed" target="_blank">Black Friday Giveaway: Win 3 Years of Real Python</a></h3> <p style="margin-bottom: 0;"> Enter for a chance to win three years of Real Python plus all four Real Python books, or one of the runner-up prizes: 50% off an annual membership or 30% off the Python book bundle. It&rsquo;s free to enter with a Real Python account, and entries close Friday, November 27 at 11:59 pm PT.<br /> <span><a href="https://pycoders.com/link/17430/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <h2>Articles &amp; Tutorials</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17434/feed" target="_blank">How to Find and Fix N+1 Queries in Django</a></h3> <p style="margin-bottom: 0;"> N+1 queries are one of those Django performance problems that can hide in plain sight. A page might look fine with five rows in development and then suddenly make hundreds of database queries in production. This tutorial shows you how to find and fix these kinds of queries.<br /> <span><a href="https://pycoders.com/link/17434/feed" target="_blank">CODE WITH STEIN</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17420/feed" target="_blank">The Rise and Fall of Python&rsquo;s Benevolent Dictator</a></h3> <p style="margin-bottom: 0;"> This article describes the journey of Guido van Rossum who wrote Python over a 1989 Christmas break. By 2018 it ran AI and the web, and a fight over the walrus operator (PEP 572) drove him to resign.<br /> <span><a href="https://pycoders.com/link/17420/feed" target="_blank">BRUCE LI</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17421/feed" target="_blank">Python&rsquo;s Experimental JIT to Be Removed</a></h3> <p style="margin-bottom: 0;"> You may have already seen the news that the JIT is being removed from the main branch of CPython. This article covers the details and the history behind the decision.<br /> <span><a href="https://pycoders.com/link/17421/feed" target="_blank">JOE BROCKMEIER</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17429/feed" target="_blank">How the Python Ecosystem Responded to the eMudhra Intermediate Compromise</a></h3> <p style="margin-bottom: 0;"> In October there was a compromise to a Certificate Authority. This post talks about how the PSF and other parts of the Python community addressed the issue.<br /> <span><a href="https://pycoders.com/link/17429/feed" target="_blank">PYTHON SOFTWARE FOUNDATION</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17435/feed" target="_blank">Nuitka: Compile Python Into a Standalone Executable</a></h3> <p style="margin-bottom: 0;"> Learn to compile Python into a standalone executable with Nuitka. Compare standalone and onefile builds, test speed, and see when PyInstaller fits better.<br /> <span><a href="https://pycoders.com/link/17435/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17441/feed" target="_blank">Quiz: Nuitka: Compile Python Into a Standalone Executable</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17441/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17424/feed" target="_blank">Scientific Python: Using SciPy for Optimization</a></h3> <p style="margin-bottom: 0;"> Learn how the SciPy ecosystem differs from the SciPy library, then install SciPy and use its clustering and optimization modules in Python.<br /> <span><a href="https://pycoders.com/link/17424/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17425/feed" target="_blank">Faster CI With Orchestrated pytest Workers</a></h3> <p style="margin-bottom: 0;"> How a shared test queue and interruptible workers let the people at Close add cheaper parallelism to Python Continuous Integration.<br /> <span><a href="https://pycoders.com/link/17425/feed" target="_blank">ALEC ROSENBAUM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17432/feed" target="_blank">How to Set Up a Python Project for Agentic Coding</a></h3> <p style="margin-bottom: 0;"> Learn how to set up a Python project for agentic coding, with the tests, types, and hooks that give AI coding agents fast feedback.<br /> <span><a href="https://pycoders.com/link/17432/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17433/feed" target="_blank">Quiz: How to Set Up a Python Project for Agentic Coding</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17433/feed" target="_blank">REAL PYTHON</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17423/feed" target="_blank">funkycache: A Python Library to Cache Functions in SQLite</a></h3> <p style="margin-bottom: 0;"> This post describes <code>funkycache</code>, a new SQLite-backed caching library. It describes why Alex wrote it and how it works.<br /> <span><a href="https://pycoders.com/link/17423/feed" target="_blank">ALEX CHAN</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17443/feed" target="_blank">Stricter Checks for Uploaded Distributions on PyPI</a></h3> <p style="margin-bottom: 0;"> PyPI has added new checks that can reject uploaded source distributions to provide more package security.<br /> <span><a href="https://pycoders.com/link/17443/feed" target="_blank">WILLIAM WOODRUFF</a></span> </p> </div> <h2>Projects &amp; Code</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17422/feed" target="_blank">django-rosetta: Django App That Eases the Translation</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17422/feed" target="_blank">GITHUB.COM/MBI</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17442/feed" target="_blank">pytest-glow-report: HTML and JSON Reports for <code>pytest</code></a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17442/feed" target="_blank">GITHUB.COM/GODHIRAJ-CODE</a> • Shared by <a href="https://pycoders.com/link/17437/feed" target="_blank">Dhiraj Das</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17439/feed" target="_blank">django-ninja-expose: Ninja APIs With a Decorator</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17439/feed" target="_blank">GITHUB.COM/SWARFTE</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17419/feed" target="_blank">fastapi-restly: REST With FastAPI and SQLAlchemy</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17419/feed" target="_blank">GITHUB.COM/RJPRINS</a> • Shared by Rutger Prins</span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17436/feed" target="_blank">pencil-puzzles: Generate, Solve, and Rate Logic Puzzles Fast</a></h3> <p style="margin-bottom: 0;"> <span><a href="https://pycoders.com/link/17436/feed" target="_blank">GITHUB.COM/EMIEKS</a> • Shared by Emil</span> </p> </div> <h2>Events</h2> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17440/feed" target="_blank">Weekly Real Python Office Hours Q&amp;A (Virtual)</a></h3> <p style="margin-bottom: 0;"> November 25, 2026<br /> <span><a href="https://pycoders.com/link/17440/feed" target="_blank">REALPYTHON.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17426/feed" target="_blank">Python E-Commerce Forum</a></h3> <p style="margin-bottom: 0;"> November 26 to November 29, 2026<br /> <span><a href="https://pycoders.com/link/17426/feed" target="_blank">CODEHUT.CO.UK</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17418/feed" target="_blank">Build a Multi-Agent Travel Assistant With Google ADK</a></h3> <p style="margin-bottom: 0;"> November 26, 2026<br /> <span><a href="https://pycoders.com/link/17418/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17444/feed" target="_blank">PyDelhi User Group Meetup</a></h3> <p style="margin-bottom: 0;"> November 28, 2026<br /> <span><a href="https://pycoders.com/link/17444/feed" target="_blank">MEETUP.COM</a></span> </p> </div> <div> <h3 style="margin-bottom: 0;"><a href="https://pycoders.com/link/17446/feed" target="_blank">PyLadies Asia Conference 2026</a></h3> <p style="margin-bottom: 0;"> November 29 to November 30, 2026<br /> <span><a href="https://pycoders.com/link/17446/feed" target="_blank">PYLADIES.KR</a></span> </p> </div> <hr /> <p>Happy Pythoning!<br />This was PyCoder&rsquo;s Weekly Issue #762.<br /><a href="https://pycoders.com/issues/762/feed">View in Browser »</a></p> <img alt="alt" height="1" src="https://pycoders.com/issues/762/open/feed" width="1" /> 
+        <hr />
+        <p><em>[ Subscribe to 🐍 PyCoder&rsquo;s Weekly 💌 – Get the best Python news, articles, and tutorials delivered to your inbox once a week <a href="https://pycoders.com/?utm_source=pycoders&amp;utm_medium=feed&amp;utm_campaign=footer">&gt;&gt; Click here to learn more</a> ]</em></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 24, 2026 07:30 PM UTC by
+            <a href="https://pycoders.com/feed/planetpython" class="link link-hover text-primary"
+              >PyCoder’s Weekly</a
+            >
+          </div>
+          <a
+            href="https://pycoders.com/issues/762"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://treyhunner.com/2026/11/python-black-friday-and-cyber-monday-sales-2026/" class="hover:underline"
               >Python Black Friday & Cyber Monday sales (2026)</a
             >
@@ -70,13 +349,13 @@ If you find a Python-related deal in the next week that isn&rsquo;t on this list
 <p>Black Friday is Friday November 27, but some Python-related sales are <strong>already live</strong>:</p>
 <ul>
 <li><strong><a href="https://www.pythonmorsels.com/lifetime-access-sale/?utm_source=treyhunner&amp;utm_medium=blog&amp;utm_campaign=bf26-roundup&amp;trial=1">Python Morsels</a></strong>: I&rsquo;m selling <strong>lifetime access</strong> until Monday November 30 (more details below)</li>
+<li><strong><a href="https://talkpython.fm/black-friday">Talk Python</a></strong>: the <a href="https://training.talkpython.fm/courses/bundle/everything">Everything Bundle</a> of <strong>all 54 courses</strong> (plus anything released before October 2027) for $240 instead of $299, a new <a href="https://training.talkpython.fm/courses/bundle/python-in-the-age-of-ai-2026">Getting Started with Python &amp; Programming in the Age of AI</a> bundle of 4 courses for $65 instead of $156, and 25% off Michael&rsquo;s <em>Talk Python in Production</em> book, no code needed (all through 8am Pacific on Wednesday December 2)</li>
 <li><strong><a href="https://courses.dataschool.io/pass">Data School</a></strong>: a subscription to access all of Kevin&rsquo;s <strong>8 courses (and book) plus all upcoming courses</strong>, for $99 instead of $129 (November 23 to 30)</li>
 <li><strong><a href="https://lernerpython.com/cart/?add-to-cart=1955">Reuven Lerner</a></strong>: $150 off <strong>your first year</strong> of <strong>LernerPython+data</strong> ($350 instead of $500, code <code>bf2026</code>), 30% off a year of <a href="https://www.bambooweekly.com/bf2026/">Bamboo Weekly</a> ($70 instead of $100), and 50% off audits of AI-built Python code from his new <a href="https://vibetovalid.com/">Vibe to Valid</a> service (all through December 1)</li>
 <li><strong><a href="https://courses.pythontest.com/the-complete-pytest-course-bundle?coupon=BLACKFRIDAY">Brian Okken</a></strong>: 40% off <strong>The Complete pytest Course</strong> bundle (code <code>BLACKFRIDAY</code>), through Friday December 4</li>
 <li><strong><a href="https://driscollis.gumroad.com/">Mike Driscoll</a></strong>: 35% off his <strong>Python books</strong> on Gumroad (code <code>Black2026</code>)</li>
 <li><strong><a href="https://wizardzines.com/">Wizard Zines</a></strong>: Julia Evans&rsquo; <em>great</em> zines on various tech topics are on sale for 24 hours starting 12:01am Eastern on Friday November 27: <strong>50% off PDF zines</strong> and <strong>30% off print zines</strong>, no code needed (not Python-related, but one of my favorite annual sales)</li>
 </ul>
-<p><a href="https://training.talkpython.fm/">Talk Python</a>&rsquo;s sale starts Tuesday November 24, and I&rsquo;ll add it to this list once it&rsquo;s live.</p>
 <p>I&rsquo;ll keep updating this post as I hear about more sales.
 If you&rsquo;ve seen a sale that I haven&rsquo;t, please contact me.</p>
 <h2>Django-related sales</h2>
@@ -1142,167 +1421,6 @@ the first step of many towards open source security work not being special.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/python-interview-problem-parsing-csv-files/" class="hover:underline"
-              >Quiz: Python Practice Problems: Parsing CSV Files</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Practice parsing CSV files in Python with the csv module, generators, pytest, and pandas, and get ready to discuss your solutions in an interview.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 20, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/python-interview-problem-parsing-csv-files/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/nov/19/malcolm-prize-awarded-to-raffaella-suardini/" class="hover:underline"
-              >2026 Malcolm Tredinnick Memorial Prize awarded to Raffaella Suardini</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>We are pleased to announce that the <a href="/weblog/2026/oct/01/nominate-someone-for-the-2026-malcolm-prize/">2026 Malcolm Tredinnick Memorial Prize</a> has been awarded to <a href="https://raffaella.dev">Raffaella Suardini</a>!</p>
-<p>Raffaella embodies the values that define the Django community: generosity, respect, thoughtfulness, and a deep commitment to supporting others. She is a tireless community leader who creates spaces where newcomers thrive ❤️, exactly in the spirit of <a href="/foundation/prizes/">our prize and Malcolm Tredinnick’s work</a>.</p>
-<p><img alt="Raffaella Suardini on stage at EuroPython" src="https://media.djangoproject.com/blog/images/2026/11/Raffaella_Suardini_europython.jpg" /></p>
-<h1 id="s-about-raffaella">About Raffaella</h1>
-<p>As an admin of Djangonaut Space, Raffaella helps make the program a welcoming place for new contributors. She writes session announcements, keeps Djangonauts informed and connected, and speaks about building inclusive open-source communities, including at FOSDEM 2025.
-Beyond Djangonaut Space, Raffaella is an organizer of PyCon Italia, a Django Girls+ coach where she mentors people new to Django, and an individual member of the Django Software Foundation.</p>
-<h1 id="s-what-people-said-about-raffaellas-involvement-in-the-community">What people said about Raffaella’s involvement in the community:</h1>
-<blockquote>
-<p>As a long-time Djangonaut Space admin and session organizer, she celebrates everybody’s wins with authentic enthusiasm and amplifies the visibility of the Djangonauts on social media. Raffaella is really interested in the Djangonauts as a whole, and she has a talent for connecting people with similar interests. She shares stories from her own experience that people can relate to; one of them made me feel at home in the Django community.</p>
-</blockquote>
-<hr />
-<blockquote>
-<p>She also takes a genuine interest in people’s Django contribution successes beyond the program and keeps supporting and connecting people, for example, on Mastodon.</p>
-</blockquote>
-<hr />
-<blockquote>
-<p>Since the program, she has joined the Django Triage &amp; Review team, become an admin of Djangonaut Space, and helped lead the “Updates on Django” section of Django News. She has volunteered at many PyCon and DjangoCon events, organized her first Django Girls event, and spoken publicly to share her story with the community.</p>
-</blockquote>
-<hr />
-<blockquote>
-<p>Newcomers and longtime members alike are inspired by her willingness to help, her energy to make things better, and her fresh ideas, always with a smile.</p>
-</blockquote>
-<h1 id="s-other-nominees">Other nominees</h1>
-<p>Other nominations for this year included:</p>
-<ul>
-<li><strong>Ben Cardy</strong></li>
-<li><strong>Abigail Afi Gbadago</strong></li>
-<li><strong>Andy Miller</strong></li>
-<li><strong>Apoorv Garg</strong></li>
-<li><strong>Carlton Gibson</strong></li>
-<li><strong>Jay Miller</strong></li>
-<li><strong>Lilian Tran</strong></li>
-<li><strong>Mike Edmunds</strong></li>
-<li><strong>Omar Abou Mrad</strong></li>
-<li><strong>Paolo Melchiorre</strong></li>
-<li><strong>Peter Grandstaff</strong></li>
-<li><strong>Sarah Abderemane</strong></li>
-<li><strong>Simon Charette</strong></li>
-</ul>
-<hr />
-<p>Malcolm would be very proud of the legacy he has fostered in our community. Each year we receive many nominations, and it is always hard to pick the winner. If your nominee didn’t make it this year, you can always nominate them again next year!</p>
-<p>Congratulations, Raffaella, on the well-deserved honour!</p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 19, 2026 05:22 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/nov/19/malcolm-prize-awarded-to-raffaella-suardini/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/quizzes/exploring-python-math-module/" class="hover:underline"
-              >Quiz: Exploring the Python math Module</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Test your knowledge of Python's math module, from constants and rounding to logarithms, gcd(), and isqrt(), plus how it compares with cmath and NumPy.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 19, 2026 12:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/quizzes/exploring-python-math-module/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1314,8 +1432,8 @@ Beyond Djangonaut Space, Raffaella is an organizer of PyCon Italia, a Django Gir
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8314</a></li>
-    <li><a>Unique Feeds: 367</a></li>
+    <li><a>Total Entries: 8300</a></li>
+    <li><a>Unique Feeds: 366</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
