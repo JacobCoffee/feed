@@ -53,6 +53,310 @@
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://nedbatchelder.com/blog/202611/human_sorting_hardened" class="hover:underline"
+              >Human sorting, hardened</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <p>&#8220;Human sorting&#8221; is sorting strings (usually file names) so that any numbers
+in the names come out in the right order. For example, &#8220;file10.txt&#8221; should come
+after &#8220;file2.txt&#8221;, but regular sorting will put them in the wrong order.  I&#8217;ve
+written twice before about the function to do this
+(<a href="https://nedbatchelder.com/blog/200712/human_sorting">Human sorting</a> and
+<a href="https://nedbatchelder.com/blog/202503/human_sorting_improved">Human sorting improved</a>), but there&#8217;s more to say about
+it.</p><p>One effect of AI these days is bug reports for obscure edge cases. As a
+maintainer, it&#8217;s been a challenge first to read through them all, and then to
+decide which ones deserve a fix. It&#8217;s tempting to fix every little thing no
+matter how unlikely it is to happen in the real world. But every fix costs time,
+energy and focus. Every fix comes with risks in the form of new bugs or changed
+behavior. So some long-tail issues should be marked as &#8220;won&#8217;t fix.&#8221;</p><p>But this one intrigued me: if a file name includes a numeric component with
+4301 digits, then the human sorting function fails. Buh?</p><p>Before we get to the current problem, here&#8217;s the original &#8220;buggy&#8221; code,
+slightly simplified:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">human_key</span><span class="p">(</span><span class="n">s</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span>&#xa0;<span class="o">|</span>&#xa0;<span class="nb">int</span><span class="p">],</span>&#xa0;<span class="nb">str</span><span class="p">]:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">"""Turn&#xa0;a&#xa0;string&#xa0;into&#xa0;a&#xa0;sortable&#xa0;value&#xa0;that&#xa0;works&#xa0;how&#xa0;humans&#xa0;expect.</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;"z23A"&#xa0;-&gt;&#xa0;(["z",&#xa0;23,&#xa0;"A"],&#xa0;"z23A")</span>
+<br />
+<br /><span class="sd">&#xa0;&#xa0;&#xa0;&#xa0;"""</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">def</span><span class="w">&#xa0;</span><span class="nf">try_int</span><span class="p">(</span><span class="n">s</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">str</span>&#xa0;<span class="o">|</span>&#xa0;<span class="nb">int</span><span class="p">:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">"""If&#xa0;`s`&#xa0;is&#xa0;a&#xa0;number,&#xa0;return&#xa0;an&#xa0;int,&#xa0;else&#xa0;`s`&#xa0;unchanged."""</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">try</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">except</span>&#xa0;<span class="ne">ValueError</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="n">s</span>
+<br />
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">parts</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">re</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="sa">r</span><span class="s2">"(\d+)"</span><span class="p">,</span>&#xa0;<span class="n">s</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="n">split_key</span>&#xa0;<span class="o">=</span>&#xa0;<span class="p">[</span><span class="n">try_int</span><span class="p">(</span><span class="n">c</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">c</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">parts</span><span class="p">]</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="p">(</span><span class="n">split_key</span><span class="p">,</span>&#xa0;<span class="n">s</span><span class="p">)</span>
+<br />
+<br /><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">human_sorted</span><span class="p">(</span><span class="n">strings</span><span class="p">:</span>&#xa0;<span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">"""Sort&#xa0;the&#xa0;given&#xa0;iterable&#xa0;of&#xa0;strings&#xa0;the&#xa0;way&#xa0;that&#xa0;humans&#xa0;expect."""</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">sorted</span><span class="p">(</span><span class="n">strings</span><span class="p">,</span>&#xa0;<span class="n">key</span><span class="o">=</span><span class="n">human_key</span><span class="p">)</span>
+<br /></pre></div>
+</blockquote><p>It splits the string into parts alternating between runs of digits and runs
+of non-digits.  It uses <code>try_int</code> on all of them, which turns the digits
+into ints and leaves the non-digits as strings. That gives us a list of words
+and numbers that can be compared to do the sort we need.</p><p>The problem now is with that 4301-digit run. Since 2022, Python&#8217;s
+string-to-integer conversion has had a limit on the number of digits that can be
+converted. This is to prevent denial of service attacks based on the quadratic
+time to convert a string to an int.  The default limit is 4300 digits. If a
+string is longer than that, <code>int()</code> raises a ValueError.</p><p>But we were counting on ValueError to mean &#8220;this isn&#8217;t an integer&#8221;, and to
+separate words from digits. Now that too-long number makes <code>try_int</code> return
+the string un-converted, and using it as a sort key will try to compare an int
+to a string, failing with:</p><blockquote class="code"><div class="source"><pre class="text"><span>TypeError:&#xa0;'&lt;'&#xa0;not&#xa0;supported&#xa0;between&#xa0;instances&#xa0;of&#xa0;'int'&#xa0;and&#xa0;'str'</span>
+<br /></pre></div>
+</blockquote><p>Of course, it&#8217;s absurd to be concerned that an actual file name will include
+a run of more than 4300 digits. But I&#8217;ve been tweaking this function over
+decades, and I like fiddling with it.  The <a href="/blog/200712/human_sorting#comments" rel="external noopener">comments on the
+original post</a> offered a number of alternative implementations, a few of
+which would have avoided this problem.</p><p>Rather than try to convert all of the parts of the name, we know from how
+<code>re.split</code> works that the parts will alternate between words and numbers,
+starting with a word even if it&#8217;s just an empty string.  So we can attempt
+conversion only for the parts that we know are digits.</p><p>First, we replace <code>try_int</code> with a function to safely convert digit
+spans into numbers:</p><blockquote class="code"><div class="source"><pre class="python"><span class="k">def</span><span class="w">&#xa0;</span><span class="nf">number</span><span class="p">(</span><span class="n">s</span><span class="p">:</span>&#xa0;<span class="nb">str</span><span class="p">)</span>&#xa0;<span class="o">-&gt;</span>&#xa0;<span class="nb">float</span><span class="p">:</span>
+<br /><span class="w">&#xa0;&#xa0;&#xa0;&#xa0;</span><span class="sd">"""Convert&#xa0;s&#xa0;to&#xa0;a&#xa0;number&#xa0;with&#xa0;no&#xa0;errors."""</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">try</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">int</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">except</span>&#xa0;<span class="ne">ValueError</span><span class="p">:</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="c1">#&#xa0;This&#xa0;only&#xa0;happens&#xa0;if&#xa0;the&#xa0;number&#xa0;is&#xa0;too&#xa0;large&#xa0;to&#xa0;convert&#xa0;to&#xa0;an&#xa0;int.</span>
+<br />&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;&#xa0;<span class="k">return</span>&#xa0;<span class="nb">float</span><span class="p">(</span><span class="s2">"inf"</span><span class="p">)</span>
+<br /></pre></div>
+</blockquote><p>Now we can create <code>split_key</code> differently by only converting the
+odd-numbered parts:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">split_key</span>&#xa0;<span class="o">=</span>&#xa0;<span class="p">[(</span><span class="n">number</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>&#xa0;<span class="k">if</span>&#xa0;<span class="n">i</span>&#xa0;<span class="o">%</span>&#xa0;<span class="mi">2</span>&#xa0;<span class="k">else</span>&#xa0;<span class="n">p</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">i</span><span class="p">,</span>&#xa0;<span class="n">p</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="nb">enumerate</span><span class="p">(</span><span class="n">parts</span><span class="p">)]</span>
+<br /></pre></div>
+</blockquote><p>It&#8217;s tempting to check whether a part starts with a digit:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">split_key</span>&#xa0;<span class="o">=</span>&#xa0;<span class="p">[(</span><span class="n">number</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>&#xa0;<span class="k">if</span>&#xa0;<span class="n">p</span><span class="p">[:</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()</span>&#xa0;<span class="k">else</span>&#xa0;<span class="n">p</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">p</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="n">parts</span><span class="p">]</span>
+<br /></pre></div>
+</blockquote><p>But <code>isdigit()</code> gets us into Unicode difficulties because <code>\d</code> and
+<code>isdigit()</code> disagree on what count as digits.  Something odd like
+<code>"a1²b"</code> would be split into <code>['a', '1', '²b']</code>, and
+<code>'²'.isdigit()</code> is true, so now we&#8217;d be mistaking words for numbers.</p><p>Another even-odd approach, but it&#8217;s too fancy:</p><blockquote class="code"><div class="source"><pre class="python"><span class="n">converters</span>&#xa0;<span class="o">=</span>&#xa0;<span class="n">itertools</span><span class="o">.</span><span class="n">cycle</span><span class="p">([</span><span class="nb">str</span><span class="p">,</span>&#xa0;<span class="n">number</span><span class="p">])</span>
+<br /><span class="n">split_key</span>&#xa0;<span class="o">=</span>&#xa0;<span class="p">[</span><span class="n">fn</span><span class="p">(</span><span class="n">part</span><span class="p">)</span>&#xa0;<span class="k">for</span>&#xa0;<span class="n">fn</span><span class="p">,</span>&#xa0;<span class="n">part</span>&#xa0;<span class="ow">in</span>&#xa0;<span class="nb">zip</span><span class="p">(</span><span class="n">converters</span><span class="p">,</span>&#xa0;<span class="n">parts</span><span class="p">)]</span>
+<br /></pre></div>
+</blockquote><p>In the end, though this is a long-tail bug, I fixed the human sort function;
+it was a tiny isolated fix. Also, I don&#8217;t like having a function that works only
+99.9999% of the time. And maybe it&#8217;s still not done: there are probably other
+odd edge cases that could be a problem here. If I hear of those, I might make
+more fixes.</p><p>The AI fire-hose of issues and pull requests requires me to exercise and
+strengthen my &#8220;won&#8217;t fix&#8221; muscle. But I also get to choose where to make a fix
+just because it pleases me.</p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 25, 2026 12:46 PM UTC by
+            <a href="http://nedbatchelder.com/blog/planetpython.xml" class="link link-hover text-primary"
+              >Ned Batchelder</a
+            >
+          </div>
+          <a
+            href="https://nedbatchelder.com/blog/202611/human_sorting_hardened"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/quizzes/llm-evaluation/" class="hover:underline"
+              >Quiz: LLM Evaluation in Python: Build an Eval Harness From Scratch</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Test your understanding of LLM evaluation in Python, from rubrics and code checks to LLM judges, calibration, and release gates.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 25, 2026 12:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/quizzes/llm-evaluation/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://pythonbytes.fm/episodes/show/506/raft-rust-and-release-day" class="hover:underline"
+              >#506 Raft, Rust, and release day</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            <strong>Topics covered in this episode:</strong><br />
+
+<ul>
+	<li><strong><a href="https://pyfound.blogspot.com/2026/11/de-fanging-dangerous-triggers-in-github.html?featured_on=pythonbytes">De-fanging dangerous triggers in GitHub Actions across an organization</a></strong></li>
+<li><strong><a href="https://rqlite.io/?featured_on=pythonbytes">RQlite - The fault-tolerant relational database built on SQLite.</a></strong></li>
+<li><strong><a href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/django.html?featured_on=pythonbytes">diskcache-oxide now supports Django</a></strong></li>
+<li><strong>Muru: an AI-assisted Rust server for Python apps from mod_wsgi's creator</strong></li>
+<li><strong>Extras</strong></li>
+<li><strong>Joke</strong></li>
+
+</ul><a href="https://www.youtube.com/watch?v=8PUItSzSkBo" style="font-weight: bold;">Watch on YouTube</a><br />
+
+<p><strong>About the show</strong></p>
+
+<p>Sponsored by <a href="https://pythonbytes.fm/longlink">LongLink</a>: Open-source platform for building and running custom business applications with Python and FastAPI</p>
+
+<p><strong>Connect with the hosts</strong></p>
+
+<ul>
+<li>Michael: <a href="https://fosstodon.org/@mkennedy">Mastodon</a> / <a href="https://bsky.app/profile/mkennedy.codes?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/mkennedy?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/mkennedy/?featured_on=pythonbytes">LinkedIn</a></li>
+<li>Calvin: <a href="https://sixfeetup.social/@calvin?featured_on=pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/calvinhp.com?featured_on=pythonbytes">BlueSky</a> / <a href="https://x.com/calvinhp?featured_on=pythonbytes">X</a> / <a href="https://www.linkedin.com/in/calvinhp/?featured_on=pythonbytes">LinkedIn</a></li>
+<li>Show: <a href="https://fosstodon.org/@pythonbytes">Mastodon</a> / <a href="https://bsky.app/profile/pythonbytes.fm">BlueSky</a> / <a href="https://x.com/PythonBytes?featured_on=pythonbytes">X</a></li>
+</ul>
+
+<p>Join us on YouTube at <a href="https://pythonbytes.fm/stream/live"><strong>pythonbytes.fm/live</strong></a> to be part of the audience. Usually <strong>Tuesday at 7am PT</strong>. Older video versions available there too.</p>
+
+<p>Finally, if you want an artisanal, hand-crafted digest of every week of the show notes in email form? Add your name and email to <a href="https://pythonbytes.fm/friends-of-the-show">our friends of the show list</a>, we'll never share it.</p>
+
+<p><strong>Calvin #1: <a href="https://pyfound.blogspot.com/2026/11/de-fanging-dangerous-triggers-in-github.html?featured_on=pythonbytes">De-fanging dangerous triggers in GitHub Actions across an organization</a></strong></p>
+
+<ul>
+<li>GitHub will block <code>pull_request_target</code> by default in public repos starting Dec 2, 2026. GitHub announced this in its changelog on Nov 2; it isn't in effect yet. That default stops applying once you set your own event policy.</li>
+<li>Two triggers are the main danger. <code>pull_request_target</code> and <code>issue_comment</code> both run with a token that can write to the repo and with the repo's secrets. The classic "pwn request" is a workflow that checks out a stranger's PR code and runs it.</li>
+<li>It's not theoretical. Ultralytics (Dec 2024), LiteLLM and Telnyx via Trivy (Mar 2026), and elementary-data (Apr 2026), where a single crafted PR comment led to a malicious release on PyPI.</li>
+<li>To get started, the first step is an Actions event policy. On GitHub Team or Enterprise, one org-wide policy allows only the triggers you expect: <code>pull_request</code>, <code>push</code>, <code>release</code>, <code>repository_dispatch</code>, <code>schedule</code>, <code>workflow_dispatch</code>, <code>workflow_run</code>.</li>
+<li>Start in Evaluate mode. It blocks nothing and logs what would have been blocked under "Policy insights". Leave it on long enough to cover a release and your least frequent scheduled job.</li>
+<li>Free plans have to do it repo by repo. You apply the same policy through gh api /repos/$repo/actions/policies. New repos have no policy until someone adds one.</li>
+<li>Find what you have: <code>gh search code pull_request_target path:.github/workflows --owner YOUR-ORG</code>, also search for <code>issue_comment</code> and then <code>zizmor</code> to check each repo's workflows.</li>
+<li>PSF status: the policy is set up for the pypi org. In the python org, Seth Larson is still migrating the last few repos before turning it on. The post's intro says all three orgs are done; I'm going by the body, which is more specific.</li>
+</ul>
+
+<p><strong>Michael #2: <a href="https://rqlite.io/?featured_on=pythonbytes">RQlite - The fault-tolerant relational database built on SQLite.</a></strong></p>
+
+<p>rqlite is a self-hosted distributed relational database built on SQLite and the Raft consensus protocol. It puts SQLite behind an HTTP API and replicates data across machines. For Python developers, the appeal is familiar SQL and lightweight deployment, with a database that can survive a server failure.</p>
+
+<ul>
+<li>Keep SQLite's SQL, add high availability. A three-node cluster can survive one node failing, provided the remaining nodes can communicate.</li>
+<li>Python applications send SQL and parameters over HTTP as JSON. Integrations include pyrqlite and sqlalchemy-rqlite; check client capabilities before migrating existing code.</li>
+<li>Deployment is a single binary per node, with Docker and Kubernetes options. Features include full-text search, JSON support, SQLite extensions, change data capture, and automated cloud backups.</li>
+<li>Replication does not scale writes. Every write goes through the leader and Raft log, adding network and disk overhead compared with standalone SQLite.</li>
+<li>Transactions must fit within one HTTP request. You can execute a batch atomically, but cannot hold a transaction open across requests. Explicit BEGIN/COMMIT/ROLLBACK control is unsupported.</li>
+<li>Read consistency is configurable: default Weak normally reads from the leader; Linearizable adds quorum checks; None permits potentially stale local reads. Stronger guarantees cost coordination.</li>
+<li>Discussion angle: when does SQLite need clustering rather than just backups? Proposed demo: write from Python, stop the leader, then show the surviving cluster accepting requests after election.</li>
+</ul>
+
+<p>SPONSOR SEGMENT: LongLink</p>
+
+<p><strong>Michael #3: <a href="https://mkennedy.codes/docs/diskcache-oxide/user-guide/django.html?featured_on=pythonbytes">diskcache-oxide now supports Django</a></strong></p>
+
+<p>diskcache-oxide plugs into Django’s existing cache framework for page caching, template fragments, low-level cache calls and sessions. Worker processes on the same machine share one cache on disk, with atomic counters across processes. The appeal is keeping Django’s familiar caching API without running Redis or Memcached.</p>
+
+<ul>
+<li>Setup uses the package’s <code>django</code> extra, <code>diskcache_oxide.DjangoCache</code> as the backend, and an absolute directory for <code>LOCATION</code>. Existing Django cache calls stay the same; optional sharding spreads contention across multiple cache files.</li>
+<li>Keep disposable pages separate from session state. The recommended configuration uses two aliases and directories: page-cache failures become misses or dropped writes, while session writes raise on failure and sessions are not evicted for size. The backend rejects session configurations that silently drop writes.</li>
+<li>The companion <a href="https://mkennedy.codes/docs/diskcache-oxide/example-apps/django.html?featured_on=pythonbytes">Django example</a> runs four Gunicorn workers and demonstrates cached views, template fragments, sessions and a shared visit counter. Response headers identify which worker answered, and multiprocess tests check concurrent increments, sessions across workers and caches opened before forking.</li>
+<li>This shares a cache across processes on one machine, not across a fleet. Django’s <code>get_or_set()</code> can still compute twice when workers miss together. A cached view that reads sessions also needs <code>vary_on_cookie</code> to avoid serving one visitor’s personalized response to everyone.</li>
+</ul>
+
+<p><strong>Calvin #4: Muru: an AI-assisted Rust server for Python apps from mod_wsgi's creator</strong></p>
+
+<p><a href="https://simonwillison.net/2026/Nov/21/muru/?featured_on=pythonbytes">Simon Willison's post</a> (repo: <a href="https://github.com/muruhq/muru?featured_on=pythonbytes">muruhq/muru</a> · author's series: <a href="https://grahamdumpleton.me/posts/2026/11/twenty-years-of-mod-wsgi/?featured_on=pythonbytes">Twenty years of mod_wsgi</a>)</p>
+
+<ul>
+<li>What it is: Muru is Graham Dumpleton's successor to mod_wsgi, 20 years after he started writing mod_wsgi in December 2006. It's not an Apache module and not another server you put behind nginx. He means it to handle running a Python web app from your laptop through to production.</li>
+<li>The parts: muructl is a single Rust binary that handles HTTP/1.1, HTTP/2, TLS, static files and compression, and never runs Python. A Python host process imports your app once and forks workers from it. A controller decides what runs and is never on a request's path.</li>
+<li>It hosts more than WSGI: ASGI and gRPC too, all in one app. Requests can be handed from WSGI to ASGI, so an existing WSGI app can add websockets without a rewrite. Flask and Django run unmodified, e.g. muructl run mysite.wsgi:application.</li>
+<li>Every deploy is a new release: a release starts next to the old one and traffic moves only once it's ready. If the new code won't even import, the old release just keeps serving. Even dev-mode auto-reload works this way, and the same mechanism gives you blue/green, canaries and rollback.</li>
+<li>It understands Python apps: the access log splits waiting time (queue=, every thread was busy) from your code's time (app=), so you can tell "add capacity" from "fix slow code". Each scaling policy can scale workers to zero and optionally stop the host process too.</li>
+<li>Fun tie-in with the lazy-imports story: his "when lazy imports help" post argues that PEP 810 lazy imports can hurt a pre-forking web server. Deferred modules load separately in each worker, so they aren't shared through copy-on-write memory. Muru measures import costs per app instead of guessing.</li>
+<li>Status: alpha, pre-releases only. Install with uv tool install muructl. It runs on Linux and macOS with CPython 3.11+, including free-threaded builds, and is Apache-2.0 licensed.</li>
+<li>The AI angle: Dumpleton says most of the code was written by AI, while he handles design, review and steering. It's about a month old, and he's in the Claude for Open Source Program. He doesn't accept patches: "don't send me a patch, just describe the problem." Quote: "deciding what isn't good enough yet is still down to me, and twenty years of getting things wrong with mod_wsgi turns out to be useful for that."</li>
+</ul>
+
+<p><strong>Extras</strong></p>
+
+<p>Michael:</p>
+
+<ul>
+<li><a href="https://training.talkpython.fm/courses/all?featured_on=pythonbytes">Black Friday is on at Talk Python Training</a></li>
+<li><a href="https://github.com/python/cpython/issues/162227?featured_on=pythonbytes">My first CPython issue</a></li>
+<li><a href="https://us.pycon.org/2027/?featured_on=pythonbytes">PyCon US 2027 call for proposals is open</a></li>
+<li><a href="https://www.wiz.io/blog/nginx-http2-rce-vulnerabilities?featured_on=pythonbytes">nginx2root - patch your nginx now</a>
+<ul>
+<li>Credit <strong>Jake Howard</strong></li>
+<li>F5 shipped nginx 1.31.9 (mainline) and 1.30.7 (stable) on November 18, 2026. They fix five memory-corruption bugs that Xint named nginx2root. Each one is a path to unauthenticated remote code execution. If nginx fronts your Python apps, check your version today.
+<ul>
+<li>The big one is CVE-2026-123007, an integer underflow in HTTP/2 flow control. It has been in every release since HTTP/2 landed in 1.9.5 in 2015, and a reachable TLS port with HTTP/2 on is enough.</li>
+<li>Exposure is huge. Xint counted 11.94 million nginx hosts on Shodan that report a version, and 98.9% were in the affected range.</li>
+<li>The fix is to upgrade. Setting http2 off; is a stopgap that blocks only two of the five. The other three hit the DNS resolver, HTTP/3, and the mail proxy.</li>
+<li>Docker does not save you. Xint chained the nginx bug with an unpatched Linux kernel SCTP flaw to go from the nginx worker in a container to root on the host. Block the sctp kernel module if you don't use it.</li>
+<li>AI found most of it. Four of the five came from Xint's autonomous scanner with no human steering, and Wiz found the HTTP/2 pair with its AI code scanning harness. Xint and Wiz are withholding their exploits and no attacks in the wild are reported, but some outlets say a public PoC hit GitHub the same day.</li>
+</ul></li>
+</ul></li>
+</ul>
+
+<p><strong>Joke:</strong> <a href="https://x.com/datachaz/status/2123699622720028878?s=46&amp;featured_on=pythonbytes">What they think grid</a></p>
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 25, 2026 06:28 AM UTC by
+            <a href="https://pythonbytes.fm/episodes/rss" class="link link-hover text-primary"
+              >Python Bytes</a
+            >
+          </div>
+          <a
+            href="https://pythonbytes.fm/episodes/show/506/raft-rust-and-release-day"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://lucumr.pocoo.org/2026/11/25/poisoning/" class="hover:underline"
               >Abolish Lock Poisoning</a
             >
@@ -1066,46 +1370,6 @@ After November 30, lifetime access goes away.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/ai-benchmark-inkling-2-mini/" class="hover:underline"
-              >Inkling 2 Mini Draws a Python Reading a Book</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Explore Inkling 2 Mini's Python code, turtle drawing, and responses to small tasks that check modern syntax, release knowledge, focused edits, and made-up functions.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 21, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/ai-benchmark-inkling-2-mini/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/ai-benchmark-gemini-4-neon/" class="hover:underline"
               >Gemini 4 Neon Draws a Python Reading a Book</a
             >
@@ -1130,6 +1394,46 @@ After November 30, lifetime access goes away.</p>
           </div>
           <a
             href="https://realpython.com/ai-benchmark-gemini-4-neon/"
+            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
+          >
+            Read More
+          </a>
+        </div>
+      </div>
+    </div>
+    
+    <div
+      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
+    >
+      <div class="card-body p-0 flex flex-col h-full">
+        <!-- Title Section -->
+        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
+          
+          <h2 class="card-title text-xl font-bold text-white">
+            <a href="https://realpython.com/ai-benchmark-inkling-2-mini/" class="hover:underline"
+              >Inkling 2 Mini Draws a Python Reading a Book</a
+            >
+          </h2>
+          
+        </div>
+
+        <!-- Content Section -->
+        <div class="p-4 flex-grow overflow-hidden">
+          <p class="text-base-content">
+            Explore Inkling 2 Mini's Python code, turtle drawing, and responses to small tasks that check modern syntax, release knowledge, focused edits, and made-up functions.
+          </p>
+        </div>
+
+        <!-- Footer Section -->
+        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
+          <div class="text-sm text-base-content/70 mb-2">
+            Posted on November 21, 2026 02:00 PM UTC by
+            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
+              >Real Python</a
+            >
+          </div>
+          <a
+            href="https://realpython.com/ai-benchmark-inkling-2-mini/"
             class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
           >
             Read More
@@ -1230,46 +1534,6 @@ the first step of many towards open source security work not being special.</p>
         <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
           
           <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/ai-refactor-python/" class="hover:underline"
-              >How to Refactor Python Code With an AI Agent</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Learn how to refactor Python code with AI safely: find code smells, check that tests pin the behavior, and let an agent apply one refactoring at a time.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 20, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/ai-refactor-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
             <a href="https://realpython.com/ai-news-weekly-2026-11-20/" class="hover:underline"
               >OpenAI Cuts the Price of Its Best AI Model by 20 Percent</a
             >
@@ -1302,125 +1566,6 @@ the first step of many towards open source security work not being special.</p>
       </div>
     </div>
     
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://realpython.com/any-python/" class="hover:underline"
-              >How to Use any() in Python</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            Use any() in Python to check whether at least one condition is true, simplify complex conditionals, and see how it compares to the or operator.
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 20, 2026 02:00 PM UTC by
-            <a href="https://realpython.com/atom.xml" class="link link-hover text-primary"
-              >Real Python</a
-            >
-          </div>
-          <a
-            href="https://realpython.com/any-python/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
-    <div
-      class="card bg-base-100 shadow-xl hover:shadow-2xl transition-shadow duration-300 flex flex-col h-[450px] overflow-hidden"
-    >
-      <div class="card-body p-0 flex flex-col h-full">
-        <!-- Title Section -->
-        <div class="bg-primary text-primary-content p-4 rounded-t-2xl">
-          
-          <h2 class="card-title text-xl font-bold text-white">
-            <a href="https://www.djangoproject.com/weblog/2026/nov/20/dsf-member-of-the-month-johannes-maron/" class="hover:underline"
-              >DSF member of the month - Johannes Maron</a
-            >
-          </h2>
-          
-        </div>
-
-        <!-- Content Section -->
-        <div class="p-4 flex-grow overflow-hidden">
-          <p class="text-base-content">
-            <p>For November 2026, we welcome Johannes Maron as our DSF member of the month! ⭐</p>
-<p><img alt="Bearded man in a bright orange beanie and a navy puffer vest over a beige knit sweater, laughing as he holds a small black pug puppy up against his chest. Red and orange autumn leaves are blurred in the background." src="https://media.djangoproject.com/blog/images/2026/11/joe-profile_NFe2D1U.jpg" /></p>
-<p>Johannes has long been part of the Django community. He is a frequent contributor including project such as django-hijack which has more than 1.7K stars! He is part of the Django Review and Triage team. He is a DSF member since September 2025.</p>
-<p>You can learn more about Johannes by visiting <a href="https://codingjoe.dev/">Johannes' website</a> and <a href="https://github.com/codingjoe">his GitHub Profile</a>.</p>
-<p>Let’s spend some time getting to know Johannes better!</p>
-<h2 id="s-can-you-tell-us-a-little-about-yourself-hobbies-education-etc">Can you tell us a little about yourself? (hobbies, education, etc)</h2>
-<p>Johannes Maron, or joe, born Johannes Hoppe in the GDR. Raised in West Germany only to return to his home state for uni. Studied software engineering at the Hasso-Plattner institute, dropped out and lived the start-up life. I still live in Potsdam and have the most amazing pug, son and wife (in alphabetical order).</p>
-<h2 id="s-i-have-an-idea-but-where-your-nickname-codingjoe-comes-from">I have an idea but where your nickname "codingjoe" comes from?</h2>
-<p>I am joe, and I code. Honestly, I was young, and I am just happy it's not naughtyb0i420 and thus never changed it.</p>
-<h2 id="s-how-did-you-start-using-django">How did you start using Django?</h2>
-<p>I started using Django for my very first company, I believe it was version 1.3? I have used it for every company I build ever since, and would always do it again.</p>
-<h2 id="s-what-other-framework-do-you-know-and-if-there-is-anything-you-would-like-to-have-in-django-if-you-had-magical-powers">What other framework do you know and if there is anything you would like to have in Django if you had magical powers?</h2>
-<p>Who said I don't have magic powers? The magic of contributing, we all have it and I made good use of it over the years. But my biggest dream would probably be a browser working group to overcome Django's JavaScript hesitance.</p>
-<h2 id="s-what-projects-are-you-working-on-now">What projects are you working on now?</h2>
-<p><a href="https://github.com/relays-to/relay">relay</a>, a communication as a service provider. Think Sentry but for email, SMS, or VoIP. Or like AWS, but instead of shooting Katy Perry into space I hope to funnel the proceeds back into the community that it's build upon. Diamond sponsor or die is what I am aiming for. Until I get there, I am offering all services for free to non-profits or community projects.</p>
-<h2 id="s-which-django-libraries-are-your-favorite-core-or-3rd-party">Which Django libraries are your favorite (core or 3rd party)?</h2>
-<p>I can't live without <a href="https://github.com/django-commons/dj-database-url">dj_database_url</a> and it's siblings like <a href="https://github.com/joke2k/django-environ">django-environ</a>. <a href="https://github.com/heroku/12factor">12-factor</a>, always.</p>
-<h2 id="s-what-are-the-top-three-things-in-django-that-you-like">What are the top three things in Django that you like?</h2>
-<p>People, people, and people. You know who you are! &lt;3</p>
-<h2 id="s-you-have-recently-joined-the-triage-and-review-team-congratulations-i-know-you-are-hosting-now-regular-online-events-on-reviewing-prs-in-discord-could-you-tell-us-a-bit-more-about-this-initiative">You have recently joined the Triage and Review team, congratulations! I know you are hosting now regular online events on reviewing PRs in Discord, could you tell us a bit more about this initiative?</h2>
-<p>Like all the best things in life, I just stumbled into it. I wanted to be more active and my PR queue was empty. I went on Discord asked, and people sent me more than I could review that day. I promised review them the following week and the wheel started turning. Fast-forward to some discussion on <a href="https://djangomed.eu/">DjangoOnTheMed</a> which gave me the confidence to make this a recurring thing. A small nudge from Tim (Schilling) to set up a Discord event and thus the FOSS Fridays were born.</p>
-<h2 id="s-what-makes-a-good-pr-from-a-reviewers-perspective-whats-the-most-common-mistake-you-see">What makes a good PR from a reviewer’s perspective? What’s the most common mistake you see?</h2>
-<p>It's less about the PR itself, but how it came to be. I maintain a lot of community projects where unsolicited feature PRs are all too common. It starts discussion at the wrong end and it requires a lot of mindful communication to convince authors to go back to the drawing board to reject a proposal. Also, "aura farming", patches to large project for the resume, is something I am not too fond of. Mainly because I know that once the PRs is merged, the maintenance burden will fall on me.</p>
-<h2 id="s-ai-is-more-and-more-present-in-the-tech-world-especially-in-code-contributions-and-reviews-how-do-you-feel-about-that-as-a-reviewer-of-django">AI is more and more present in the tech world, especially in code contributions and reviews. How do you feel about that as a reviewer of Django?</h2>
-<p>I think besides the slop, there is one thing often overlooked. AI has decimated the entry level job market, so you have thousands of graduates turning to open-source to grind for XP. While I can genuinely emphasize, I think we need to steer that raw energy towards something better than generating even more code. Hence, FOSS Fridays. Gain XP and create value through review, not code. Given that AI does most of the corporate code writing these days, I believe that the best skill to acquire.</p>
-<h2 id="s-i-know-you-are-maintaining-a-lot-of-projects-related-to-django-thank-you-for-your-work-what-made-you-create-some-projects-in-the-first-place-like-django-health-check-or-django-hijack-for-example">I know you are maintaining a lot of projects related to Django, thank you for your work. What made you create some projects in the first place, like <a href="https://github.com/codingjoe/django-health-check">django-health-check</a> or <a href="https://github.com/django-hijack/django-hijack">django-hijack</a>, for example?</h2>
-<p>The funny thing is, I created none of the once you mentioned. I started as a contributor and apparently did a good job at it. So the projects get transferred to me. My process is almost always the same, I build a company, need feature and if I find a package that is unmaintained, I offer my assistance. Only if the technology doesn't exist, I write my own package.</p>
-<h2 id="s-how-do-you-manage-to-maintain-so-many-projects-at-the-same-time">How do you manage to maintain so many projects at the same time?</h2>
-<p>My solution is twofold. If a project was taken over, I rewrite it from scratch. I am always aiming for an architecture, that can be easily extended via inheritance and avoid adding any settings. Once that is done, I resolve almost all issues with suggestions on how to implement those features within the users own project while constantly trying to improve the documentation. Most of my projects have zero open issues and PRs. The art of a "productive no" is something I could probably fill an entire bookshelf with.</p>
-<h2 id="s-you-currently-sponsor-a-lot-of-projects-and-people-via-github-django-python-homebrew-and-others-whats-your-view-on-funding-open-source-and-what-would-you-tell-companies-that-depend-on-it">You currently sponsor a lot of projects and people via GitHub (Django, Python, Homebrew and others). What’s your view on funding open source, and what would you tell companies that depend on it?</h2>
-<p>I think you need to separate two things. I use personal donations to show appreciation. They won't pay the bills, but the show maintainers that I care. You just need to decide if you need another streaming to pay for another billionaire's mega-yacht or if those 20 bucks are better spend on your first sponsorships. </p>
-<p>Now, corporate sponsorships are a different beast. I believe they are fundamentally broken. For-profits are there to generate profit for their owners. But, they need employees to generate those profits even with all the AI in the world. The one thing you should always ask during an interview, is: "Does the company sponsor any open source projects?" Preferably late in the interview process. It costs nothing to ask, but the pressure will compound. ... Or you do it like my start your own company and do it differently 🤷</p>
-<h2 id="s-how-do-you-envision-the-future-of-django-from-your-perspective">How do you envision the future of Django from your perspective?</h2>
-<p>I can't wait for Django version 2100. While I might not be around for that, I sure hope it'll happen. As for the DSF, I'd hope that it would eventually be able to build or acquire assets and accumulate wealth to be sponsorship independent. I know it sounds far-fetched, but it doesn't mean we shouldn't strive for a Django Software Fund.</p>
-<h2 id="s-after-so-many-times-in-the-django-community-what-makes-you-stay">After so many times in the Django community, what makes you stay?</h2>
-<p>I saved the stranges story for last. A long, long time ago, I was kindly offered a refund for my DjangoCon ticket, because of a tweet violating the CoC. Luckily I somehow managed dial down my ego for a minute and apologized like a grown up. The whole encounter changed how I perceived the subsequent conference and our industry as a whole and my role in it. Sometimes we learn more from our mistakes more than from our successes. The Django community has taught and challenged me so much over the years. All those experiences are now inseparable of who I am today. And even if I left, I hope to think I would carry those things with me always.</p>
-<h2 id="s-is-there-anything-else-youd-like-to-say">Is there anything else you’d like to say?</h2>
-<p>Thank you &lt;3 and go Django 2100!</p>
-<hr />
-<p><strong>Thank you for doing the interview, Joe !</strong></p>
-          </p>
-        </div>
-
-        <!-- Footer Section -->
-        <div class="mt-auto bg-base-200 p-4 rounded-b-2xl">
-          <div class="text-sm text-base-content/70 mb-2">
-            Posted on November 20, 2026 01:00 PM UTC by
-            <a href="http://www.djangoproject.com/rss/weblog/" class="link link-hover text-primary"
-              >Django Weblog</a
-            >
-          </div>
-          <a
-            href="https://www.djangoproject.com/weblog/2026/nov/20/dsf-member-of-the-month-johannes-maron/"
-            class="btn btn-secondary btn-sm w-full hover:btn-accent transition-colors duration-300"
-          >
-            Read More
-          </a>
-        </div>
-      </div>
-    </div>
-    
   </div>
   <div class="mt-8"><div class="btn-group my-4"><button class="btn btn-active hover:bg-primary hover:shadow-lg hover:shadow-primary/50">1</button><a href="index2.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">2</a><a href="index3.html" class="btn hover:bg-primary hover:shadow-lg hover:shadow-primary/50">3</a><a href="index2.html" class="btn">»</a></div></div>
 </div>
@@ -1432,12 +1577,12 @@ the first step of many towards open source security work not being special.</p>
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8300</a></li>
-    <li><a>Unique Feeds: 366</a></li>
+    <li><a>Total Entries: 8344</a></li>
+    <li><a>Unique Feeds: 371</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
-  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (568)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Bytes (505)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Python Anywhere (217)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Kay Hayen (203)</a></li></div>
+  <div class="pl-4 max-h-48 overflow-y-auto"><li><a href="https://pythonbytes.fm/episodes/rss">Talk Python to Me (568)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Bytes (506)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Awesome Python Applications (426)</a></li><li><a href="https://pythonbytes.fm/episodes/rss">Python Anywhere (217)</a></li><li><a href="http://www.talkpythontome.com/episodes/rss">Kay Hayen (203)</a></li></div>
 
   <li class="menu-title mt-4">Feeds</li>
   <div class="pl-4 max-h-96 overflow-y-auto">
