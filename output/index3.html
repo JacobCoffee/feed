@@ -790,7 +790,99 @@ Article 307, October 2025.
         <!-- Content Section -->
         <div class="p-4 flex-grow overflow-hidden">
           <p class="text-base-content">
-            I'm working with dialogs in PyQt6, and when I press either Accept or Cancel, the entire application closes. How can I prevent this?
+            <blockquote>
+<p>I'm working with dialogs in PyQt6, and when I press either Accept or Cancel, the entire application closes. How can I prevent this?</p>
+</blockquote>
+<p>When you create and display a dialog (for example, using <code>QDialog.exec()</code>), the dialog runs its own local event loop. Once you click <strong>OK</strong> or <strong>Cancel</strong>, the dialog closes and <code>exec()</code> returns a result. At that point, your code continues executing whatever comes after the dialog call.</p>
+<p>If there's no main window being shown and no main event loop running, the application simply has nothing left to do &mdash; so it exits.</p>
+<p>In other words, the dialog <em>is</em> your entire application. Once it's gone, everything shuts down.</p>
+<h2 id="the-solution-run-a-main-window-with-an-event-loop">The Solution: Run a Main Window with an Event Loop</h2>
+<p>To keep your application alive after the dialog closes, you need a main window that stays open and a properly running event loop. The dialog should be launched <em>from</em> that main window, so that when the dialog is dismissed, control returns to the main window which is still visible and active.</p>
+<p>Here's a minimal complete example that demonstrates the correct setup:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">import sys
+
+from PyQt6.QtWidgets import (
+    QApplication, QDialog, QDialogButtonBox,
+    QMainWindow, QPushButton, QVBoxLayout,
+)
+
+
+class CustomDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("My Dialog")
+
+        buttons = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        self.button_box = QDialogButtonBox(buttons)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.button_box)
+        self.setLayout(layout)
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Main Window")
+
+        button = QPushButton("Open Dialog")
+        button.clicked.connect(self.open_dialog)
+        self.setCentralWidget(button)
+
+    def open_dialog(self):
+        dialog = CustomDialog(self)
+        result = dialog.exec()
+
+        if result == QDialog.DialogCode.Accepted:
+            print("User clicked OK")
+        else:
+            print("User clicked Cancel")
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+</code></pre>
+</div>
+<p>Let's walk through what's happening here.</p>
+<h2 id="the-main-window">The Main Window</h2>
+<p>The <code>MainWindow</code> class creates a simple window with a single button. When you click that button, it calls <code>open_dialog()</code>, which creates an instance of <code>CustomDialog</code> and displays it using <code>exec()</code>.</p>
+<p>Once you accept or cancel the dialog, <code>exec()</code> returns and you're back inside the <code>open_dialog</code> method. The main window is still visible and responsive &mdash; you can click the button again to reopen the dialog as many times as you like. If you're new to building windows in PyQt6, see our tutorial on <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-your-first-window/">creating your first window</a>.</p>
+<h2 id="the-event-loop">The Event Loop</h2>
+<p>The block at the bottom of the script is what keeps everything running:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
+</code></pre>
+</div>
+<p><code>QApplication</code> manages the main event loop for your application. Calling <code>app.exec()</code> starts that loop, which keeps the application alive, processing user input, repainting widgets, and handling <a href="https://www.pythonguis.com/tutorials/pyqt6-signals-slots-events/">signals and slots</a>. The application will only exit when you close the main window (or explicitly call <code>app.quit()</code>).</p>
+<p>Without this event loop, your script runs top-to-bottom and exits as soon as it reaches the end &mdash; which is exactly the behavior you'd see if a dialog was the only thing in your script.</p>
+<h2 id="passing-self-as-parent">Passing <code>self</code> as Parent</h2>
+<p>You might have noticed that we pass <code>self</code> when creating the dialog:</p>
+<div class="code-block">
+<span class="code-block-language code-block-python">python</span>
+<pre><code class="python">dialog = CustomDialog(self)
+</code></pre>
+</div>
+<p>This sets the main window as the dialog's parent. It means the dialog will appear centered over the main window and will be properly tied to it in terms of window management. It's a good habit to set a parent for your dialogs whenever you can.</p>
+<h2 id="summary">Summary</h2>
+<p>If your app is closing when you dismiss a dialog, make sure you have:</p>
+<ol>
+<li>A <code>QApplication</code> instance with its event loop running via <code>app.exec()</code>.</li>
+<li>A main window that is shown using <code>.show()</code>.</li>
+<li>Your dialog launched from within that main window, so control returns to it after the dialog is dismissed.</li>
+</ol>
+<p>With this structure in place, your <a href="https://www.pythonguis.com/tutorials/pyqt6-dialogs/">dialogs</a> will open and close without affecting the rest of your application. If you want to open additional windows beyond dialogs, take a look at our guide on <a href="https://www.pythonguis.com/tutorials/pyqt6-creating-multiple-windows/">creating multiple windows</a> in PyQt6.</p>
           </p>
         </div>
 
@@ -2452,8 +2544,8 @@ The function's return value is significant, unlike most functions that simply re
 <ul class="menu p-4 w-80 min-h-full bg-base-200 text-base-content">
   <li class="menu-title">Stats</li>
   
-    <li><a>Total Entries: 8350</a></li>
-    <li><a>Unique Feeds: 371</a></li>
+    <li><a>Total Entries: 8301</a></li>
+    <li><a>Unique Feeds: 370</a></li>
     
 
   <li class="menu-title mt-4">Top Authors</li>
